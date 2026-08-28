@@ -354,6 +354,7 @@ export const users = pgTable("users", {
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: roleEnum("role").default("user").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
   /** BuildReq-specific role for business logic */
   buildreqRole: buildreqRoleEnum("buildreqRole"),
   /** If Ing. Residente, which project they are assigned to */

@@ -10,7 +10,10 @@ type CookieCall = {
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
-function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] } {
+function createAuthContext(): {
+  ctx: TrpcContext;
+  clearedCookies: CookieCall[];
+} {
   const clearedCookies: CookieCall[] = [];
 
   const user: AuthenticatedUser = {
@@ -20,6 +23,7 @@ function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] }
     name: "Sample User",
     loginMethod: "manus",
     role: "user",
+    isActive: true,
     mustChangePassword: false,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -71,6 +75,7 @@ describe("auth.logout", () => {
       name: "Sample User",
       loginMethod: "manus",
       role: "user",
+      isActive: true,
       mustChangePassword: false,
       createdAt: new Date(),
       updatedAt: new Date(),

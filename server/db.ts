@@ -1595,6 +1595,10 @@ export async function upsertUser(
     values.mustChangePassword = user.mustChangePassword;
     updateSet.mustChangePassword = user.mustChangePassword;
   }
+  if (user.isActive !== undefined) {
+    values.isActive = user.isActive;
+    updateSet.isActive = user.isActive;
+  }
   if (!values.lastSignedIn) values.lastSignedIn = new Date();
   if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
 
@@ -1752,6 +1756,7 @@ export async function updateUserAdmin(
     email: string;
     buildreqRole: BuildReqRole;
     assignedProjectIds?: number[] | null;
+    isActive: boolean;
   }
 ) {
   const db = await getDb();
@@ -1767,6 +1772,8 @@ export async function updateUserAdmin(
       email: data.email,
       buildreqRole: data.buildreqRole,
       assignedProjectId: legacyAssignedProjectId,
+      isActive: data.isActive,
+      updatedAt: new Date(),
     })
     .where(eq(users.id, userId));
 

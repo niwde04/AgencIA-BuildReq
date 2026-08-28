@@ -29,12 +29,7 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Users as UsersIcon,
   UserPlus,
@@ -96,8 +91,8 @@ function normalizeProjectIds(value: unknown) {
   return Array.from(
     new Set(
       value
-        .map((projectId) => Number(projectId))
-        .filter((projectId) => Number.isInteger(projectId) && projectId > 0)
+        .map(projectId => Number(projectId))
+        .filter(projectId => Number.isInteger(projectId) && projectId > 0)
     )
   );
 }
@@ -109,7 +104,9 @@ function getAssignedProjectIds(entity: any) {
 }
 
 function getAssignedProjectIdsPayload(role: string, projectIds: number[]) {
-  return isProjectAssignableRole(role) ? normalizeProjectIds(projectIds) : undefined;
+  return isProjectAssignableRole(role)
+    ? normalizeProjectIds(projectIds)
+    : undefined;
 }
 
 function formatAssignedProjects(entity: any) {
@@ -117,10 +114,13 @@ function formatAssignedProjects(entity: any) {
     ? entity.assignedProjects
     : [];
   if (assignedProjects.length > 0) {
-    return assignedProjects.map((project: any) => `${project.code} - ${project.name}`).join(", ");
+    return assignedProjects
+      .map((project: any) => `${project.code} - ${project.name}`)
+      .join(", ");
   }
   const ids = getAssignedProjectIds(entity);
-  if (ids.length > 0) return ids.map((projectId) => `Proyecto #${projectId}`).join(", ");
+  if (ids.length > 0)
+    return ids.map(projectId => `Proyecto #${projectId}`).join(", ");
   if (isProjectAssignableRole(entity?.buildreqRole)) {
     return "Sin proyectos asignados";
   }
@@ -146,16 +146,21 @@ function getUserSearchText(user: any) {
     ROLE_LABELS[user?.buildreqRole],
     user?.buildreqRole,
     formatAssignedProjects(user),
+    user?.isActive === false ? "Inactivo" : "Activo",
     user?.mustChangePassword ? "Cambio pendiente" : null,
-    user?.lastSignedIn ? new Date(user.lastSignedIn).toLocaleDateString("es") : null,
-    ...assignedProjects.flatMap((project: any) => [project?.code, project?.name]),
+    user?.lastSignedIn
+      ? new Date(user.lastSignedIn).toLocaleDateString("es")
+      : null,
+    ...assignedProjects.flatMap((project: any) => [
+      project?.code,
+      project?.name,
+    ]),
   ].join(" ");
 }
 
 function canManageUserAccounts(user: any) {
   return (
-    user?.role === "admin" ||
-    user?.buildreqRole === "administracion_central"
+    user?.role === "admin" || user?.buildreqRole === "administracion_central"
   );
 }
 
@@ -166,7 +171,10 @@ function canManageListedUser(manager: any, target: any) {
 }
 
 function getAssignableRoleOptions(user: any) {
-  if (user?.role === "admin" || user?.buildreqRole === "administracion_central") {
+  if (
+    user?.role === "admin" ||
+    user?.buildreqRole === "administracion_central"
+  ) {
     return ROLE_OPTIONS;
   }
   if (user?.buildreqRole === "administrador_proyecto") {
@@ -199,10 +207,10 @@ function ProjectMultiSelect({
   const selectedSet = new Set(selectedProjectIds);
   const canUseAll = canAssignAllProjects(role);
   const required = Boolean(role && PROJECT_REQUIRED_ROLES.has(role));
-  const allProjectIds = sortedProjects.map((project) => Number(project.id));
+  const allProjectIds = sortedProjects.map(project => Number(project.id));
   const allExplicitlySelected =
     allProjectIds.length > 0 &&
-    allProjectIds.every((projectId) => selectedSet.has(projectId));
+    allProjectIds.every(projectId => selectedSet.has(projectId));
   const hasAnySelected = selectedProjectIds.length > 0;
   const bulkActionLabel = allExplicitlySelected
     ? "Quitar todos"
@@ -215,7 +223,7 @@ function ProjectMultiSelect({
         : selectedProjectIds.length === 1
           ? formatAssignedProjects({
               assignedProjectIds: selectedProjectIds,
-              assignedProjects: sortedProjects.filter((project) =>
+              assignedProjects: sortedProjects.filter(project =>
                 selectedSet.has(project.id)
               ),
             })
@@ -227,7 +235,7 @@ function ProjectMultiSelect({
         toast.error("Este rol requiere al menos un proyecto");
         return;
       }
-      onChange(selectedProjectIds.filter((id) => id !== projectId));
+      onChange(selectedProjectIds.filter(id => id !== projectId));
       return;
     }
     onChange([...selectedProjectIds, projectId]);
@@ -265,7 +273,7 @@ function ProjectMultiSelect({
               tabIndex={0}
               className="flex w-full cursor-pointer items-center gap-2 border-b border-border px-2 py-2 text-left text-sm font-medium hover:bg-muted"
               onClick={toggleAllProjects}
-              onKeyDown={(event) => {
+              onKeyDown={event => {
                 if (event.key === "Enter" || event.key === " ") {
                   toggleAllProjects();
                 }
@@ -289,7 +297,7 @@ function ProjectMultiSelect({
               tabIndex={0}
               className="flex w-full cursor-pointer items-center gap-2 px-2 py-2 text-left text-sm hover:bg-muted"
               onClick={() => onChange([])}
-              onKeyDown={(event) => {
+              onKeyDown={event => {
                 if (event.key === "Enter" || event.key === " ") onChange([]);
               }}
             >
@@ -304,7 +312,7 @@ function ProjectMultiSelect({
               tabIndex={0}
               className="flex w-full cursor-pointer items-center gap-2 px-2 py-2 text-left text-sm hover:bg-muted"
               onClick={() => toggleProject(project.id)}
-              onKeyDown={(event) => {
+              onKeyDown={event => {
                 if (event.key === "Enter" || event.key === " ") {
                   toggleProject(project.id);
                 }
@@ -327,7 +335,14 @@ function ProjectMultiSelect({
   );
 }
 
-const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive"; icon: any }> = {
+const STATUS_CONFIG: Record<
+  string,
+  {
+    label: string;
+    variant: "default" | "secondary" | "outline" | "destructive";
+    icon: any;
+  }
+> = {
   pendiente: { label: "Pendiente", variant: "secondary", icon: Clock },
   aceptada: { label: "Aceptada", variant: "default", icon: CheckCircle2 },
   expirada: { label: "Expirada", variant: "outline", icon: XCircle },
@@ -342,7 +357,9 @@ export default function Usuarios() {
   const canUseInvitations = isSystemAdmin;
   const canResetUserPasswords = canManageAccounts;
   const { data: users, isLoading: usersLoading } =
-    trpc.userManagement.list.useQuery(undefined, { enabled: canManageAccounts });
+    trpc.userManagement.list.useQuery(undefined, {
+      enabled: canManageAccounts,
+    });
   const { data: invitationsList, isLoading: invLoading } =
     trpc.invitations.list.useQuery(undefined, { enabled: canUseInvitations });
   const { data: projects } = trpc.projects.list.useQuery(
@@ -366,7 +383,11 @@ export default function Usuarios() {
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [showDirectUserDialog, setShowDirectUserDialog] = useState(false);
   const [showEmailDialog, setShowEmailDialog] = useState(false);
-  const [emailData, setEmailData] = useState<{ to: string; subject: string; content: string } | null>(null);
+  const [emailData, setEmailData] = useState<{
+    to: string;
+    subject: string;
+    content: string;
+  } | null>(null);
   const [userSearchTerm, setUserSearchTerm] = useState("");
   const [isExportingUsers, setIsExportingUsers] = useState(false);
 
@@ -386,9 +407,11 @@ export default function Usuarios() {
   const [editEmail, setEditEmail] = useState("");
   const [editRole, setEditRole] = useState<string>("");
   const [editProjectIds, setEditProjectIds] = useState<number[]>([]);
+  const [editIsActive, setEditIsActive] = useState(true);
   const [passwordUser, setPasswordUser] = useState<any | null>(null);
   const [resetPassword, setResetPassword] = useState("");
-  const [resetPasswordConfirmation, setResetPasswordConfirmation] = useState("");
+  const [resetPasswordConfirmation, setResetPasswordConfirmation] =
+    useState("");
   const [showResetPassword, setShowResetPassword] = useState(false);
 
   const filteredUsers = useMemo(() => {
@@ -400,7 +423,7 @@ export default function Usuarios() {
 
     return sortedUsers.filter((row: any) => {
       const searchText = normalizeSearchValue(getUserSearchText(row));
-      return searchTerms.every((term) => searchText.includes(term));
+      return searchTerms.every(term => searchText.includes(term));
     });
   }, [sortedUsers, userSearchTerm]);
   const hasUserSearch = userSearchTerm.trim().length > 0;
@@ -437,6 +460,11 @@ export default function Usuarios() {
             width: 48,
           },
           {
+            header: "Estado",
+            value: (entry: any) =>
+              entry.isActive === false ? "Inactivo" : "Activo",
+          },
+          {
             header: "Cambio de contraseña",
             value: (entry: any) =>
               entry.mustChangePassword ? "Pendiente" : "No",
@@ -471,23 +499,24 @@ export default function Usuarios() {
         utils.dashboard.stats.invalidate(),
       ]);
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(e.message),
   });
 
-  const updateUserAdminMutation = trpc.userManagement.updateUserAdmin.useMutation({
-    onSuccess: () => {
-      toast.success("Usuario actualizado");
-      void Promise.all([
-        utils.userManagement.list.invalidate(),
-        utils.auth.me.invalidate(),
-        utils.supplyFlows.availableFlows.invalidate(),
-        utils.dashboard.sidebarCounts.invalidate(),
-        utils.dashboard.stats.invalidate(),
-      ]);
-      closeEditUserDialog();
-    },
-    onError: (e) => toast.error(e.message),
-  });
+  const updateUserAdminMutation =
+    trpc.userManagement.updateUserAdmin.useMutation({
+      onSuccess: () => {
+        toast.success("Usuario actualizado");
+        void Promise.all([
+          utils.userManagement.list.invalidate(),
+          utils.auth.me.invalidate(),
+          utils.supplyFlows.availableFlows.invalidate(),
+          utils.dashboard.sidebarCounts.invalidate(),
+          utils.dashboard.stats.invalidate(),
+        ]);
+        closeEditUserDialog();
+      },
+      onError: e => toast.error(e.message),
+    });
 
   const resetPasswordAdminMutation =
     trpc.userManagement.resetPasswordAdmin.useMutation({
@@ -499,21 +528,25 @@ export default function Usuarios() {
         ]);
         closePasswordDialog();
       },
-      onError: (e) => toast.error(e.message),
+      onError: e => toast.error(e.message),
     });
 
-  const createDirectUserMutation = trpc.userManagement.createDirect.useMutation({
-    onSuccess: () => {
-      toast.success("Usuario creado. Debe cambiar la contraseña al ingresar.");
-      void utils.userManagement.list.invalidate();
-      setShowDirectUserDialog(false);
-      resetDirectForm();
-    },
-    onError: (e) => toast.error(e.message),
-  });
+  const createDirectUserMutation = trpc.userManagement.createDirect.useMutation(
+    {
+      onSuccess: () => {
+        toast.success(
+          "Usuario creado. Debe cambiar la contraseña al ingresar."
+        );
+        void utils.userManagement.list.invalidate();
+        setShowDirectUserDialog(false);
+        resetDirectForm();
+      },
+      onError: e => toast.error(e.message),
+    }
+  );
 
   const createInvitationMutation = trpc.invitations.create.useMutation({
-    onSuccess: (data) => {
+    onSuccess: data => {
       toast.success("Invitación creada exitosamente");
       utils.invitations.list.invalidate();
       setShowInviteDialog(false);
@@ -524,7 +557,7 @@ export default function Usuarios() {
         setShowEmailDialog(true);
       }
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(e.message),
   });
 
   const cancelInvitationMutation = trpc.invitations.cancel.useMutation({
@@ -532,17 +565,17 @@ export default function Usuarios() {
       toast.success("Invitación cancelada");
       utils.invitations.list.invalidate();
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(e.message),
   });
 
   const resendInvitationMutation = trpc.invitations.resend.useMutation({
-    onSuccess: (data) => {
+    onSuccess: data => {
       if (data.emailData) {
         setEmailData(data.emailData);
         setShowEmailDialog(true);
       }
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(e.message),
   });
 
   function resetForm() {
@@ -567,7 +600,10 @@ export default function Usuarios() {
     setEditName(user.name || "");
     setEditEmail(user.email || "");
     setEditRole(role);
-    setEditProjectIds(isProjectAssignableRole(role) ? getAssignedProjectIds(user) : []);
+    setEditProjectIds(
+      isProjectAssignableRole(role) ? getAssignedProjectIds(user) : []
+    );
+    setEditIsActive(user.isActive !== false);
   }
 
   function closeEditUserDialog() {
@@ -576,6 +612,7 @@ export default function Usuarios() {
     setEditEmail("");
     setEditRole("");
     setEditProjectIds([]);
+    setEditIsActive(true);
   }
 
   function openPasswordDialog(user: any) {
@@ -608,7 +645,11 @@ export default function Usuarios() {
       name: editName,
       email: editEmail,
       buildreqRole: editRole as any,
-      assignedProjectIds: getAssignedProjectIdsPayload(editRole, editProjectIds),
+      assignedProjectIds: getAssignedProjectIdsPayload(
+        editRole,
+        editProjectIds
+      ),
+      isActive: editIsActive,
     });
   }
 
@@ -650,7 +691,10 @@ export default function Usuarios() {
       email: directEmail,
       password: directPassword,
       buildreqRole: directRole as any,
-      assignedProjectIds: getAssignedProjectIdsPayload(directRole, directProjectIds),
+      assignedProjectIds: getAssignedProjectIdsPayload(
+        directRole,
+        directProjectIds
+      ),
     });
   }
 
@@ -659,10 +703,7 @@ export default function Usuarios() {
       toast.error("Nombre, email y rol son obligatorios");
       return;
     }
-    if (
-      PROJECT_REQUIRED_ROLES.has(invRole) &&
-      invProjectIds.length === 0
-    ) {
+    if (PROJECT_REQUIRED_ROLES.has(invRole) && invProjectIds.length === 0) {
       toast.error("Debe asignar al menos un proyecto a este rol");
       return;
     }
@@ -698,7 +739,10 @@ export default function Usuarios() {
                 Invitar Usuario
               </Button>
             ) : null}
-            <Button onClick={() => setShowDirectUserDialog(true)} className="gap-2">
+            <Button
+              onClick={() => setShowDirectUserDialog(true)}
+              className="gap-2"
+            >
               <UserPlus className="h-4 w-4" />
               Crear Usuario
             </Button>
@@ -710,15 +754,24 @@ export default function Usuarios() {
         <TabsList>
           <TabsTrigger value="users" className="gap-2">
             <UsersIcon className="h-4 w-4" />
-            Usuarios Activos
+            Usuarios
           </TabsTrigger>
           {canUseInvitations ? (
             <TabsTrigger value="invitations" className="gap-2">
               <Mail className="h-4 w-4" />
               Invitaciones
-              {(invitationsList || []).filter((i: any) => i.invitation.status === "pendiente").length > 0 && (
-                <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 flex items-center justify-center text-[10px]">
-                  {(invitationsList || []).filter((i: any) => i.invitation.status === "pendiente").length}
+              {(invitationsList || []).filter(
+                (i: any) => i.invitation.status === "pendiente"
+              ).length > 0 && (
+                <Badge
+                  variant="secondary"
+                  className="ml-1 h-5 w-5 p-0 flex items-center justify-center text-[10px]"
+                >
+                  {
+                    (invitationsList || []).filter(
+                      (i: any) => i.invitation.status === "pendiente"
+                    ).length
+                  }
                 </Badge>
               )}
             </TabsTrigger>
@@ -732,7 +785,7 @@ export default function Usuarios() {
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={userSearchTerm}
-                onChange={(event) => setUserSearchTerm(event.target.value)}
+                onChange={event => setUserSearchTerm(event.target.value)}
                 placeholder="Buscar usuarios por nombre, email, rol o proyecto..."
                 className="h-10 pl-9 pr-10"
               />
@@ -775,19 +828,27 @@ export default function Usuarios() {
           <Card>
             <CardContent className="p-0">
               {usersLoading ? (
-                <div className="p-8 text-center text-muted-foreground">Cargando usuarios...</div>
+                <div className="p-8 text-center text-muted-foreground">
+                  Cargando usuarios...
+                </div>
               ) : sortedUsers.length === 0 ? (
                 <div className="p-8 text-center">
                   <UsersIcon className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
-                  <p className="text-muted-foreground">No hay usuarios registrados</p>
+                  <p className="text-muted-foreground">
+                    No hay usuarios registrados
+                  </p>
                   {canManageAccounts ? (
-                    <p className="text-xs text-muted-foreground mt-1">Cree usuarios con el botón superior</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Cree usuarios con el botón superior
+                    </p>
                   ) : null}
                 </div>
               ) : filteredUsers.length === 0 ? (
                 <div className="p-8 text-center">
                   <Search className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
-                  <p className="text-muted-foreground">No hay usuarios que coincidan con la búsqueda</p>
+                  <p className="text-muted-foreground">
+                    No hay usuarios que coincidan con la búsqueda
+                  </p>
                   <Button
                     type="button"
                     variant="outline"
@@ -804,136 +865,199 @@ export default function Usuarios() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border">
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Nombre</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Email</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Rol Sistema</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Rol BuildReq</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Proyecto Asignado</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Último acceso</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Acciones</th>
+                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                          Nombre
+                        </th>
+                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                          Email
+                        </th>
+                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                          Rol Sistema
+                        </th>
+                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                          Rol BuildReq
+                        </th>
+                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                          Proyecto Asignado
+                        </th>
+                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                          Estado
+                        </th>
+                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                          Último acceso
+                        </th>
+                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                          Acciones
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredUsers.map((u: any) => {
                         const canManageThisUser = canManageListedUser(user, u);
                         return (
-                        <tr key={u.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
-                          <td className="p-3 font-medium">{u.name || "—"}</td>
-                          <td className="p-3 text-xs text-muted-foreground">
-                            <div className="space-y-1">
-                              <p>{u.email || "—"}</p>
-                              {u.mustChangePassword ? (
-                                <Badge variant="secondary" className="gap-1 text-[10px]">
-                                  <KeyRound className="h-3 w-3" />
-                                  Cambio pendiente
-                                </Badge>
-                              ) : null}
-                            </div>
-                          </td>
-                          <td className="p-3">
-                            <Badge variant="outline" className={`text-xs ${u.role === "admin" ? "border-primary text-primary" : ""}`}>
-                              {u.role === "admin" ? "Administrador" : "Usuario"}
-                            </Badge>
-                          </td>
-                          <td className="p-3">
-                            {canManageThisUser ? (
-                              <Select
-                                value={u.buildreqRole || "sin_rol"}
-                                onValueChange={(val) => {
-                                  if (val === "sin_rol") return;
-                                  const existingProjectIds = getAssignedProjectIds(u);
-                                  const nextProjectIds = isProjectAssignableRole(val)
-                                    ? existingProjectIds.length > 0
-                                      ? existingProjectIds
-                                      : PROJECT_REQUIRED_ROLES.has(val)
-                                        ? (sortedProjects[0]?.id ? [sortedProjects[0].id] : [])
-                                        : []
-                                    : [];
-                                  updateRoleMutation.mutate({
-                                    userId: u.id,
-                                    buildreqRole: val as any,
-                                    assignedProjectIds: getAssignedProjectIdsPayload(
-                                      val,
-                                      nextProjectIds
-                                    ),
-                                  });
-                                }}
+                          <tr
+                            key={u.id}
+                            className={`border-b border-border last:border-0 hover:bg-muted/30 transition-colors ${u.isActive === false ? "opacity-70" : ""}`}
+                          >
+                            <td className="p-3 font-medium">{u.name || "—"}</td>
+                            <td className="p-3 text-xs text-muted-foreground">
+                              <div className="space-y-1">
+                                <p>{u.email || "—"}</p>
+                                {u.mustChangePassword ? (
+                                  <Badge
+                                    variant="secondary"
+                                    className="gap-1 text-[10px]"
+                                  >
+                                    <KeyRound className="h-3 w-3" />
+                                    Cambio pendiente
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="p-3">
+                              <Badge
+                                variant="outline"
+                                className={`text-xs ${u.role === "admin" ? "border-primary text-primary" : ""}`}
                               >
-                                <SelectTrigger className="h-8 w-48 text-xs">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="sin_rol" disabled>Sin rol asignado</SelectItem>
-                                  {assignableRoleOptions.map((option) => (
-                                    <SelectItem key={option.value} value={option.value}>
-                                      {option.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <Badge variant="outline" className="text-xs">
-                                {ROLE_LABELS[u.buildreqRole] || u.buildreqRole || "Sin rol asignado"}
+                                {u.role === "admin"
+                                  ? "Administrador"
+                                  : "Usuario"}
                               </Badge>
-                            )}
-                          </td>
-                          <td className="p-3">
-                            {canManageThisUser && isProjectAssignableRole(u.buildreqRole) ? (
-                              <ProjectMultiSelect
-                                role={u.buildreqRole}
-                                projects={sortedProjects}
-                                selectedProjectIds={getAssignedProjectIds(u)}
-                                compact
-                                onChange={(projectIds) => {
-                                  updateRoleMutation.mutate({
-                                    userId: u.id,
-                                    buildreqRole:
-                                      (u.buildreqRole || "ingeniero_residente") as any,
-                                    assignedProjectIds: getAssignedProjectIdsPayload(
-                                      u.buildreqRole,
-                                      projectIds
-                                    ),
-                                  });
-                                }}
-                              />
-                            ) : (
-                              <span className="text-xs text-muted-foreground">
-                                {formatAssignedProjects(u)}
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3 text-xs text-muted-foreground">
-                            {u.lastSignedIn ? new Date(u.lastSignedIn).toLocaleDateString("es") : "—"}
-                          </td>
-                          <td className="p-3">
-                            <div className="flex gap-1">
+                            </td>
+                            <td className="p-3">
                               {canManageThisUser ? (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 gap-1 text-xs"
-                                  onClick={() => openEditUserDialog(u)}
+                                <Select
+                                  value={u.buildreqRole || "sin_rol"}
+                                  onValueChange={val => {
+                                    if (val === "sin_rol") return;
+                                    const existingProjectIds =
+                                      getAssignedProjectIds(u);
+                                    const nextProjectIds =
+                                      isProjectAssignableRole(val)
+                                        ? existingProjectIds.length > 0
+                                          ? existingProjectIds
+                                          : PROJECT_REQUIRED_ROLES.has(val)
+                                            ? sortedProjects[0]?.id
+                                              ? [sortedProjects[0].id]
+                                              : []
+                                            : []
+                                        : [];
+                                    updateRoleMutation.mutate({
+                                      userId: u.id,
+                                      buildreqRole: val as any,
+                                      assignedProjectIds:
+                                        getAssignedProjectIdsPayload(
+                                          val,
+                                          nextProjectIds
+                                        ),
+                                    });
+                                  }}
                                 >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                  Editar
-                                </Button>
-                              ) : null}
-                              {canResetUserPasswords && canManageThisUser ? (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 gap-1 text-xs"
-                                  onClick={() => openPasswordDialog(u)}
-                                >
-                                  <KeyRound className="h-3.5 w-3.5" />
-                                  Contraseña
-                                </Button>
-                              ) : null}
-                            </div>
-                          </td>
-                        </tr>
+                                  <SelectTrigger className="h-8 w-48 text-xs">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="sin_rol" disabled>
+                                      Sin rol asignado
+                                    </SelectItem>
+                                    {assignableRoleOptions.map(option => (
+                                      <SelectItem
+                                        key={option.value}
+                                        value={option.value}
+                                      >
+                                        {option.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <Badge variant="outline" className="text-xs">
+                                  {ROLE_LABELS[u.buildreqRole] ||
+                                    u.buildreqRole ||
+                                    "Sin rol asignado"}
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              {canManageThisUser &&
+                              isProjectAssignableRole(u.buildreqRole) ? (
+                                <ProjectMultiSelect
+                                  role={u.buildreqRole}
+                                  projects={sortedProjects}
+                                  selectedProjectIds={getAssignedProjectIds(u)}
+                                  compact
+                                  onChange={projectIds => {
+                                    updateRoleMutation.mutate({
+                                      userId: u.id,
+                                      buildreqRole: (u.buildreqRole ||
+                                        "ingeniero_residente") as any,
+                                      assignedProjectIds:
+                                        getAssignedProjectIdsPayload(
+                                          u.buildreqRole,
+                                          projectIds
+                                        ),
+                                    });
+                                  }}
+                                />
+                              ) : (
+                                <span className="text-xs text-muted-foreground">
+                                  {formatAssignedProjects(u)}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              <Badge
+                                variant={
+                                  u.isActive === false
+                                    ? "destructive"
+                                    : "default"
+                                }
+                                className="gap-1 text-xs"
+                              >
+                                {u.isActive === false ? (
+                                  <XCircle className="h-3 w-3" />
+                                ) : (
+                                  <CheckCircle2 className="h-3 w-3" />
+                                )}
+                                {u.isActive === false ? "Inactivo" : "Activo"}
+                              </Badge>
+                            </td>
+                            <td className="p-3 text-xs text-muted-foreground">
+                              {u.lastSignedIn
+                                ? new Date(u.lastSignedIn).toLocaleDateString(
+                                    "es"
+                                  )
+                                : "—"}
+                            </td>
+                            <td className="p-3">
+                              <div className="flex gap-1">
+                                {canManageThisUser ? (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 gap-1 text-xs"
+                                    onClick={() => openEditUserDialog(u)}
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                    Editar
+                                  </Button>
+                                ) : null}
+                                {canResetUserPasswords && canManageThisUser ? (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 gap-1 text-xs"
+                                    onClick={() => openPasswordDialog(u)}
+                                  >
+                                    <KeyRound className="h-3.5 w-3.5" />
+                                    Contraseña
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
                         );
                       })}
                     </tbody>
@@ -946,112 +1070,150 @@ export default function Usuarios() {
 
         {/* INVITATIONS TAB */}
         {canUseInvitations ? (
-        <TabsContent value="invitations">
-          <Card>
-            <CardContent className="p-0">
-              {invLoading ? (
-                <div className="p-8 text-center text-muted-foreground">Cargando invitaciones...</div>
-              ) : (invitationsList || []).length === 0 ? (
-                <div className="p-8 text-center">
-                  <Mail className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
-                  <p className="text-muted-foreground">No hay invitaciones</p>
-                  <p className="text-xs text-muted-foreground mt-1">Use el botón "Invitar Usuario" para enviar invitaciones</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border">
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Nombre</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Email</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Rol Asignado</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Proyecto</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Estado</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Fecha</th>
-                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(invitationsList || []).map((item: any) => {
-                        const inv = item.invitation;
-                        const proj = item.project;
-                        const assignedProjectLabel = formatAssignedProjects({
-                          ...inv,
-                          assignedProjects: item.assignedProjects ?? (proj ? [proj] : []),
-                        });
-                        const statusCfg = STATUS_CONFIG[inv.status] || STATUS_CONFIG.pendiente;
-                        const StatusIcon = statusCfg.icon;
-                        return (
-                          <tr key={inv.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
-                            <td className="p-3 font-medium">{inv.name}</td>
-                            <td className="p-3 text-xs text-muted-foreground">{inv.email}</td>
-                            <td className="p-3">
-                              <Badge variant="outline" className="text-xs">
-                                {ROLE_LABELS[inv.buildreqRole] || inv.buildreqRole}
-                              </Badge>
-                            </td>
-                            <td className="p-3 text-xs">
-                              {assignedProjectLabel === "N/A" ? (
-                                <span className="text-muted-foreground">N/A</span>
-                              ) : (
-                                assignedProjectLabel
-                              )}
-                            </td>
-                            <td className="p-3">
-                              <Badge variant={statusCfg.variant} className="gap-1 text-xs">
-                                <StatusIcon className="h-3 w-3" />
-                                {statusCfg.label}
-                              </Badge>
-                            </td>
-                            <td className="p-3 text-xs text-muted-foreground">
-                              {new Date(inv.createdAt).toLocaleDateString("es")}
-                            </td>
-                            <td className="p-3">
-                              {inv.status === "pendiente" && (
-                                <div className="flex gap-1">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-7 text-xs gap-1"
-                                    onClick={() => {
-                                      resendInvitationMutation.mutate({
-                                        invitationId: inv.id,
-                                        origin: appSiteUrl,
-                                      });
-                                    }}
-                                  >
-                                    <RefreshCw className="h-3 w-3" />
-                                    Reenviar
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-7 text-xs gap-1 text-destructive hover:text-destructive"
-                                    onClick={() => cancelInvitationMutation.mutate({ invitationId: inv.id })}
-                                  >
-                                    <X className="h-3 w-3" />
-                                    Cancelar
-                                  </Button>
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+          <TabsContent value="invitations">
+            <Card>
+              <CardContent className="p-0">
+                {invLoading ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    Cargando invitaciones...
+                  </div>
+                ) : (invitationsList || []).length === 0 ? (
+                  <div className="p-8 text-center">
+                    <Mail className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
+                    <p className="text-muted-foreground">No hay invitaciones</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Use el botón "Invitar Usuario" para enviar invitaciones
+                    </p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border">
+                          <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                            Nombre
+                          </th>
+                          <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                            Email
+                          </th>
+                          <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                            Rol Asignado
+                          </th>
+                          <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                            Proyecto
+                          </th>
+                          <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                            Estado
+                          </th>
+                          <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                            Fecha
+                          </th>
+                          <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                            Acciones
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(invitationsList || []).map((item: any) => {
+                          const inv = item.invitation;
+                          const proj = item.project;
+                          const assignedProjectLabel = formatAssignedProjects({
+                            ...inv,
+                            assignedProjects:
+                              item.assignedProjects ?? (proj ? [proj] : []),
+                          });
+                          const statusCfg =
+                            STATUS_CONFIG[inv.status] ||
+                            STATUS_CONFIG.pendiente;
+                          const StatusIcon = statusCfg.icon;
+                          return (
+                            <tr
+                              key={inv.id}
+                              className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
+                            >
+                              <td className="p-3 font-medium">{inv.name}</td>
+                              <td className="p-3 text-xs text-muted-foreground">
+                                {inv.email}
+                              </td>
+                              <td className="p-3">
+                                <Badge variant="outline" className="text-xs">
+                                  {ROLE_LABELS[inv.buildreqRole] ||
+                                    inv.buildreqRole}
+                                </Badge>
+                              </td>
+                              <td className="p-3 text-xs">
+                                {assignedProjectLabel === "N/A" ? (
+                                  <span className="text-muted-foreground">
+                                    N/A
+                                  </span>
+                                ) : (
+                                  assignedProjectLabel
+                                )}
+                              </td>
+                              <td className="p-3">
+                                <Badge
+                                  variant={statusCfg.variant}
+                                  className="gap-1 text-xs"
+                                >
+                                  <StatusIcon className="h-3 w-3" />
+                                  {statusCfg.label}
+                                </Badge>
+                              </td>
+                              <td className="p-3 text-xs text-muted-foreground">
+                                {new Date(inv.createdAt).toLocaleDateString(
+                                  "es"
+                                )}
+                              </td>
+                              <td className="p-3">
+                                {inv.status === "pendiente" && (
+                                  <div className="flex gap-1">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 text-xs gap-1"
+                                      onClick={() => {
+                                        resendInvitationMutation.mutate({
+                                          invitationId: inv.id,
+                                          origin: appSiteUrl,
+                                        });
+                                      }}
+                                    >
+                                      <RefreshCw className="h-3 w-3" />
+                                      Reenviar
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 text-xs gap-1 text-destructive hover:text-destructive"
+                                      onClick={() =>
+                                        cancelInvitationMutation.mutate({
+                                          invitationId: inv.id,
+                                        })
+                                      }
+                                    >
+                                      <X className="h-3 w-3" />
+                                      Cancelar
+                                    </Button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         ) : null}
       </Tabs>
 
       {/* EDIT USER DIALOG */}
       <Dialog
         open={Boolean(editingUser)}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open) closeEditUserDialog();
         }}
       >
@@ -1071,7 +1233,7 @@ export default function Usuarios() {
               <Input
                 id="edit-name"
                 value={editName}
-                onChange={(event) => setEditName(event.target.value)}
+                onChange={event => setEditName(event.target.value)}
               />
             </div>
             <div className="space-y-2">
@@ -1080,14 +1242,14 @@ export default function Usuarios() {
                 id="edit-email"
                 type="email"
                 value={editEmail}
-                onChange={(event) => setEditEmail(event.target.value)}
+                onChange={event => setEditEmail(event.target.value)}
               />
             </div>
             <div className="space-y-2">
               <Label>Rol en BuildReq</Label>
               <Select
                 value={editRole}
-                onValueChange={(value) => {
+                onValueChange={value => {
                   setEditRole(value);
                   if (!isProjectAssignableRole(value)) {
                     setEditProjectIds([]);
@@ -1098,7 +1260,7 @@ export default function Usuarios() {
                   <SelectValue placeholder="Seleccionar rol" />
                 </SelectTrigger>
                 <SelectContent>
-                  {assignableRoleOptions.map((option) => (
+                  {assignableRoleOptions.map(option => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>
@@ -1117,6 +1279,26 @@ export default function Usuarios() {
                 />
               </div>
             ) : null}
+            <div className="flex items-start gap-3 rounded-md border border-border p-3">
+              <Checkbox
+                id="edit-user-active"
+                checked={editIsActive}
+                onCheckedChange={checked => setEditIsActive(checked === true)}
+                disabled={editingUser?.id === user?.id}
+              />
+              <div className="space-y-1">
+                <Label htmlFor="edit-user-active" className="cursor-pointer">
+                  Usuario activo
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {editingUser?.id === user?.id
+                    ? "No puede desactivar su propio usuario."
+                    : editIsActive
+                      ? "El usuario puede iniciar sesión."
+                      : "El usuario no podrá iniciar sesión."}
+                </p>
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -1141,7 +1323,7 @@ export default function Usuarios() {
       {/* RESET PASSWORD DIALOG */}
       <Dialog
         open={Boolean(passwordUser)}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open) closePasswordDialog();
         }}
       >
@@ -1152,7 +1334,8 @@ export default function Usuarios() {
               Cambiar contraseña
             </DialogTitle>
             <DialogDescription>
-              La contraseña se actualiza en Supabase y quedará pendiente de cambio.
+              La contraseña se actualiza en Supabase y quedará pendiente de
+              cambio.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -1169,16 +1352,18 @@ export default function Usuarios() {
                   id="reset-password"
                   type={showResetPassword ? "text" : "password"}
                   value={resetPassword}
-                  onChange={(event) => setResetPassword(event.target.value)}
+                  onChange={event => setResetPassword(event.target.value)}
                   autoComplete="new-password"
                   className="pr-10"
                 />
                 <button
                   type="button"
-                  onClick={() => setShowResetPassword((value) => !value)}
+                  onClick={() => setShowResetPassword(value => !value)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   aria-label={
-                    showResetPassword ? "Ocultar contraseña" : "Mostrar contraseña"
+                    showResetPassword
+                      ? "Ocultar contraseña"
+                      : "Mostrar contraseña"
                   }
                 >
                   {showResetPassword ? (
@@ -1197,7 +1382,7 @@ export default function Usuarios() {
                 id="reset-password-confirmation"
                 type={showResetPassword ? "text" : "password"}
                 value={resetPasswordConfirmation}
-                onChange={(event) =>
+                onChange={event =>
                   setResetPasswordConfirmation(event.target.value)
                 }
                 autoComplete="new-password"
@@ -1227,7 +1412,10 @@ export default function Usuarios() {
       </Dialog>
 
       {/* DIRECT USER DIALOG */}
-      <Dialog open={showDirectUserDialog} onOpenChange={setShowDirectUserDialog}>
+      <Dialog
+        open={showDirectUserDialog}
+        onOpenChange={setShowDirectUserDialog}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1245,7 +1433,7 @@ export default function Usuarios() {
                 id="direct-name"
                 placeholder="Ej: Juan Pérez"
                 value={directName}
-                onChange={(e) => setDirectName(e.target.value)}
+                onChange={e => setDirectName(e.target.value)}
               />
             </div>
             <div className="space-y-2">
@@ -1255,7 +1443,7 @@ export default function Usuarios() {
                 type="email"
                 placeholder="Ej: juan@empresa.com"
                 value={directEmail}
-                onChange={(e) => setDirectEmail(e.target.value)}
+                onChange={e => setDirectEmail(e.target.value)}
               />
             </div>
             <div className="space-y-2">
@@ -1265,15 +1453,19 @@ export default function Usuarios() {
                   id="direct-password"
                   type={showDirectPassword ? "text" : "password"}
                   value={directPassword}
-                  onChange={(e) => setDirectPassword(e.target.value)}
+                  onChange={e => setDirectPassword(e.target.value)}
                   autoComplete="new-password"
                   className="pr-10"
                 />
                 <button
                   type="button"
-                  onClick={() => setShowDirectPassword((value) => !value)}
+                  onClick={() => setShowDirectPassword(value => !value)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  aria-label={showDirectPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  aria-label={
+                    showDirectPassword
+                      ? "Ocultar contraseña"
+                      : "Mostrar contraseña"
+                  }
                 >
                   {showDirectPassword ? (
                     <EyeOff className="h-4 w-4" />
@@ -1287,7 +1479,7 @@ export default function Usuarios() {
               <Label>Rol en BuildReq</Label>
               <Select
                 value={directRole}
-                onValueChange={(value) => {
+                onValueChange={value => {
                   setDirectRole(value);
                   if (!isProjectAssignableRole(value)) {
                     setDirectProjectIds([]);
@@ -1298,7 +1490,7 @@ export default function Usuarios() {
                   <SelectValue placeholder="Seleccionar rol" />
                 </SelectTrigger>
                 <SelectContent>
-                  {assignableRoleOptions.map((option) => (
+                  {assignableRoleOptions.map(option => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>
@@ -1335,7 +1527,9 @@ export default function Usuarios() {
               className="gap-2"
             >
               <UserPlus className="h-4 w-4" />
-              {createDirectUserMutation.isPending ? "Creando..." : "Crear Usuario"}
+              {createDirectUserMutation.isPending
+                ? "Creando..."
+                : "Crear Usuario"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1350,7 +1544,8 @@ export default function Usuarios() {
               Invitar Nuevo Usuario
             </DialogTitle>
             <DialogDescription>
-              Complete los datos del usuario a invitar. Se generará un enlace de acceso.
+              Complete los datos del usuario a invitar. Se generará un enlace de
+              acceso.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -1360,7 +1555,7 @@ export default function Usuarios() {
                 id="inv-name"
                 placeholder="Ej: Juan Pérez"
                 value={invName}
-                onChange={(e) => setInvName(e.target.value)}
+                onChange={e => setInvName(e.target.value)}
               />
             </div>
             <div className="space-y-2">
@@ -1370,14 +1565,14 @@ export default function Usuarios() {
                 type="email"
                 placeholder="Ej: juan@empresa.com"
                 value={invEmail}
-                onChange={(e) => setInvEmail(e.target.value)}
+                onChange={e => setInvEmail(e.target.value)}
               />
             </div>
             <div className="space-y-2">
               <Label>Rol en BuildReq</Label>
               <Select
                 value={invRole}
-                onValueChange={(value) => {
+                onValueChange={value => {
                   setInvRole(value);
                   if (!isProjectAssignableRole(value)) {
                     setInvProjectIds([]);
@@ -1388,7 +1583,7 @@ export default function Usuarios() {
                   <SelectValue placeholder="Seleccionar rol" />
                 </SelectTrigger>
                 <SelectContent>
-                  {assignableRoleOptions.map((option) => (
+                  {assignableRoleOptions.map(option => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>
@@ -1409,7 +1604,13 @@ export default function Usuarios() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowInviteDialog(false); resetForm(); }}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowInviteDialog(false);
+                resetForm();
+              }}
+            >
               Cancelar
             </Button>
             <Button
@@ -1418,7 +1619,9 @@ export default function Usuarios() {
               className="gap-2"
             >
               <Send className="h-4 w-4" />
-              {createInvitationMutation.isPending ? "Creando..." : "Crear Invitación"}
+              {createInvitationMutation.isPending
+                ? "Creando..."
+                : "Crear Invitación"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1447,7 +1650,9 @@ export default function Usuarios() {
                 <p className="text-sm font-medium">{emailData.subject}</p>
               </div>
               <div>
-                <Label className="text-xs text-muted-foreground">Contenido:</Label>
+                <Label className="text-xs text-muted-foreground">
+                  Contenido:
+                </Label>
                 <div className="mt-1 p-3 bg-muted rounded-md text-sm whitespace-pre-wrap max-h-60 overflow-y-auto">
                   {emailData.content}
                 </div>
@@ -1455,13 +1660,15 @@ export default function Usuarios() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={copyEmailContent} className="gap-2">
+            <Button
+              variant="outline"
+              onClick={copyEmailContent}
+              className="gap-2"
+            >
               <Copy className="h-4 w-4" />
               Copiar Contenido
             </Button>
-            <Button onClick={() => setShowEmailDialog(false)}>
-              Cerrar
-            </Button>
+            <Button onClick={() => setShowEmailDialog(false)}>Cerrar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

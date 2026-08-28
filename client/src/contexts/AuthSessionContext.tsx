@@ -9,6 +9,15 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { INACTIVE_USER_ERR_MSG } from "@shared/const";
+
+function isInactiveUserError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes(INACTIVE_USER_ERR_MSG) ||
+    /user.*bann|banned|usuario.*inactivo/i.test(message)
+  );
+}
 
 type AuthSessionContextValue = {
   ready: boolean;
@@ -129,7 +138,14 @@ export function AuthSessionProvider({ children }: AuthSessionProviderProps) {
           void clearBackendSession();
         }
       } catch (error) {
-        console.error("[Auth] Failed to bootstrap session bridge", error);
+        if (isInactiveUserError(error)) {
+          await Promise.allSettled([
+            supabase.auth.signOut({ scope: "local" }),
+            clearBackendSession(),
+          ]);
+        } else {
+          console.error("[Auth] Failed to bootstrap session bridge", error);
+        }
       } finally {
         if (active) {
           setReady(true);
@@ -145,16 +161,21 @@ export function AuthSessionProvider({ children }: AuthSessionProviderProps) {
       if (!active) return;
 
       if (
-        (
-          event === "SIGNED_IN" ||
+        (event === "SIGNED_IN" ||
           event === "TOKEN_REFRESHED" ||
           event === "PASSWORD_RECOVERY" ||
-          event === "USER_UPDATED"
-        ) &&
+          event === "USER_UPDATED") &&
         session?.access_token
       ) {
         void syncBackendSession(session.access_token).catch(error => {
-          console.error("[Auth] Failed to sync backend session", error);
+          if (isInactiveUserError(error)) {
+            void Promise.allSettled([
+              supabase.auth.signOut({ scope: "local" }),
+              clearBackendSession(),
+            ]);
+          } else {
+            console.error("[Auth] Failed to sync backend session", error);
+          }
         });
         return;
       }

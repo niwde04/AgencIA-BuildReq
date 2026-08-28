@@ -15,6 +15,15 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useLocation } from "wouter";
+import { INACTIVE_USER_ERR_MSG } from "@shared/const";
+
+function getLoginErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/user.*bann|banned|usuario.*inactivo/i.test(message)) {
+    return INACTIVE_USER_ERR_MSG;
+  }
+  return message || "Error desconocido";
+}
 
 export default function Home() {
   const [, setLocation] = useLocation();
@@ -43,11 +52,13 @@ export default function Home() {
       utils.auth.me.invalidate();
     },
   });
+  const clearSessionMutation = trpc.auth.logout.useMutation();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoginLoading(true);
+    let sessionCreated = false;
 
     try {
       let result;
@@ -80,9 +91,11 @@ export default function Home() {
       }
 
       if (result.error) {
-        setError(result.error.message);
+        setError(getLoginErrorMessage(result.error));
         return;
       }
+
+      sessionCreated = Boolean(result.data.session);
 
       if (mode === "register" && !result.data.session) {
         setError("✅ Cuenta creada. Revisa tu email para confirmar tu cuenta.");
@@ -96,13 +109,22 @@ export default function Home() {
         });
         const refreshedUser = await meQuery.refetch();
         if (!refreshedUser.data) {
-          setError("Sesión iniciada, pero no se pudo cargar el usuario. Actualiza la página e intenta de nuevo.");
+          setError(
+            "Sesión iniciada, pero no se pudo cargar el usuario. Actualiza la página e intenta de nuevo."
+          );
           return;
         }
         setLocation("/");
       }
     } catch (err: any) {
-      setError(err.message ?? "Error desconocido");
+      if (sessionCreated) {
+        await Promise.allSettled([
+          supabase.auth.signOut({ scope: "local" }),
+          clearSessionMutation.mutateAsync(),
+        ]);
+        utils.auth.me.setData(undefined, null);
+      }
+      setError(getLoginErrorMessage(err));
     } finally {
       setLoginLoading(false);
     }
@@ -125,8 +147,8 @@ export default function Home() {
             Bienvenido, {user?.name || "Usuario"}
           </h1>
           <p className="text-muted-foreground mb-8">
-            Accede al panel de control para gestionar requisiciones de materiales,
-            flujos de abastecimiento y logística inversa.
+            Accede al panel de control para gestionar requisiciones de
+            materiales, flujos de abastecimiento y logística inversa.
           </p>
           <Button onClick={() => setLocation("/")} size="lg">
             Ir al Dashboard
@@ -168,9 +190,9 @@ export default function Home() {
               <span className="text-primary">de construcción</span>
             </h1>
             <p className="text-lg text-muted-foreground max-w-lg leading-relaxed">
-              Plataforma centralizada para gestionar requisiciones de materiales,
-              flujos de abastecimiento y logística inversa. Preparada para
-              integración con SAP Business One.
+              Plataforma centralizada para gestionar requisiciones de
+              materiales, flujos de abastecimiento y logística inversa.
+              Preparada para integración con SAP Business One.
             </p>
             <div className="grid grid-cols-2 gap-3 max-w-xs">
               <div className="bg-primary/5 border border-primary/10 p-4 space-y-1">
@@ -219,7 +241,7 @@ export default function Home() {
                     type="email"
                     required
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={e => setEmail(e.target.value)}
                     className="w-full border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
                     placeholder="usuario@empresa.com"
                     autoComplete="email"
@@ -237,16 +259,22 @@ export default function Home() {
                         type={showPassword ? "text" : "password"}
                         required
                         value={password}
-                        onChange={(e) => setPassword(e.target.value)}
+                        onChange={e => setPassword(e.target.value)}
                         className="w-full border border-border bg-background px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
                         placeholder="••••••••"
-                        autoComplete={mode === "login" ? "current-password" : "new-password"}
+                        autoComplete={
+                          mode === "login" ? "current-password" : "new-password"
+                        }
                       />
                       <button
                         type="button"
-                        onClick={() => setShowPassword((v) => !v)}
+                        onClick={() => setShowPassword(v => !v)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                        aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                        aria-label={
+                          showPassword
+                            ? "Ocultar contraseña"
+                            : "Mostrar contraseña"
+                        }
                       >
                         {showPassword ? (
                           <EyeOff className="w-4 h-4" />
@@ -260,7 +288,9 @@ export default function Home() {
 
                 {/* Error message */}
                 {error && (
-                  <p className={`text-sm ${error.startsWith("✅") ? "text-green-600" : "text-destructive"}`}>
+                  <p
+                    className={`text-sm ${error.startsWith("✅") ? "text-green-600" : "text-destructive"}`}
+                  >
                     {error}
                   </p>
                 )}
@@ -287,7 +317,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => {
-                    setMode((m) => (m === "login" ? "register" : "login"));
+                    setMode(m => (m === "login" ? "register" : "login"));
                     setError(null);
                   }}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
@@ -346,7 +376,7 @@ export default function Home() {
                 title: "Solicitud Compra",
                 desc: "Generación de solicitud convertible a Orden de Compra para compra local o extranjera",
               },
-            ].map((feature) => (
+            ].map(feature => (
               <div
                 key={feature.title}
                 className="border border-border p-6 space-y-3 hover:border-primary/30 transition-colors"

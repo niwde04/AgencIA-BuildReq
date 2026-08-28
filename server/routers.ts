@@ -2,7 +2,7 @@ import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
-import { verifySupabaseToken } from "./_core/supabaseAuth";
+import { authenticateSupabaseToken } from "./_core/supabaseAuth";
 import { z } from "zod";
 
 import { projectsRouter } from "./routers/projects";
@@ -49,10 +49,7 @@ export const appRouter = router({
     syncSupabaseSession: publicProcedure
       .input(z.object({ token: z.string() }))
       .mutation(async ({ input, ctx }) => {
-        const payload = await verifySupabaseToken(input.token);
-        if (!payload?.sub) {
-          throw new Error("Invalid Supabase token");
-        }
+        await authenticateSupabaseToken(input.token);
         // Store the Supabase JWT as the session cookie
         const cookieOptions = getSessionCookieOptions(ctx.req);
         ctx.res.cookie(COOKIE_NAME, input.token, {

@@ -32,14 +32,15 @@ type ManagedUser = {
 function canManageUsers(user: UserManager) {
   if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
-    user.role === "admin" ||
-    user.buildreqRole === "administracion_central"
+    user.role === "admin" || user.buildreqRole === "administracion_central"
   );
 }
 
 function hasGlobalUserManagement(user: UserManager) {
   if (isProcurementApproverRole(user.buildreqRole)) return false;
-  return user.role === "admin" || user.buildreqRole === "administracion_central";
+  return (
+    user.role === "admin" || user.buildreqRole === "administracion_central"
+  );
 }
 
 function projectSetsOverlap(left: number[], right: number[]) {
@@ -134,21 +135,23 @@ function canManageUserPasswords(
   }
 }
 
-const userPasswordManagementProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  if (!canManageUsers(ctx.user)) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "No tiene permisos para gestionar contraseñas de usuarios.",
+const userPasswordManagementProcedure = protectedProcedure.use(
+  async ({ ctx, next }) => {
+    if (!canManageUsers(ctx.user)) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "No tiene permisos para gestionar contraseñas de usuarios.",
+      });
+    }
+
+    return next({
+      ctx: {
+        ...ctx,
+        user: ctx.user,
+      },
     });
   }
-
-  return next({
-    ctx: {
-      ...ctx,
-      user: ctx.user,
-    },
-  });
-});
+);
 
 function normalizeAssignedProjectIds(
   buildreqRole: z.infer<typeof buildreqRoleSchema>,
@@ -337,6 +340,7 @@ export const userManagementRouter = router({
         buildreqRole: buildreqRoleSchema,
         assignedProjectId: z.number().int().positive().nullable().optional(),
         assignedProjectIds: z.array(z.number().int().positive()).optional(),
+        isActive: z.boolean(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -349,6 +353,13 @@ export const userManagementRouter = router({
         });
       }
       assertCanManageTargetUser(ctx.user, user);
+
+      if (ctx.user.id === input.userId && !input.isActive) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "No puede desactivar su propio usuario.",
+        });
+      }
 
       const name = input.name.trim();
       const email = input.email.trim().toLowerCase();
@@ -365,6 +376,7 @@ export const userManagementRouter = router({
 
       try {
         const supabase = getSupabaseAdminClient();
+        const statusChanged = input.isActive !== user.isActive;
         const { error } = await supabase.auth.admin.updateUserById(
           user.openId,
           {
@@ -374,6 +386,9 @@ export const userManagementRouter = router({
               name,
               full_name: name,
             },
+            ...(statusChanged
+              ? { ban_duration: input.isActive ? "none" : "876000h" }
+              : {}),
           } as any
         );
 
@@ -389,6 +404,7 @@ export const userManagementRouter = router({
           email,
           buildreqRole: input.buildreqRole,
           assignedProjectIds,
+          isActive: input.isActive,
         });
       } catch (error) {
         if (error instanceof TRPCError) throw error;
@@ -420,7 +436,8 @@ export const userManagementRouter = router({
       if (!canManageUserPasswords(ctx.user, user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "No tiene permisos para cambiar la contraseña de este usuario.",
+          message:
+            "No tiene permisos para cambiar la contraseña de este usuario.",
         });
       }
 

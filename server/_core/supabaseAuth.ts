@@ -5,7 +5,7 @@ import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
 import { ForbiddenError } from "@shared/_core/errors";
-import { COOKIE_NAME } from "@shared/const";
+import { COOKIE_NAME, INACTIVE_USER_ERR_MSG } from "@shared/const";
 
 export type SupabaseJwtPayload = {
   sub: string;
@@ -123,17 +123,18 @@ function extractToken(req: Request): string | null {
  * Authenticate an Express request.
  * Returns the DB User or throws ForbiddenError.
  */
-export async function authenticateRequest(req: Request): Promise<User> {
-  const token = extractToken(req);
-  if (!token) {
-    throw ForbiddenError("Missing auth token");
-  }
-
+export async function authenticateSupabaseToken(token: string): Promise<User> {
   const payload = await verifySupabaseToken(token);
   if (!payload?.sub) {
     throw ForbiddenError("Invalid or expired token");
   }
 
+  return authenticateSupabasePayload(payload);
+}
+
+export async function authenticateSupabasePayload(
+  payload: SupabaseJwtPayload
+): Promise<User> {
   const openId = payload.sub;
   const email = payload.email ?? payload.user_metadata?.email ?? null;
   const name =
@@ -150,6 +151,10 @@ export async function authenticateRequest(req: Request): Promise<User> {
     });
     user = await db.getUserByOpenId(openId);
   } else {
+    if (!user.isActive) {
+      throw ForbiddenError(INACTIVE_USER_ERR_MSG);
+    }
+
     const now = new Date();
     if (shouldTouchLastSignedIn(user, now)) {
       await db.touchUserLastSignedIn(openId, now);
@@ -158,6 +163,10 @@ export async function authenticateRequest(req: Request): Promise<User> {
   }
   if (!user) {
     throw ForbiddenError("User not found after upsert");
+  }
+
+  if (!user.isActive) {
+    throw ForbiddenError(INACTIVE_USER_ERR_MSG);
   }
 
   // When the app uses Supabase email auth, apply any pending invitation by email
@@ -191,4 +200,17 @@ export async function authenticateRequest(req: Request): Promise<User> {
   }
 
   return user;
+}
+
+/**
+ * Authenticate an Express request.
+ * Returns the DB User or throws ForbiddenError.
+ */
+export async function authenticateRequest(req: Request): Promise<User> {
+  const token = extractToken(req);
+  if (!token) {
+    throw ForbiddenError("Missing auth token");
+  }
+
+  return authenticateSupabaseToken(token);
 }
