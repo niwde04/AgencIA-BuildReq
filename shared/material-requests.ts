@@ -62,7 +62,9 @@ export function getNeededByDate(
   }
 
   const baseDate = createdAt ? new Date(createdAt) : new Date();
-  return purchaseUrgency === "urgente" ? null : calculateDefaultNeededBy(baseDate);
+  return purchaseUrgency === "urgente"
+    ? null
+    : calculateDefaultNeededBy(baseDate);
 }
 
 export function isUrgentDateWithinPolicy(
@@ -103,4 +105,27 @@ export function getDueDateStatus(date: Date | string | null | undefined) {
     return { label: "Próxima", tone: "soon" as const };
   }
   return { label: "En fecha", tone: "ok" as const };
+}
+
+export type SapTranslationDuplicateCandidate = {
+  id: number;
+  itemName?: string | null;
+  quantity?: string | number | null;
+  unit?: string | null;
+  sapItemCode?: string | null;
+};
+
+export function findOtherItemsWithSapCode(
+  items: SapTranslationDuplicateCandidate[],
+  itemId: number,
+  sapItemCode: string
+) {
+  const normalizedSapItemCode = sapItemCode.trim().toLowerCase();
+  if (!normalizedSapItemCode) return [];
+
+  return items.filter(
+    item =>
+      item.id !== itemId &&
+      item.sapItemCode?.trim().toLowerCase() === normalizedSapItemCode
+  );
 }

@@ -56,6 +56,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import {
+  findOtherItemsWithSapCode,
   formatDateForDisplay,
   getDueDateStatus,
   getNeededByDate,
@@ -242,7 +243,8 @@ const parseQuantityValue = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-const formatQuantityValue = (value: unknown) => parseQuantityValue(value).toFixed(2);
+const formatQuantityValue = (value: unknown) =>
+  parseQuantityValue(value).toFixed(2);
 
 const formatProjectStockWarehouseLabel = (warehouse: any) => {
   const localCode = warehouse.localCode || warehouse.warehouseCode;
@@ -314,12 +316,16 @@ function ProjectStockBreakdown({
                 Dueño: {formatProjectStockOwnerLabel(warehouse)}
               </span>
               {locationLabel ? (
-                <span className="block truncate">Ubicación: {locationLabel}</span>
+                <span className="block truncate">
+                  Ubicación: {locationLabel}
+                </span>
               ) : null}
             </span>
             <span
               className={`shrink-0 font-mono text-[11px] ${
-                quantity > 0 ? "font-semibold text-foreground" : "text-muted-foreground"
+                quantity > 0
+                  ? "font-semibold text-foreground"
+                  : "text-muted-foreground"
               }`}
             >
               {formatQuantityValue(quantity)}
@@ -354,10 +360,15 @@ const formatEventDateTime = (value: string | Date | null | undefined) => {
   });
 };
 
-const getLatestEventDate = (values: Array<string | Date | null | undefined>) => {
+const getLatestEventDate = (
+  values: Array<string | Date | null | undefined>
+) => {
   const validDates = values
-    .map((value) => (value ? new Date(value) : null))
-    .filter((date): date is Date => date instanceof Date && !Number.isNaN(date.getTime()))
+    .map(value => (value ? new Date(value) : null))
+    .filter(
+      (date): date is Date =>
+        date instanceof Date && !Number.isNaN(date.getTime())
+    )
     .sort((a, b) => b.getTime() - a.getTime());
 
   return validDates[0] ?? null;
@@ -365,8 +376,8 @@ const getLatestEventDate = (values: Array<string | Date | null | undefined>) => 
 
 const getApprovalEventLabel = (row: ItemDisplayRow) => {
   const eventDate = getLatestEventDate([
-    ...row.approvedItems.map((entry) => entry.approvedAt),
-    ...row.rejectedItems.map((entry) => entry.approvedAt),
+    ...row.approvedItems.map(entry => entry.approvedAt),
+    ...row.rejectedItems.map(entry => entry.approvedAt),
   ]);
   const formatted = formatEventDateTime(eventDate);
   if (!formatted) return null;
@@ -397,7 +408,10 @@ const getFlowEventTimeline = (event: ItemDisplayRow["flowEvents"][number]) => {
   return lines;
 };
 
-const normalizeItemFamilyValue = (value: unknown) => String(value ?? "").trim().toLowerCase();
+const normalizeItemFamilyValue = (value: unknown) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase();
 
 const buildItemFamilyKey = (item: any) =>
   [
@@ -464,10 +478,11 @@ function SapSearchBox({
   const [isEditing, setIsEditing] = useState(false);
   const querySearch = search.trim();
 
-  const { data: results, isFetching } = trpc.requestItems.searchSapCatalog.useQuery(
-    { search: querySearch },
-    { enabled: querySearch.length >= 2 }
-  );
+  const { data: results, isFetching } =
+    trpc.requestItems.searchSapCatalog.useQuery(
+      { search: querySearch },
+      { enabled: querySearch.length >= 2 }
+    );
 
   useEffect(() => {
     if (currentCode) {
@@ -524,7 +539,9 @@ function SapSearchBox({
   }
 
   if (disabled) {
-    return <span className="text-xs text-muted-foreground italic">Sin traducir</span>;
+    return (
+      <span className="text-xs text-muted-foreground italic">Sin traducir</span>
+    );
   }
 
   const hasSearch = querySearch.length >= 2;
@@ -539,7 +556,7 @@ function SapSearchBox({
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
             <Input
               value={search}
-              onChange={(e) => {
+              onChange={e => {
                 const nextSearch = e.target.value;
                 setSearch(nextSearch);
                 if (nextSearch.trim().length >= 2) {
@@ -560,59 +577,70 @@ function SapSearchBox({
           className="w-[min(680px,calc(100vw-2rem))] max-h-[300px] overflow-y-auto p-0"
           align="start"
           sideOffset={4}
-          onOpenAutoFocus={(e) => e.preventDefault()}
+          onOpenAutoFocus={e => e.preventDefault()}
         >
           {isFetching ? (
             <div className="p-3">
-              <p className="text-xs text-muted-foreground text-center">Buscando...</p>
+              <p className="text-xs text-muted-foreground text-center">
+                Buscando...
+              </p>
             </div>
           ) : null}
-          {!isFetching && hasResults && results.map((item: any) => (
-            <button
-              key={item.id}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                onSelect({
-                  itemCode: item.itemCode,
-                  description: item.description,
-                  unit: item.unit,
-                });
-                setSearch("");
-                setIsEditing(false);
-                setOpen(false);
-              }}
-              className="flex w-full items-start gap-3 border-b border-border px-3 py-2 text-left transition-colors last:border-0 hover:bg-muted/50"
-            >
-              <span className="font-mono text-xs font-bold text-primary shrink-0">
-                {item.itemCode}
-              </span>
-              <span className="min-w-0 text-xs text-foreground">
-                <span className="block whitespace-normal break-words">
-                  {item.description}
+          {!isFetching &&
+            hasResults &&
+            results.map((item: any) => (
+              <button
+                key={item.id}
+                type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => {
+                  onSelect({
+                    itemCode: item.itemCode,
+                    description: item.description,
+                    unit: item.unit,
+                  });
+                  setSearch("");
+                  setIsEditing(false);
+                  setOpen(false);
+                }}
+                className="flex w-full items-start gap-3 border-b border-border px-3 py-2 text-left transition-colors last:border-0 hover:bg-muted/50"
+              >
+                <span className="font-mono text-xs font-bold text-primary shrink-0">
+                  {item.itemCode}
                 </span>
-                {item.brand || item.partNumber ? (
-                  <span className="mt-1 block whitespace-normal break-words text-muted-foreground">
-                    {[item.brand && `Marca: ${item.brand}`, item.partNumber && `No. parte: ${item.partNumber}`]
-                      .filter(Boolean)
-                      .join(" · ")}
+                <span className="min-w-0 text-xs text-foreground">
+                  <span className="block whitespace-normal break-words">
+                    {item.description}
                   </span>
-                ) : null}
-                <span
-                  className={`mt-1 block text-[11px] ${
-                    item.unit ? "text-muted-foreground" : "font-medium text-amber-700"
-                  }`}
-                >
-                  {item.unit
-                    ? `Unidad base: ${item.unit}`
-                    : "Unidad pendiente: se solicitará al seleccionar"}
+                  {item.brand || item.partNumber ? (
+                    <span className="mt-1 block whitespace-normal break-words text-muted-foreground">
+                      {[
+                        item.brand && `Marca: ${item.brand}`,
+                        item.partNumber && `No. parte: ${item.partNumber}`,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  ) : null}
+                  <span
+                    className={`mt-1 block text-[11px] ${
+                      item.unit
+                        ? "text-muted-foreground"
+                        : "font-medium text-amber-700"
+                    }`}
+                  >
+                    {item.unit
+                      ? `Unidad base: ${item.unit}`
+                      : "Unidad pendiente: se solicitará al seleccionar"}
+                  </span>
                 </span>
-              </span>
-            </button>
-          ))}
+              </button>
+            ))}
           {noResults && (
             <div className="p-3">
-              <p className="text-xs text-muted-foreground text-center">Sin resultados</p>
+              <p className="text-xs text-muted-foreground text-center">
+                Sin resultados
+              </p>
             </div>
           )}
         </PopoverContent>
@@ -658,7 +686,10 @@ export default function SolicitudDetalle() {
 
   const { data: availableFlows } = trpc.supplyFlows.availableFlows.useQuery(
     undefined,
-    { refetchOnMount: "always", refetchOnWindowFocus: true }
+    {
+      refetchOnMount: "always",
+      refetchOnWindowFocus: true,
+    }
   );
   const { data: projectWarehouses } = trpc.warehouses.list.useQuery(
     {
@@ -678,7 +709,7 @@ export default function SolicitudDetalle() {
   const items = data?.items ?? [];
 
   const translateMutation = trpc.requestItems.translateToSap.useMutation({
-    onSuccess: (result) => {
+    onSuccess: result => {
       toast.success(
         result.articleUnitUpdated
           ? `Traducción guardada. Unidad ${result.unit} agregada al artículo ${result.sapItemCode}.`
@@ -688,48 +719,49 @@ export default function SolicitudDetalle() {
       setPendingSapUnit("");
       invalidateAll();
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(e.message),
   });
 
-  const clearSapTranslationMutation = trpc.requestItems.clearSapTranslation.useMutation({
-    onSuccess: (result, variables) => {
-      toast.success(
-        result.clearedFlow
-          ? "Traducción SAP eliminada y flujo retirado"
-          : "Traducción SAP eliminada"
-      );
-      setSelectedWarehouseByItemId((current) => {
-        if (!(variables.id in current)) return current;
-        const next = { ...current };
-        delete next[variables.id];
-        return next;
-      });
-      setPendingFlowByItemId((current) => {
-        if (!(variables.id in current)) return current;
-        const next = { ...current };
-        delete next[variables.id];
-        return next;
-      });
-      invalidateAll();
-    },
-    onError: (e) => toast.error(e.message),
-  });
+  const clearSapTranslationMutation =
+    trpc.requestItems.clearSapTranslation.useMutation({
+      onSuccess: (result, variables) => {
+        toast.success(
+          result.clearedFlow
+            ? "Traducción SAP eliminada y flujo retirado"
+            : "Traducción SAP eliminada"
+        );
+        setSelectedWarehouseByItemId(current => {
+          if (!(variables.id in current)) return current;
+          const next = { ...current };
+          delete next[variables.id];
+          return next;
+        });
+        setPendingFlowByItemId(current => {
+          if (!(variables.id in current)) return current;
+          const next = { ...current };
+          delete next[variables.id];
+          return next;
+        });
+        invalidateAll();
+      },
+      onError: e => toast.error(e.message),
+    });
 
   const assignFlowMutation = trpc.requestItems.assignFlow.useMutation({
     onSuccess: (_, variables) => {
       toast.success("Flujo actualizado");
-      setWarehousePromptItemId((current) =>
+      setWarehousePromptItemId(current =>
         current === variables.id ? null : current
       );
       if (variables.flowType !== "despacho_bodega") {
-        setSelectedWarehouseByItemId((current) => {
+        setSelectedWarehouseByItemId(current => {
           if (!(variables.id in current)) return current;
           const next = { ...current };
           delete next[variables.id];
           return next;
         });
       }
-      setPendingFlowByItemId((current) => {
+      setPendingFlowByItemId(current => {
         if (!(variables.id in current)) return current;
         const next = { ...current };
         delete next[variables.id];
@@ -737,12 +769,12 @@ export default function SolicitudDetalle() {
       });
       invalidateAll();
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(e.message),
   });
 
   const rejectPendingQuantityMutation =
     trpc.requestItems.rejectPendingQuantity.useMutation({
-      onSuccess: (result) => {
+      onSuccess: result => {
         setPendingBalanceRejection(null);
         setBalanceRejectReason("");
         toast.success(
@@ -750,27 +782,28 @@ export default function SolicitudDetalle() {
         );
         invalidateAll();
       },
-      onError: (e) => toast.error(e.message),
+      onError: e => toast.error(e.message),
     });
 
-  const rejectApprovedItemMutation = trpc.requestItems.rejectApproved.useMutation({
-    onSuccess: (result) => {
-      setPendingApprovedItemRejection(null);
-      setApprovedItemRejectReason("");
-      toast.success(
-        `Ítem rechazado: ${formatQuantityValue(result.rejectedQuantity)}`
-      );
-      invalidateAll();
-    },
-    onError: (e) => toast.error(e.message),
-  });
+  const rejectApprovedItemMutation =
+    trpc.requestItems.rejectApproved.useMutation({
+      onSuccess: result => {
+        setPendingApprovedItemRejection(null);
+        setApprovedItemRejectReason("");
+        toast.success(
+          `Ítem rechazado: ${formatQuantityValue(result.rejectedQuantity)}`
+        );
+        invalidateAll();
+      },
+      onError: e => toast.error(e.message),
+    });
 
   const approveMutation = trpc.materialRequests.approve.useMutation({
     onSuccess: () => {
       toast.success("Requisición aprobada");
       invalidateAll();
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(e.message),
   });
 
   const reviewItemsMutation = trpc.materialRequests.reviewItems.useMutation({
@@ -786,7 +819,7 @@ export default function SolicitudDetalle() {
       );
       invalidateAll();
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(e.message),
   });
 
   const rejectMutation = trpc.materialRequests.reject.useMutation({
@@ -794,22 +827,24 @@ export default function SolicitudDetalle() {
       toast.success("Requisición rechazada");
       invalidateAll();
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(e.message),
   });
 
-  const [assigningFlowItemId, setAssigningFlowItemId] = useState<number | null>(null);
+  const [assigningFlowItemId, setAssigningFlowItemId] = useState<number | null>(
+    null
+  );
   const [selectedWarehouseByItemId, setSelectedWarehouseByItemId] = useState<
     Record<number, string>
   >({});
   const [pendingFlowByItemId, setPendingFlowByItemId] = useState<
     Record<number, QueueFlowType>
   >({});
-  const [warehousePopoverItemId, setWarehousePopoverItemId] = useState<number | null>(
-    null
-  );
-  const [warehousePromptItemId, setWarehousePromptItemId] = useState<number | null>(
-    null
-  );
+  const [warehousePopoverItemId, setWarehousePopoverItemId] = useState<
+    number | null
+  >(null);
+  const [warehousePromptItemId, setWarehousePromptItemId] = useState<
+    number | null
+  >(null);
   const [rejectReason, setRejectReason] = useState("");
   const [pendingItemRejection, setPendingItemRejection] = useState<{
     itemIds: number[];
@@ -823,20 +858,38 @@ export default function SolicitudDetalle() {
     unit?: string | null;
   } | null>(null);
   const [balanceRejectReason, setBalanceRejectReason] = useState("");
-  const [pendingApprovedItemRejection, setPendingApprovedItemRejection] = useState<{
-    itemId: number;
-    itemLabel: string;
-    quantity: number;
-    unit?: string | null;
-  } | null>(null);
+  const [pendingApprovedItemRejection, setPendingApprovedItemRejection] =
+    useState<{
+      itemId: number;
+      itemLabel: string;
+      quantity: number;
+      unit?: string | null;
+    } | null>(null);
   const [approvedItemRejectReason, setApprovedItemRejectReason] = useState("");
   const [pendingSapUnitAssignment, setPendingSapUnitAssignment] = useState<{
     itemId: number;
     sapItemCode: string;
     sapItemDescription: string;
     requestUnit?: string | null;
+    confirmDuplicateSapCode?: boolean;
   } | null>(null);
   const [pendingSapUnit, setPendingSapUnit] = useState("");
+  const [pendingDuplicateSapAssignment, setPendingDuplicateSapAssignment] =
+    useState<{
+      itemId: number;
+      article: {
+        itemCode: string;
+        description: string;
+        unit?: string | null;
+      };
+      requestUnit?: string | null;
+      duplicateItems: Array<{
+        id: number;
+        itemName?: string | null;
+        quantity?: string | number | null;
+        unit?: string | null;
+      }>;
+    } | null>(null);
   const [pendingBulkReviewDecision, setPendingBulkReviewDecision] = useState<
     "aprobada" | "rechazada" | null
   >(null);
@@ -960,7 +1013,7 @@ export default function SolicitudDetalle() {
 
     const getEntryFlowEvents = (entry: any) => {
       const activeFlows = activeFlowsByItem.get(entry.id) ?? [];
-      const events = activeFlows.map((flow) => ({
+      const events = activeFlows.map(flow => ({
         key: `flow-${flow.id}`,
         flowType: flow.flowType,
         status: flow.status,
@@ -996,7 +1049,7 @@ export default function SolicitudDetalle() {
       const quantity = parseQuantityValue(entry.quantity);
       const flowTypes = getEntryFlowTypes(entry);
       const hasNonDispatchFlow = flowTypes.some(
-        (flowType) => flowType !== "despacho_bodega"
+        flowType => flowType !== "despacho_bodega"
       );
 
       if (hasNonDispatchFlow) {
@@ -1015,7 +1068,7 @@ export default function SolicitudDetalle() {
       const quantity = parseQuantityValue(entry.quantity);
       const flowTypes = getEntryFlowTypes(entry);
       const hasNonDispatchFlow = flowTypes.some(
-        (flowType) => flowType !== "despacho_bodega"
+        flowType => flowType !== "despacho_bodega"
       );
 
       if (hasNonDispatchFlow) {
@@ -1027,22 +1080,27 @@ export default function SolicitudDetalle() {
     };
 
     const buildRow = (groupItems: any[], key: string): ItemDisplayRow => {
-      const approvedItems = groupItems.filter((entry) => isItemApprovedForProcessing(entry));
+      const approvedItems = groupItems.filter(entry =>
+        isItemApprovedForProcessing(entry)
+      );
       const pendingApprovalItems = groupItems.filter(
-        (entry) => entry.approvalStatus === "pendiente"
+        entry => entry.approvalStatus === "pendiente"
       );
       const rejectedItems = groupItems.filter(
-        (entry) => entry.approvalStatus === "rechazada"
+        entry => entry.approvalStatus === "rechazada"
       );
       const assignedItems = approvedItems.filter(
-        (entry) => getEntryProcessedQuantity(entry) > 0
+        entry => getEntryProcessedQuantity(entry) > 0
       );
       const pendingItems = approvedItems.filter(
-        (entry) => getEntryRemainingQuantity(entry) > 0
+        entry => getEntryRemainingQuantity(entry) > 0
       );
       const editableItem = pendingItems[0] ?? null;
       const baseItem =
-        editableItem ?? pendingApprovalItems[0] ?? rejectedItems[0] ?? groupItems[0];
+        editableItem ??
+        pendingApprovalItems[0] ??
+        rejectedItems[0] ??
+        groupItems[0];
 
       return {
         key,
@@ -1075,27 +1133,25 @@ export default function SolicitudDetalle() {
           0
         ),
         assignedFlowTypes: Array.from(
-          new Set(
-            approvedItems.flatMap((entry) => getEntryFlowTypes(entry))
-          )
+          new Set(approvedItems.flatMap(entry => getEntryFlowTypes(entry)))
         ),
-        flowEvents: approvedItems.flatMap((entry) => getEntryFlowEvents(entry)),
+        flowEvents: approvedItems.flatMap(entry => getEntryFlowEvents(entry)),
         hasSapCode:
           approvedItems.length === 0 ||
-          approvedItems.every((entry) => Boolean(entry.sapItemCode)),
+          approvedItems.every(entry => Boolean(entry.sapItemCode)),
       };
     };
 
-    return orderedKeys.flatMap((groupKey) => {
+    return orderedKeys.flatMap(groupKey => {
       const groupItems = groupedItems.get(groupKey) ?? [];
       const pendingItems = groupItems.filter(
-        (entry) => getEntryRemainingQuantity(entry) > 0
+        entry => getEntryRemainingQuantity(entry) > 0
       );
       const pendingApprovalItems = groupItems.filter(
-        (entry) => entry.approvalStatus === "pendiente"
+        entry => entry.approvalStatus === "pendiente"
       );
       const hasProcessedItems = groupItems.some(
-        (entry) => getEntryProcessedQuantity(entry) > 0
+        entry => getEntryProcessedQuantity(entry) > 0
       );
       const shouldCollapse =
         groupItems.length > 1 &&
@@ -1107,9 +1163,40 @@ export default function SolicitudDetalle() {
         return [buildRow(groupItems, groupKey)];
       }
 
-      return groupItems.map((entry) => buildRow([entry], `${groupKey}:${entry.id}`));
+      return groupItems.map(entry =>
+        buildRow([entry], `${groupKey}:${entry.id}`)
+      );
     });
   }, [activeFlowTypesByItem, activeFlowsByItem, items]);
+
+  const commitSapSelection = (
+    itemId: number,
+    article: {
+      itemCode: string;
+      description: string;
+      unit?: string | null;
+    },
+    requestUnit?: string | null,
+    confirmDuplicateSapCode = false
+  ) => {
+    if (!article.unit?.trim()) {
+      setPendingSapUnitAssignment({
+        itemId,
+        sapItemCode: article.itemCode,
+        sapItemDescription: article.description,
+        requestUnit,
+        confirmDuplicateSapCode,
+      });
+      setPendingSapUnit("");
+      return;
+    }
+
+    translateMutation.mutate({
+      id: itemId,
+      sapItemCode: article.itemCode,
+      confirmDuplicateSapCode,
+    });
+  };
 
   const handleSapSelect = (
     itemId: number,
@@ -1120,21 +1207,25 @@ export default function SolicitudDetalle() {
     },
     requestUnit?: string | null
   ) => {
-    if (!article.unit?.trim()) {
-      setPendingSapUnitAssignment({
+    const currentItem = items.find((item: any) => item.id === itemId);
+    const isChangingSapCode =
+      currentItem?.sapItemCode?.trim().toLowerCase() !==
+      article.itemCode.trim().toLowerCase();
+    const duplicateItems = isChangingSapCode
+      ? findOtherItemsWithSapCode(items, itemId, article.itemCode)
+      : [];
+
+    if (duplicateItems.length > 0) {
+      setPendingDuplicateSapAssignment({
         itemId,
-        sapItemCode: article.itemCode,
-        sapItemDescription: article.description,
+        article,
         requestUnit,
+        duplicateItems,
       });
-      setPendingSapUnit("");
       return;
     }
 
-    translateMutation.mutate({
-      id: itemId,
-      sapItemCode: article.itemCode,
-    });
+    commitSapSelection(itemId, article, requestUnit);
   };
 
   const handleClearSapTranslation = (itemId: number) => {
@@ -1144,12 +1235,12 @@ export default function SolicitudDetalle() {
   const getVisibleQueueOptionsForItem = () => {
     const isServiceRequest = data?.request?.requestType === "servicios";
     const allowedFlows = new Set<QueueFlowType>(
-      ((availableFlows || []) as QueueFlowType[]).filter((flowType) =>
+      ((availableFlows || []) as QueueFlowType[]).filter(flowType =>
         QUEUE_FLOW_ORDER.includes(flowType)
       )
     );
 
-    return QUEUE_FLOW_ORDER.filter((flowType) => {
+    return QUEUE_FLOW_ORDER.filter(flowType => {
       if (!allowedFlows.has(flowType)) return false;
       return !isServiceRequest || SERVICE_QUEUE_FLOW_TYPES.has(flowType);
     });
@@ -1228,7 +1319,10 @@ export default function SolicitudDetalle() {
         )} disponible)`;
       }
     }
-    if (flowType === "solicitud_compra" && activePurchaseRequestFlowsByItem.has(item.id)) {
+    if (
+      flowType === "solicitud_compra" &&
+      activePurchaseRequestFlowsByItem.has(item.id)
+    ) {
       return "Este ítem ya tiene una solicitud de compra activa";
     }
     if (
@@ -1245,10 +1339,11 @@ export default function SolicitudDetalle() {
     nextFlow: string,
     warehouseId?: number | null
   ) => {
-    const requestedFlow = nextFlow === "__clear__" ? null : (nextFlow as QueueFlowType);
+    const requestedFlow =
+      nextFlow === "__clear__" ? null : (nextFlow as QueueFlowType);
     const selectedWarehouseId =
       requestedFlow === "despacho_bodega"
-        ? warehouseId ?? getSelectedWarehouseId(item)
+        ? (warehouseId ?? getSelectedWarehouseId(item))
         : null;
 
     if (
@@ -1265,7 +1360,8 @@ export default function SolicitudDetalle() {
         if (
           requestedFlow === "despacho_bodega" &&
           !selectedWarehouseId &&
-          disabledReason === "Seleccione una bodega para la salida de inventario"
+          disabledReason ===
+            "Seleccione una bodega para la salida de inventario"
         ) {
           setWarehousePromptItemId(item.id);
           toast.error(disabledReason);
@@ -1286,7 +1382,9 @@ export default function SolicitudDetalle() {
     }
 
     if (requestedFlow !== "despacho_bodega") {
-      setWarehousePromptItemId((current) => (current === item.id ? null : current));
+      setWarehousePromptItemId(current =>
+        current === item.id ? null : current
+      );
     }
 
     setAssigningFlowItemId(item.id);
@@ -1298,7 +1396,9 @@ export default function SolicitudDetalle() {
       },
       {
         onSettled: () => {
-          setAssigningFlowItemId((current) => (current === item.id ? null : current));
+          setAssigningFlowItemId(current =>
+            current === item.id ? null : current
+          );
         },
       }
     );
@@ -1325,7 +1425,9 @@ export default function SolicitudDetalle() {
         </Label>
         <Popover
           open={isOpen}
-          onOpenChange={(open) => setWarehousePopoverItemId(open ? item.id : null)}
+          onOpenChange={open =>
+            setWarehousePopoverItemId(open ? item.id : null)
+          }
         >
           <PopoverTrigger asChild>
             <Button
@@ -1354,7 +1456,10 @@ export default function SolicitudDetalle() {
                 <CommandGroup>
                   {warehouses.map((warehouse: any) => {
                     const warehouseId = Number(warehouse.id);
-                    const stockQuantity = getItemWarehouseStock(item, warehouseId);
+                    const stockQuantity = getItemWarehouseStock(
+                      item,
+                      warehouseId
+                    );
                     const hasEnoughStock =
                       pendingQuantity <= 0 ||
                       stockQuantity - pendingQuantity >= -0.000001;
@@ -1376,23 +1481,23 @@ export default function SolicitudDetalle() {
                         disabled={!hasEnoughStock}
                         onSelect={() => {
                           if (!hasEnoughStock) return;
-                          setSelectedWarehouseByItemId((current) => ({
+                          setSelectedWarehouseByItemId(current => ({
                             ...current,
                             [item.id]: String(warehouse.id),
                           }));
                           setWarehousePopoverItemId(null);
-                          setWarehousePromptItemId((current) =>
+                          setWarehousePromptItemId(current =>
                             current === item.id ? null : current
                           );
                         }}
                       >
                         <Check
-                          className={`mt-0.5 h-4 w-4 ${
-                            isSelected ? "opacity-100" : "opacity-0"
-                          }`}
+                          className={`mt-0.5 h-4 w-4 ${isSelected ? "opacity-100" : "opacity-0"}`}
                         />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-xs font-medium">{label}</p>
+                          <p className="truncate text-xs font-medium">
+                            {label}
+                          </p>
                           <p
                             className={`text-[10px] ${
                               hasEnoughStock
@@ -1435,7 +1540,11 @@ export default function SolicitudDetalle() {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => setLocation("/solicitudes")}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setLocation("/solicitudes")}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="h-6 w-40 animate-pulse bg-muted rounded" />
@@ -1449,7 +1558,11 @@ export default function SolicitudDetalle() {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => setLocation("/solicitudes")}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setLocation("/solicitudes")}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
@@ -1465,7 +1578,11 @@ export default function SolicitudDetalle() {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => setLocation("/solicitudes")}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setLocation("/solicitudes")}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h1>Requisición no encontrada</h1>
@@ -1504,7 +1621,8 @@ export default function SolicitudDetalle() {
     (isAdmin ||
       request.requestedById === user?.id ||
       (userRole === "administrador_proyecto" &&
-        (canUseAllProjects || assignedProjectIds.includes(request.projectId)))) &&
+        (canUseAllProjects ||
+          assignedProjectIds.includes(request.projectId)))) &&
     (request.status === "borrador" ||
       ((request.status === "en_espera" ||
         request.status === "pendiente_aprobar") &&
@@ -1514,12 +1632,12 @@ export default function SolicitudDetalle() {
             Number(item.dispatchedQuantity ?? 0) > 0;
           return !item.assignedFlow && !item.sapItemCode && !hasMovement;
         })));
-  const actionableRows = itemRows.filter((row) => row.approvedItems.length > 0);
+  const actionableRows = itemRows.filter(row => row.approvedItems.length > 0);
   const completedItemRows = actionableRows.filter(
-    (row) => row.remainingQuantity <= 0 && row.assignedFlowTypes.length > 0
+    row => row.remainingQuantity <= 0 && row.assignedFlowTypes.length > 0
   ).length;
   const hasPendingApprovalRows = itemRows.some(
-    (row) => row.pendingApprovalQuantity > 0
+    row => row.pendingApprovalQuantity > 0
   );
   const pendingApprovalItemIds = Array.from(
     new Set(
@@ -1543,7 +1661,7 @@ export default function SolicitudDetalle() {
     actionableRows.length > 0 &&
     !hasPendingApprovalRows &&
     actionableRows.every(
-      (row) =>
+      row =>
         row.remainingQuantity <= 0 &&
         row.assignedFlowTypes.length > 0 &&
         row.hasSapCode
@@ -1565,18 +1683,27 @@ export default function SolicitudDetalle() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => setLocation("/solicitudes")}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setLocation("/solicitudes")}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-            <h1 className="text-xl font-bold tracking-tight">{request.requestNumber}</h1>
+            <h1 className="text-xl font-bold tracking-tight">
+              {request.requestNumber}
+            </h1>
             <p className="text-sm text-muted-foreground">
               {project?.name} ({project?.code})
             </p>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Badge variant="outline" className={`text-sm px-3 py-1 ${STATUS_COLORS[request.status] || ""}`}>
+          <Badge
+            variant="outline"
+            className={`text-sm px-3 py-1 ${STATUS_COLORS[request.status] || ""}`}
+          >
             {STATUS_LABELS[request.status]}
           </Badge>
         </div>
@@ -1586,13 +1713,18 @@ export default function SolicitudDetalle() {
         <Card className="border-slate-200 bg-slate-50/70">
           <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-sm font-medium">Este documento todavía está en borrador</p>
+              <p className="text-sm font-medium">
+                Este documento todavía está en borrador
+              </p>
               <p className="text-xs text-muted-foreground">
-                Puedes seguir agregando ítems o ajustando la información antes de crear la requisición formal.
+                Puedes seguir agregando ítems o ajustando la información antes
+                de crear la requisición formal.
               </p>
             </div>
             {canEditCurrentRequest ? (
-              <Button onClick={() => setLocation(`/solicitudes/${requestId}/editar`)}>
+              <Button
+                onClick={() => setLocation(`/solicitudes/${requestId}/editar`)}
+              >
                 <Pencil className="mr-2 h-4 w-4" />
                 Continuar borrador
               </Button>
@@ -1609,9 +1741,13 @@ export default function SolicitudDetalle() {
             <CardContent className="p-4 space-y-3">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <p className="text-sm font-medium">Aprobación de servicio pendiente</p>
+                  <p className="text-sm font-medium">
+                    Aprobación de servicio pendiente
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    El Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto deben aprobar o rechazar antes de continuar a Oficina Central.
+                    El Administrador del Proyecto, Administración Central, Jefe
+                    de Bodega o Bodeguero de Proyecto deben aprobar o rechazar
+                    antes de continuar a Oficina Central.
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -1626,10 +1762,15 @@ export default function SolicitudDetalle() {
                     variant="destructive"
                     onClick={() => {
                       if (rejectReason.trim().length < 5) {
-                        toast.error("Escribe un motivo de rechazo de al menos 5 caracteres");
+                        toast.error(
+                          "Escribe un motivo de rechazo de al menos 5 caracteres"
+                        );
                         return;
                       }
-                      rejectMutation.mutate({ id: requestId, reason: rejectReason });
+                      rejectMutation.mutate({
+                        id: requestId,
+                        reason: rejectReason,
+                      });
                     }}
                     disabled={rejectMutation.isPending}
                   >
@@ -1639,7 +1780,7 @@ export default function SolicitudDetalle() {
               </div>
               <Textarea
                 value={rejectReason}
-                onChange={(event) => setRejectReason(event.target.value)}
+                onChange={event => setRejectReason(event.target.value)}
                 placeholder="Motivo de rechazo"
                 rows={2}
               />
@@ -1653,7 +1794,9 @@ export default function SolicitudDetalle() {
           <Card className="border-amber-200 bg-amber-50/50">
             <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
               <div>
-                <p className="text-sm font-medium">Autorización pendiente por ítem</p>
+                <p className="text-sm font-medium">
+                  Autorización pendiente por ítem
+                </p>
                 <p className="text-xs text-muted-foreground">
                   {canReviewGoodsItems
                     ? "Autoriza o rechaza cada producto desde la tabla inferior. Cuando termines la revisión, la requisición pasará a Bodega para traducir y asignar flujos."
@@ -1664,7 +1807,8 @@ export default function SolicitudDetalle() {
                 variant="outline"
                 className="w-fit border-amber-300 bg-amber-50 text-amber-700"
               >
-                {itemRows.filter((row) => row.pendingApprovalQuantity > 0).length} ítem(s) por revisar
+                {itemRows.filter(row => row.pendingApprovalQuantity > 0).length}{" "}
+                ítem(s) por revisar
               </Badge>
             </CardContent>
           </Card>
@@ -1684,7 +1828,9 @@ export default function SolicitudDetalle() {
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Enrutada a
               </p>
-              <p className="text-sm font-medium mt-1">{RECIPIENT_LABELS[request.recipient]}</p>
+              <p className="text-sm font-medium mt-1">
+                {RECIPIENT_LABELS[request.recipient]}
+              </p>
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1708,7 +1854,9 @@ export default function SolicitudDetalle() {
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Fecha de creación
               </p>
-              <p className="text-sm mt-1">{new Date(request.createdAt).toLocaleString("es")}</p>
+              <p className="text-sm mt-1">
+                {new Date(request.createdAt).toLocaleString("es")}
+              </p>
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1718,7 +1866,9 @@ export default function SolicitudDetalle() {
                 {formatDateForDisplay(neededByDate)}
               </p>
               {dueStatus && (
-                <p className={`text-xs mt-0.5 ${DUE_STATUS_COLORS[dueStatus.tone] || ""}`}>
+                <p
+                  className={`text-xs mt-0.5 ${DUE_STATUS_COLORS[dueStatus.tone] || ""}`}
+                >
                   {dueStatus.label}
                 </p>
               )}
@@ -1728,7 +1878,8 @@ export default function SolicitudDetalle() {
                 Etapa actual
               </p>
               <p className="text-sm font-medium mt-1">
-                {WORKFLOW_STAGE_LABELS[request.workflowStage] || request.workflowStage}
+                {WORKFLOW_STAGE_LABELS[request.workflowStage] ||
+                  request.workflowStage}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
                 El estatus cambia automáticamente al asignar flujos
@@ -1752,7 +1903,8 @@ export default function SolicitudDetalle() {
                 Aprobación
               </p>
               <p className="text-sm mt-1">
-                {APPROVAL_STATUS_LABELS[request.approvalStatus] || request.approvalStatus}
+                {APPROVAL_STATUS_LABELS[request.approvalStatus] ||
+                  request.approvalStatus}
               </p>
             </div>
             <div>
@@ -1858,7 +2010,7 @@ export default function SolicitudDetalle() {
                 </tr>
               </thead>
               <tbody>
-                {itemRows.map((row) => {
+                {itemRows.map(row => {
                   const item = row.baseItem;
                   const editableItem = row.editableItem;
                   const queuedFlow = editableItem?.assignedFlow as
@@ -1880,7 +2032,7 @@ export default function SolicitudDetalle() {
                   const rejectionNotes = Array.from(
                     new Set(
                       row.rejectedItems
-                        .map((entry) =>
+                        .map(entry =>
                           typeof entry.rejectionReason === "string"
                             ? entry.rejectionReason.trim()
                             : ""
@@ -1905,14 +2057,16 @@ export default function SolicitudDetalle() {
                     request.status === "anulada" ||
                     !editableItem ||
                     (editableItem
-                      ? (activeFlowTypesByItem.get(editableItem.id)?.size ?? 0) > 0
+                      ? (activeFlowTypesByItem.get(editableItem.id)?.size ??
+                          0) > 0
                       : false) ||
                     hasEditableItemMovement;
                   const isFlowSelectionLocked =
                     !editableItem ||
                     row.remainingQuantity <= 0 ||
                     (editableItem
-                      ? (blockingFlowTypesByItem.get(editableItem.id)?.size ?? 0) > 0
+                      ? (blockingFlowTypesByItem.get(editableItem.id)?.size ??
+                          0) > 0
                       : false) ||
                     assigningFlowItemId === editableItem?.id;
                   const canRejectPendingBalance =
@@ -1927,14 +2081,19 @@ export default function SolicitudDetalle() {
                     row.remainingQuantity > 0 &&
                     row.processedQuantity > 0 &&
                     Boolean(editableItem);
-                  const approvedRejectableItem = row.approvedItems.find((entry) => {
-                    const hasMovement =
-                      Number(entry.deliveredQuantity ?? 0) > 0 ||
-                      Number(entry.dispatchedQuantity ?? 0) > 0;
-                    const hasActiveFlows = (activeFlowsByItem.get(entry.id) ?? []).length > 0;
+                  const approvedRejectableItem = row.approvedItems.find(
+                    entry => {
+                      const hasMovement =
+                        Number(entry.deliveredQuantity ?? 0) > 0 ||
+                        Number(entry.dispatchedQuantity ?? 0) > 0;
+                      const hasActiveFlows =
+                        (activeFlowsByItem.get(entry.id) ?? []).length > 0;
 
-                    return !entry.assignedFlow && !hasActiveFlows && !hasMovement;
-                  });
+                      return (
+                        !entry.assignedFlow && !hasActiveFlows && !hasMovement
+                      );
+                    }
+                  );
                   const canRejectApprovedItem =
                     canRejectApprovedItems &&
                     request.requestType === "bienes" &&
@@ -1948,7 +2107,7 @@ export default function SolicitudDetalle() {
                   const docSapLabels = Array.from(
                     new Set(
                       row.assignedFlowTypes
-                        .map((flowType) => SAP_DOC_LABELS[flowType] || flowType)
+                        .map(flowType => SAP_DOC_LABELS[flowType] || flowType)
                         .filter(Boolean)
                     )
                   );
@@ -1963,12 +2122,14 @@ export default function SolicitudDetalle() {
                   const hasPendingWarehouseChange =
                     selectedQueueFlow === "despacho_bodega" &&
                     selectedDispatchWarehouseId !== null &&
-                    selectedDispatchWarehouseId !== Number(editableItem?.warehouseId ?? 0);
+                    selectedDispatchWarehouseId !==
+                      Number(editableItem?.warehouseId ?? 0);
                   const canSubmitQueuedFlow =
                     Boolean(editableItem && selectedQueueFlow) &&
                     (hasPendingFlowDraft || hasPendingWarehouseChange) &&
                     selectedQueueFlow !== undefined &&
-                    (selectedQueueFlow !== queuedFlow || hasPendingWarehouseChange);
+                    (selectedQueueFlow !== queuedFlow ||
+                      hasPendingWarehouseChange);
                   const shouldShowDispatchWarehouseCombobox =
                     Boolean(editableItem) &&
                     request.requestType === "bienes" &&
@@ -1990,7 +2151,9 @@ export default function SolicitudDetalle() {
                           </p>
                         ) : null}
                         {item.notes && (
-                          <p className="text-xs text-muted-foreground mt-0.5">{item.notes}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {item.notes}
+                          </p>
                         )}
                       </td>
                       <td className="p-3 text-right font-mono">
@@ -1999,7 +2162,9 @@ export default function SolicitudDetalle() {
                       <td className="p-3 text-right font-mono text-xs">
                         {formatQuantityValue(row.processedQuantity)}
                       </td>
-                      <td className="p-3 text-right text-xs">{item.dispatchedQuantity || "0.00"}</td>
+                      <td className="p-3 text-right text-xs">
+                        {item.dispatchedQuantity || "0.00"}
+                      </td>
                       <td className="p-3 text-right font-mono text-xs">
                         {formatQuantityValue(unresolvedQuantity)}
                       </td>
@@ -2012,16 +2177,21 @@ export default function SolicitudDetalle() {
                         />
                       </td>
                       <td className="p-3 text-right text-xs">
-                        {hasSapTranslation ? item.committedQuantity || "0.00" : "—"}
+                        {hasSapTranslation
+                          ? item.committedQuantity || "0.00"
+                          : "—"}
                       </td>
                       <td className="p-3">
                         <SapSearchBox
                           itemId={editableItem?.id ?? item.id}
-                          currentCode={editableItem?.sapItemCode ?? item.sapItemCode}
-                          currentDescription={
-                            editableItem?.sapItemDescription ?? item.sapItemDescription
+                          currentCode={
+                            editableItem?.sapItemCode ?? item.sapItemCode
                           }
-                          onSelect={(article) =>
+                          currentDescription={
+                            editableItem?.sapItemDescription ??
+                            item.sapItemDescription
+                          }
+                          onSelect={article =>
                             handleSapSelect(
                               editableItem?.id ?? item.id,
                               article,
@@ -2029,7 +2199,9 @@ export default function SolicitudDetalle() {
                             )
                           }
                           onClear={() =>
-                            handleClearSapTranslation(editableItem?.id ?? item.id)
+                            handleClearSapTranslation(
+                              editableItem?.id ?? item.id
+                            )
                           }
                           disabled={isSapTranslationLocked}
                         />
@@ -2050,13 +2222,15 @@ export default function SolicitudDetalle() {
 
                           {row.pendingApprovalQuantity > 0 ? (
                             <p className="text-[11px] text-muted-foreground">
-                              Pendiente de autorización: {formatQuantityValue(row.pendingApprovalQuantity)}
+                              Pendiente de autorización:{" "}
+                              {formatQuantityValue(row.pendingApprovalQuantity)}
                             </p>
                           ) : null}
 
                           {row.rejectedQuantity > 0 ? (
                             <p className="text-[11px] text-muted-foreground">
-                              Rechazado: {formatQuantityValue(row.rejectedQuantity)}
+                              Rechazado:{" "}
+                              {formatQuantityValue(row.rejectedQuantity)}
                             </p>
                           ) : null}
 
@@ -2076,7 +2250,9 @@ export default function SolicitudDetalle() {
                                 onClick={() =>
                                   reviewItemsMutation.mutate({
                                     requestId,
-                                    itemIds: row.pendingApprovalItems.map((entry) => entry.id),
+                                    itemIds: row.pendingApprovalItems.map(
+                                      entry => entry.id
+                                    ),
                                     decision: "aprobada",
                                   })
                                 }
@@ -2090,7 +2266,9 @@ export default function SolicitudDetalle() {
                                 disabled={reviewItemsMutation.isPending}
                                 onClick={() => {
                                   setPendingItemRejection({
-                                    itemIds: row.pendingApprovalItems.map((entry) => entry.id),
+                                    itemIds: row.pendingApprovalItems.map(
+                                      entry => entry.id
+                                    ),
                                     itemLabel: item.itemName,
                                   });
                                   setItemRejectReason("");
@@ -2103,16 +2281,20 @@ export default function SolicitudDetalle() {
 
                           {row.flowEvents.length > 0 ? (
                             <div className="space-y-1.5">
-                              {row.flowEvents.map((event) => (
-                                <div key={`${row.key}-${event.key}`} className="space-y-0.5">
+                              {row.flowEvents.map(event => (
+                                <div
+                                  key={`${row.key}-${event.key}`}
+                                  className="space-y-0.5"
+                                >
                                   <Badge
                                     variant="outline"
                                     className={`text-xs ${FLOW_COLORS[event.flowType] || ""}`}
                                   >
                                     <Check className="mr-1 h-3 w-3" />
-                                    {FLOW_LABELS[event.flowType] || event.flowType}
+                                    {FLOW_LABELS[event.flowType] ||
+                                      event.flowType}
                                   </Badge>
-                                  {getFlowEventTimeline(event).map((line) => (
+                                  {getFlowEventTimeline(event).map(line => (
                                     <p
                                       key={`${row.key}-${event.key}-${line}`}
                                       className="text-[10px] leading-4 text-muted-foreground"
@@ -2124,12 +2306,16 @@ export default function SolicitudDetalle() {
                               ))}
                             </div>
                           ) : (
-                            <span className="text-xs text-muted-foreground italic">Sin flujo asignado</span>
+                            <span className="text-xs text-muted-foreground italic">
+                              Sin flujo asignado
+                            </span>
                           )}
 
-                          {row.assignedFlowTypes.length > 0 && row.remainingQuantity > 0 ? (
+                          {row.assignedFlowTypes.length > 0 &&
+                          row.remainingQuantity > 0 ? (
                             <p className="text-[11px] text-muted-foreground">
-                              Falta por definir: {formatQuantityValue(row.remainingQuantity)}
+                              Falta por definir:{" "}
+                              {formatQuantityValue(row.remainingQuantity)}
                             </p>
                           ) : null}
 
@@ -2164,7 +2350,9 @@ export default function SolicitudDetalle() {
                                 setPendingApprovedItemRejection({
                                   itemId: approvedRejectableItem.id,
                                   itemLabel: item.itemName,
-                                  quantity: Number(approvedRejectableItem.quantity ?? 0),
+                                  quantity: Number(
+                                    approvedRejectableItem.quantity ?? 0
+                                  ),
                                   unit: approvedRejectableItem.unit,
                                 });
                                 setApprovedItemRejectReason("");
@@ -2178,7 +2366,11 @@ export default function SolicitudDetalle() {
                           {editableItem?.assignedFlow ? (
                             <Badge variant="secondary" className="text-xs">
                               En panel:{" "}
-                              {QUEUE_FLOW_LABELS[editableItem.assignedFlow as QueueFlowType]}
+                              {
+                                QUEUE_FLOW_LABELS[
+                                  editableItem.assignedFlow as QueueFlowType
+                                ]
+                              }
                             </Badge>
                           ) : null}
 
@@ -2190,126 +2382,138 @@ export default function SolicitudDetalle() {
                             request.status !== "anulada" &&
                             canShowQueueAssignmentForRequest &&
                             row.pendingApprovalQuantity <= 0 && (
-                            <div className="space-y-1.5">
-                              {shouldShowSapQueueWarning ? (
-                                <p className="text-[11px] text-rose-700">
-                                  Debe traducir a SAP antes de enviar este ítem al flujo.
-                                </p>
-                              ) : null}
-                              <Select
-                                value={selectedQueueFlow}
-                                onValueChange={(value) => {
-                                  if (!editableItem) return;
-                                  const nextFlow = value as QueueFlowType;
-                                  setPendingFlowByItemId((current) => {
-                                    const next = { ...current };
-                                    if (nextFlow === queuedFlow) {
-                                      delete next[editableItem.id];
-                                    } else {
-                                      next[editableItem.id] = nextFlow;
-                                    }
-                                    return next;
-                                  });
-                                  setWarehousePromptItemId((current) =>
-                                    nextFlow === "despacho_bodega"
-                                      ? editableItem.id
-                                      : current === editableItem.id
-                                        ? null
-                                        : current
-                                  );
-                                }}
-                                disabled={isFlowSelectionLocked || anyQueueProcessing}
-                              >
-                                <SelectTrigger className="h-8 w-full min-w-0 text-xs">
-                                  <SelectValue placeholder="Seleccionar flujo" />
-                                </SelectTrigger>
-                                <SelectContent align="start">
-                                  {queueOptions.map((flowType) => {
-                                    const disabledReason = editableItem
-                                      ? getQueueDisabledReason(
-                                          editableItem,
-                                          flowType,
-                                          selectedDispatchWarehouseId
-                                        )
-                                      : "No hay cantidad pendiente";
-                                    const isMissingWarehousePrompt =
-                                      flowType === "despacho_bodega" &&
-                                      !selectedDispatchWarehouseId &&
-                                      disabledReason ===
-                                        "Seleccione una bodega para la salida de inventario";
-                                    return (
-                                      <SelectItem
-                                        key={`${row.key}-${flowType}`}
-                                        value={flowType}
-                                        disabled={
-                                          Boolean(disabledReason) &&
-                                          selectedQueueFlow !== flowType &&
-                                          !isMissingWarehousePrompt
-                                        }
-                                      >
-                                        {QUEUE_FLOW_LABELS[flowType]}
-                                      </SelectItem>
+                              <div className="space-y-1.5">
+                                {shouldShowSapQueueWarning ? (
+                                  <p className="text-[11px] text-rose-700">
+                                    Debe traducir a SAP antes de enviar este
+                                    ítem al flujo.
+                                  </p>
+                                ) : null}
+                                <Select
+                                  value={selectedQueueFlow}
+                                  onValueChange={value => {
+                                    if (!editableItem) return;
+                                    const nextFlow = value as QueueFlowType;
+                                    setPendingFlowByItemId(current => {
+                                      const next = { ...current };
+                                      if (nextFlow === queuedFlow) {
+                                        delete next[editableItem.id];
+                                      } else {
+                                        next[editableItem.id] = nextFlow;
+                                      }
+                                      return next;
+                                    });
+                                    setWarehousePromptItemId(current =>
+                                      nextFlow === "despacho_bodega"
+                                        ? editableItem.id
+                                        : current === editableItem.id
+                                          ? null
+                                          : current
                                     );
-                                  })}
-                                </SelectContent>
-                              </Select>
-                              {shouldShowDispatchWarehouseCombobox && editableItem ? (
-                                renderDispatchWarehouseCombobox(
-                                  editableItem,
-                                  row.remainingQuantity,
-                                  isFlowSelectionLocked ||
-                                    anyQueueProcessing ||
-                                    !hasSapTranslation,
-                                  !hasSapTranslation
-                                    ? "Traduce el ítem a SAP para calcular existencia por bodega."
-                                    : null
-                                )
-                              ) : null}
-                              <Button
-                                variant="default"
-                                size="sm"
-                                className="h-8 w-full px-2 text-xs"
-                                onClick={() => {
-                                  if (!editableItem || !selectedQueueFlow) return;
-                                  void handleQueuedFlowSelection(
-                                    editableItem,
-                                    selectedQueueFlow,
-                                    selectedDispatchWarehouseId
-                                  );
-                                }}
-                                disabled={
-                                  !canSubmitQueuedFlow ||
-                                  isFlowSelectionLocked ||
-                                  anyQueueProcessing
-                                }
-                              >
-                                <Send className="mr-1.5 h-3.5 w-3.5" />
-                                Enviar a flujo
-                              </Button>
-                              {queuedFlow && editableItem ? (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 px-2 text-[11px]"
-                                  onClick={() => void handleQueuedFlowSelection(editableItem, "__clear__")}
-                                  disabled={anyQueueProcessing}
+                                  }}
+                                  disabled={
+                                    isFlowSelectionLocked || anyQueueProcessing
+                                  }
                                 >
-                                  Quitar flujo
+                                  <SelectTrigger className="h-8 w-full min-w-0 text-xs">
+                                    <SelectValue placeholder="Seleccionar flujo" />
+                                  </SelectTrigger>
+                                  <SelectContent align="start">
+                                    {queueOptions.map(flowType => {
+                                      const disabledReason = editableItem
+                                        ? getQueueDisabledReason(
+                                            editableItem,
+                                            flowType,
+                                            selectedDispatchWarehouseId
+                                          )
+                                        : "No hay cantidad pendiente";
+                                      const isMissingWarehousePrompt =
+                                        flowType === "despacho_bodega" &&
+                                        !selectedDispatchWarehouseId &&
+                                        disabledReason ===
+                                          "Seleccione una bodega para la salida de inventario";
+                                      return (
+                                        <SelectItem
+                                          key={`${row.key}-${flowType}`}
+                                          value={flowType}
+                                          disabled={
+                                            Boolean(disabledReason) &&
+                                            selectedQueueFlow !== flowType &&
+                                            !isMissingWarehousePrompt
+                                          }
+                                        >
+                                          {QUEUE_FLOW_LABELS[flowType]}
+                                        </SelectItem>
+                                      );
+                                    })}
+                                  </SelectContent>
+                                </Select>
+                                {shouldShowDispatchWarehouseCombobox &&
+                                editableItem
+                                  ? renderDispatchWarehouseCombobox(
+                                      editableItem,
+                                      row.remainingQuantity,
+                                      isFlowSelectionLocked ||
+                                        anyQueueProcessing ||
+                                        !hasSapTranslation,
+                                      !hasSapTranslation
+                                        ? "Traduce el ítem a SAP para calcular existencia por bodega."
+                                        : null
+                                    )
+                                  : null}
+                                <Button
+                                  variant="default"
+                                  size="sm"
+                                  className="h-8 w-full px-2 text-xs"
+                                  onClick={() => {
+                                    if (!editableItem || !selectedQueueFlow)
+                                      return;
+                                    void handleQueuedFlowSelection(
+                                      editableItem,
+                                      selectedQueueFlow,
+                                      selectedDispatchWarehouseId
+                                    );
+                                  }}
+                                  disabled={
+                                    !canSubmitQueuedFlow ||
+                                    isFlowSelectionLocked ||
+                                    anyQueueProcessing
+                                  }
+                                >
+                                  <Send className="mr-1.5 h-3.5 w-3.5" />
+                                  Enviar a flujo
                                 </Button>
-                              ) : null}
-                            </div>
-                          )}
+                                {queuedFlow && editableItem ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-[11px]"
+                                    onClick={() =>
+                                      void handleQueuedFlowSelection(
+                                        editableItem,
+                                        "__clear__"
+                                      )
+                                    }
+                                    disabled={anyQueueProcessing}
+                                  >
+                                    Quitar flujo
+                                  </Button>
+                                ) : null}
+                              </div>
+                            )}
                         </div>
                       </td>
                       <td className="p-3">
                         {docSapLabels.length > 0 ? (
                           <div className="space-y-1 text-xs text-muted-foreground">
-                            {docSapLabels.map((label) => (
+                            {docSapLabels.map(label => (
                               <div key={`${row.key}-${label}`}>{label}</div>
                             ))}
                           </div>
                         ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
+                          <span className="text-xs text-muted-foreground">
+                            —
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -2327,15 +2531,17 @@ export default function SolicitudDetalle() {
             request.status !== "anulada" &&
             request.approvalStatus !== "pendiente" &&
             canShowQueueAssignmentForRequest && (
-            <div className="border-t border-border bg-muted/5 p-4">
-              <div className="flex items-start gap-2 text-xs text-muted-foreground">
-                <Check className="mt-0.5 h-4 w-4 text-primary" />
-                <span>
-                  Cuando selecciones un flujo, el ítem se enviará al panel principal de Flujos de Abastecimiento para que se procese en su módulo correspondiente.
-                </span>
+              <div className="border-t border-border bg-muted/5 p-4">
+                <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                  <Check className="mt-0.5 h-4 w-4 text-primary" />
+                  <span>
+                    Cuando selecciones un flujo, el ítem se enviará al panel
+                    principal de Flujos de Abastecimiento para que se procese en
+                    su módulo correspondiente.
+                  </span>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           {/* Status bar below table */}
           {canManageProcessing &&
@@ -2344,35 +2550,38 @@ export default function SolicitudDetalle() {
             request.status !== "cerrada_incompleta" &&
             request.status !== "borrador" &&
             request.status !== "anulada" && (
-            <div className="border-t border-border p-3 bg-muted/10 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                {hasPendingApprovalRows && (
-                  <>
-                    <AlertCircle className="h-4 w-4" />
-                    <span>
-                      Esperando autorización del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto para habilitar SAP y los flujos.
-                    </span>
-                  </>
-                )}
-                {!hasPendingApprovalRows && !allItemsAssigned && (
-                  <>
-                    <AlertCircle className="h-4 w-4" />
-                    <span>
-                      Asigne flujo y código SAP a todos los ítems para enviarlos al módulo correspondiente.
-                    </span>
-                  </>
-                )}
-                {allItemsAssigned && (
-                  <>
-                    <Check className="h-4 w-4 text-green-600" />
-                    <span className="text-green-700 font-medium">
-                      Todos los ítems tienen flujo y código SAP asignado.
-                    </span>
-                  </>
-                )}
+              <div className="border-t border-border p-3 bg-muted/10 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  {hasPendingApprovalRows && (
+                    <>
+                      <AlertCircle className="h-4 w-4" />
+                      <span>
+                        Esperando autorización del Administrador del Proyecto,
+                        Administración Central, Jefe de Bodega o Bodeguero de
+                        Proyecto para habilitar SAP y los flujos.
+                      </span>
+                    </>
+                  )}
+                  {!hasPendingApprovalRows && !allItemsAssigned && (
+                    <>
+                      <AlertCircle className="h-4 w-4" />
+                      <span>
+                        Asigne flujo y código SAP a todos los ítems para
+                        enviarlos al módulo correspondiente.
+                      </span>
+                    </>
+                  )}
+                  {allItemsAssigned && (
+                    <>
+                      <Check className="h-4 w-4 text-green-600" />
+                      <span className="text-green-700 font-medium">
+                        Todos los ítems tienen flujo y código SAP asignado.
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
         </CardContent>
       </Card>
 
@@ -2388,7 +2597,9 @@ export default function SolicitudDetalle() {
             <div className="space-y-3">
               {flowData.map((flow: any) => {
                 const FlowIcon = FLOW_ICONS[flow.flowType] || Package;
-                const relatedItem = (items || []).find((i: any) => i.id === flow.requestItemId);
+                const relatedItem = (items || []).find(
+                  (i: any) => i.id === flow.requestItemId
+                );
                 return (
                   <div
                     key={flow.id}
@@ -2397,7 +2608,9 @@ export default function SolicitudDetalle() {
                     <FlowIcon className="h-5 w-5 mt-0.5 shrink-0" />
                     <div className="flex-1 space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm font-medium">{FLOW_LABELS[flow.flowType]}</p>
+                        <p className="text-sm font-medium">
+                          {FLOW_LABELS[flow.flowType]}
+                        </p>
                         {relatedItem && (
                           <span className="text-xs bg-white/50 px-2 py-0.5 rounded">
                             {relatedItem.itemName}
@@ -2409,7 +2622,8 @@ export default function SolicitudDetalle() {
                       </div>
                       {flow.paymentMethod && (
                         <p className="text-xs opacity-80">
-                          Método: {PAYMENT_METHOD_LABELS[flow.paymentMethod] || "—"}
+                          Método:{" "}
+                          {PAYMENT_METHOD_LABELS[flow.paymentMethod] || "—"}
                         </p>
                       )}
                       {flow.purchaseType && (
@@ -2418,10 +2632,17 @@ export default function SolicitudDetalle() {
                         </p>
                       )}
                       {flow.purchaseOrderNumber && (
-                        <p className="text-xs opacity-80">OC: {flow.purchaseOrderNumber}</p>
+                        <p className="text-xs opacity-80">
+                          OC: {flow.purchaseOrderNumber}
+                        </p>
                       )}
-                      {flow.notes && <p className="text-xs opacity-70">{flow.notes}</p>}
-                      <Badge variant="outline" className="text-xs capitalize mt-1">
+                      {flow.notes && (
+                        <p className="text-xs opacity-70">{flow.notes}</p>
+                      )}
+                      <Badge
+                        variant="outline"
+                        className="text-xs capitalize mt-1"
+                      >
                         {flow.status}
                       </Badge>
                     </div>
@@ -2441,8 +2662,83 @@ export default function SolicitudDetalle() {
       />
 
       <Dialog
+        open={Boolean(pendingDuplicateSapAssignment)}
+        onOpenChange={open => {
+          if (!open && !translateMutation.isPending) {
+            setPendingDuplicateSapAssignment(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg rounded-2xl border-amber-300">
+          <DialogHeader className="space-y-2">
+            <DialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-amber-600" />
+              Código SAP ya utilizado
+            </DialogTitle>
+            <DialogDescription className="leading-6">
+              El código{" "}
+              <span className="font-mono font-semibold text-foreground">
+                {pendingDuplicateSapAssignment?.article.itemCode}
+              </span>{" "}
+              ya está asignado a otra línea de esta requisición. Confirme que
+              realmente corresponde al mismo artículo antes de continuar.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <div className="rounded-md border bg-muted/30 p-3 text-sm">
+              <p className="font-medium">
+                {pendingDuplicateSapAssignment?.article.description}
+              </p>
+            </div>
+            <div className="max-h-48 space-y-2 overflow-y-auto">
+              {pendingDuplicateSapAssignment?.duplicateItems.map(item => (
+                <div
+                  key={item.id}
+                  className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm"
+                >
+                  <p className="font-medium text-amber-950">
+                    {item.itemName || "Artículo sin descripción"}
+                  </p>
+                  <p className="mt-1 text-xs text-amber-800">
+                    Cantidad: {item.quantity ?? "—"} {item.unit ?? ""}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setPendingDuplicateSapAssignment(null)}
+              disabled={translateMutation.isPending}
+            >
+              Cancelar y revisar
+            </Button>
+            <Button
+              onClick={() => {
+                if (!pendingDuplicateSapAssignment) return;
+                const pendingSelection = pendingDuplicateSapAssignment;
+                setPendingDuplicateSapAssignment(null);
+                commitSapSelection(
+                  pendingSelection.itemId,
+                  pendingSelection.article,
+                  pendingSelection.requestUnit,
+                  true
+                );
+              }}
+              disabled={translateMutation.isPending}
+            >
+              Asignar de todas formas
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={Boolean(pendingSapUnitAssignment)}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open && !translateMutation.isPending) {
             setPendingSapUnitAssignment(null);
             setPendingSapUnit("");
@@ -2457,8 +2753,9 @@ export default function SolicitudDetalle() {
               <span className="font-mono font-semibold text-foreground">
                 {pendingSapUnitAssignment?.sapItemCode}
               </span>{" "}
-              todavía no tiene unidad. La unidad elegida se guardará en el catálogo y
-              también reemplazará la unidad de este ítem en la requisición.
+              todavía no tiene unidad. La unidad elegida se guardará en el
+              catálogo y también reemplazará la unidad de este ítem en la
+              requisición.
             </DialogDescription>
           </DialogHeader>
 
@@ -2480,8 +2777,8 @@ export default function SolicitudDetalle() {
                 disabled={translateMutation.isPending}
               />
               <p className="text-xs text-muted-foreground">
-                Esta será la unidad oficial para las próximas requisiciones de este
-                artículo.
+                Esta será la unidad oficial para las próximas requisiciones de
+                este artículo.
               </p>
             </div>
           </div>
@@ -2509,6 +2806,8 @@ export default function SolicitudDetalle() {
                   id: pendingSapUnitAssignment.itemId,
                   sapItemCode: pendingSapUnitAssignment.sapItemCode,
                   unit: pendingSapUnit,
+                  confirmDuplicateSapCode:
+                    pendingSapUnitAssignment.confirmDuplicateSapCode,
                 });
               }}
               disabled={translateMutation.isPending || !pendingSapUnit}
@@ -2523,7 +2822,7 @@ export default function SolicitudDetalle() {
 
       <Dialog
         open={Boolean(pendingBalanceRejection)}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open && !rejectPendingQuantityMutation.isPending) {
             setPendingBalanceRejection(null);
             setBalanceRejectReason("");
@@ -2552,13 +2851,14 @@ export default function SolicitudDetalle() {
             <Textarea
               id="balance-reject-reason"
               value={balanceRejectReason}
-              onChange={(event) => setBalanceRejectReason(event.target.value)}
+              onChange={event => setBalanceRejectReason(event.target.value)}
               placeholder="Ejemplo: saldo no requerido, no hay disponibilidad o se cierra por decisión operativa"
               rows={4}
               disabled={rejectPendingQuantityMutation.isPending}
             />
             <p className="text-xs text-muted-foreground">
-              Esta nota quedará registrada en el saldo rechazado. Si no queda otro saldo activo, la requisición se cerrará automáticamente.
+              Esta nota quedará registrada en el saldo rechazado. Si no queda
+              otro saldo activo, la requisición se cerrará automáticamente.
             </p>
           </div>
 
@@ -2578,7 +2878,9 @@ export default function SolicitudDetalle() {
               onClick={() => {
                 if (!pendingBalanceRejection) return;
                 if (balanceRejectReason.trim().length < 5) {
-                  toast.error("Escribe un motivo de rechazo de al menos 5 caracteres");
+                  toast.error(
+                    "Escribe un motivo de rechazo de al menos 5 caracteres"
+                  );
                   return;
                 }
 
@@ -2599,7 +2901,7 @@ export default function SolicitudDetalle() {
 
       <Dialog
         open={Boolean(pendingApprovedItemRejection)}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open && !rejectApprovedItemMutation.isPending) {
             setPendingApprovedItemRejection(null);
             setApprovedItemRejectReason("");
@@ -2624,11 +2926,15 @@ export default function SolicitudDetalle() {
           </DialogHeader>
 
           <div className="space-y-2">
-            <Label htmlFor="approved-item-reject-reason">Motivo de rechazo *</Label>
+            <Label htmlFor="approved-item-reject-reason">
+              Motivo de rechazo *
+            </Label>
             <Textarea
               id="approved-item-reject-reason"
               value={approvedItemRejectReason}
-              onChange={(event) => setApprovedItemRejectReason(event.target.value)}
+              onChange={event =>
+                setApprovedItemRejectReason(event.target.value)
+              }
               placeholder="Ejemplo: saldo ya no requerido, cambio de prioridad o cierre administrativo"
               rows={4}
               disabled={rejectApprovedItemMutation.isPending}
@@ -2654,7 +2960,9 @@ export default function SolicitudDetalle() {
               onClick={() => {
                 if (!pendingApprovedItemRejection) return;
                 if (approvedItemRejectReason.trim().length < 5) {
-                  toast.error("Escribe un motivo de rechazo de al menos 5 caracteres");
+                  toast.error(
+                    "Escribe un motivo de rechazo de al menos 5 caracteres"
+                  );
                   return;
                 }
 
@@ -2675,7 +2983,7 @@ export default function SolicitudDetalle() {
 
       <Dialog
         open={Boolean(pendingItemRejection)}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open && !reviewItemsMutation.isPending) {
             setPendingItemRejection(null);
             setItemRejectReason("");
@@ -2699,7 +3007,7 @@ export default function SolicitudDetalle() {
             <Textarea
               id="item-reject-reason"
               value={itemRejectReason}
-              onChange={(event) => setItemRejectReason(event.target.value)}
+              onChange={event => setItemRejectReason(event.target.value)}
               placeholder="Ejemplo: no cumple especificación, cantidad no autorizada o compra no prioritaria"
               rows={4}
               disabled={reviewItemsMutation.isPending}
@@ -2725,7 +3033,9 @@ export default function SolicitudDetalle() {
               onClick={() => {
                 if (!pendingItemRejection) return;
                 if (itemRejectReason.trim().length < 5) {
-                  toast.error("Escribe un motivo de rechazo de al menos 5 caracteres");
+                  toast.error(
+                    "Escribe un motivo de rechazo de al menos 5 caracteres"
+                  );
                   return;
                 }
                 reviewItemsMutation.mutate({
@@ -2737,7 +3047,9 @@ export default function SolicitudDetalle() {
               }}
               disabled={reviewItemsMutation.isPending}
             >
-              {reviewItemsMutation.isPending ? "Guardando..." : "Confirmar rechazo"}
+              {reviewItemsMutation.isPending
+                ? "Guardando..."
+                : "Confirmar rechazo"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2745,7 +3057,7 @@ export default function SolicitudDetalle() {
 
       <Dialog
         open={pendingBulkReviewDecision !== null}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open && !reviewItemsMutation.isPending) {
             setPendingBulkReviewDecision(null);
             setBulkRejectReason("");
@@ -2772,7 +3084,7 @@ export default function SolicitudDetalle() {
               <Textarea
                 id="bulk-reject-reason"
                 value={bulkRejectReason}
-                onChange={(event) => setBulkRejectReason(event.target.value)}
+                onChange={event => setBulkRejectReason(event.target.value)}
                 placeholder="Ejemplo: no cumple especificación, cantidad no autorizada o compra no prioritaria"
                 rows={4}
                 disabled={reviewItemsMutation.isPending}
@@ -2795,7 +3107,11 @@ export default function SolicitudDetalle() {
               Cancelar
             </Button>
             <Button
-              variant={pendingBulkReviewDecision === "rechazada" ? "destructive" : "default"}
+              variant={
+                pendingBulkReviewDecision === "rechazada"
+                  ? "destructive"
+                  : "default"
+              }
               onClick={() => {
                 if (!pendingBulkReviewDecision) return;
                 if (pendingApprovalItemIds.length === 0) {
@@ -2806,7 +3122,9 @@ export default function SolicitudDetalle() {
                   pendingBulkReviewDecision === "rechazada" &&
                   bulkRejectReason.trim().length < 5
                 ) {
-                  toast.error("Escribe un motivo de rechazo de al menos 5 caracteres");
+                  toast.error(
+                    "Escribe un motivo de rechazo de al menos 5 caracteres"
+                  );
                   return;
                 }
                 reviewItemsMutation.mutate({

@@ -8,6 +8,7 @@ import {
   isSuperintendentFamilyRole,
 } from "@shared/buildreq-roles";
 import { isSupplyFlowBlockingReassignment } from "@shared/supply-flow-status";
+import { findOtherItemsWithSapCode } from "@shared/material-requests";
 
 function canAssignFlows(user: { role: string; buildreqRole?: string | null }) {
   if (isProcurementApproverRole(user.buildreqRole)) return false;
@@ -444,6 +445,7 @@ export const requestItemsRouter = router({
         sapItemCode: z.string().min(1),
         unit: z.string().trim().min(1).max(50).optional(),
         sapItemDescription: z.string().optional(),
+        confirmDuplicateSapCode: z.boolean().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -461,6 +463,31 @@ export const requestItemsRouter = router({
         });
       }
       await assertSapTranslationCanBeChanged(item);
+
+      const isChangingSapCode =
+        item.sapItemCode?.trim().toLowerCase() !==
+        input.sapItemCode.trim().toLowerCase();
+      const duplicateSapItems = isChangingSapCode
+        ? findOtherItemsWithSapCode(
+            detail.items ?? [],
+            input.id,
+            input.sapItemCode
+          )
+        : [];
+      if (
+        duplicateSapItems.length > 0 &&
+        input.confirmDuplicateSapCode !== true
+      ) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message:
+            "El código SAP " +
+            input.sapItemCode.trim() +
+            " ya está asignado a " +
+            duplicateSapItems.length +
+            " línea(s) de esta requisición. Confirme que corresponden al mismo artículo antes de continuar.",
+        });
+      }
 
       let result: Awaited<ReturnType<typeof db.translateRequestItemToSap>>;
       try {

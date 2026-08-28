@@ -1210,18 +1210,20 @@ describe("BuildReq - Articles catalog", () => {
 
   it("Admin, Bodega Central and Administración Central can create articles", async () => {
     let generatedSequence = 0;
-    const createArticleSpy = vi.spyOn(db, "createArticle").mockImplementation(
-      async (data: Parameters<typeof db.createArticle>[0]) => {
-        generatedSequence += 1;
-        return {
-          id: 100,
-          itemCode: `0905${String(generatedSequence).padStart(5, "0")}`,
-          description: data.description,
-          tipoArticulo: data.tipoArticulo,
-          isActive: data.isActive ?? true,
-        } as any;
-      }
-    );
+    const createArticleSpy = vi
+      .spyOn(db, "createArticle")
+      .mockImplementation(
+        async (data: Parameters<typeof db.createArticle>[0]) => {
+          generatedSequence += 1;
+          return {
+            id: 100,
+            itemCode: `0905${String(generatedSequence).padStart(5, "0")}`,
+            description: data.description,
+            tipoArticulo: data.tipoArticulo,
+            isActive: data.isActive ?? true,
+          } as any;
+        }
+      );
 
     for (const { ctx, expectedItemCode, legacyItemCode } of [
       {
@@ -4765,6 +4767,89 @@ describe("BuildReq - Role-based Access Control", () => {
     getRequestItemByIdSpy.mockRestore();
     getMaterialRequestByIdSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
+  });
+
+  it("requires explicit confirmation before reusing a SAP code in another request line", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getRequestItemByIdSpy = vi
+      .spyOn(db, "getRequestItemById")
+      .mockResolvedValue({
+        id: 41,
+        requestId: 9,
+        itemName: "BREAKER LS RIEL 0181",
+        sapItemCode: null,
+        approvalStatus: "aprobada",
+        deliveredQuantity: "0.00",
+        dispatchedQuantity: "0.00",
+      } as any);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 9,
+          requestedById: 2,
+          projectId: 1,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+        },
+        items: [
+          {
+            id: 40,
+            itemName: "BREAKER 1 POLO 60A 0180",
+            quantity: "2.00",
+            unit: "und",
+            sapItemCode: "050500180",
+          },
+          {
+            id: 41,
+            itemName: "BREAKER LS RIEL 0181",
+            quantity: "1.00",
+            unit: "und",
+            sapItemCode: null,
+          },
+        ],
+      } as any);
+    const getSupplyFlowByRequestIdSpy = vi
+      .spyOn(db, "getSupplyFlowByRequestId")
+      .mockResolvedValue([] as any);
+    const translateRequestItemToSapSpy = vi
+      .spyOn(db, "translateRequestItemToSap")
+      .mockResolvedValue({
+        success: true,
+        sapItemCode: "050500180",
+        sapItemDescription: "BREAKER 1 POLO 60A",
+        unit: "und",
+        tipoArticulo: 1,
+        articleUnitUpdated: false,
+      } as any);
+
+    await expect(
+      caller.requestItems.translateToSap({
+        id: 41,
+        sapItemCode: "050500180",
+      })
+    ).rejects.toThrow(
+      "El código SAP 050500180 ya está asignado a 1 línea(s) de esta requisición"
+    );
+    expect(translateRequestItemToSapSpy).not.toHaveBeenCalled();
+
+    await expect(
+      caller.requestItems.translateToSap({
+        id: 41,
+        sapItemCode: "050500180",
+        confirmDuplicateSapCode: true,
+      })
+    ).resolves.toMatchObject({
+      success: true,
+      sapItemCode: "050500180",
+    });
+    expect(translateRequestItemToSapSpy).toHaveBeenCalledTimes(1);
+
+    getRequestItemByIdSpy.mockRestore();
+    getMaterialRequestByIdSpy.mockRestore();
+    getSupplyFlowByRequestIdSpy.mockRestore();
+    translateRequestItemToSapSpy.mockRestore();
   });
 
   it("Admin Central cannot update reverse logistics status", async () => {
@@ -11064,7 +11149,9 @@ describe("BuildReq - Purchase Requests", () => {
   it("does not let an approver annul a draft purchase request even with base admin", async () => {
     const { ctx } = createProcurementApproverContext(
       "superintendente_aprobador",
-      { role: "admin" }
+      {
+        role: "admin",
+      }
     );
     const caller = appRouter.createCaller(ctx);
     const getPurchaseRequestByIdSpy = vi
@@ -13039,7 +13126,9 @@ describe("BuildReq - Purchase Orders", () => {
 
     await expect(
       caller.purchaseOrders.sendToSupplier({ id: 4 } as any)
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
     expect(getPurchaseOrderByIdSpy).not.toHaveBeenCalled();
     expect(issuePurchaseOrderSpy).not.toHaveBeenCalled();
 
@@ -19308,7 +19397,9 @@ describe("BuildReq - Document attachments", () => {
     async (entityType, message) => {
       const { ctx } = createProcurementApproverContext(
         "superintendente_aprobador",
-        { role: "admin" }
+        {
+          role: "admin",
+        }
       );
       const caller = appRouter.createCaller(ctx);
       const getDocumentSpy =
@@ -19346,7 +19437,9 @@ describe("BuildReq - Document attachments", () => {
   it("does not let procurement approvers delete supplier attachments with base admin role", async () => {
     const { ctx } = createProcurementApproverContext(
       "superintendente_aprobador",
-      { role: "admin" }
+      {
+        role: "admin",
+      }
     );
     const caller = appRouter.createCaller(ctx);
     const getAttachmentByIdSpy = vi
@@ -19735,6 +19828,84 @@ describe("BuildReq - Transfer print fields", () => {
 // ============================================================
 // Tests: Transfer Requests
 // ============================================================
+describe("BuildReq - Transfer stock aggregation", () => {
+  it("blocks duplicate transfer lines when their combined quantity exceeds stock", async () => {
+    const lookupAvailableQuantity = vi.fn().mockResolvedValue(2);
+
+    await expect(
+      db.assertAggregatedTransferStockAvailability(
+        [
+          {
+            item: {
+              sapItemCode: "050500180",
+              itemName: "BREAKER 1 POLO 60A",
+            },
+            transferQuantity: 2,
+            sourceProjectId: 24,
+            sourceWarehouseId: 24,
+            sourceStorageLocation: null,
+          },
+          {
+            item: {
+              sapItemCode: "050500180",
+              itemName: "BREAKER 1 POLO 60A",
+            },
+            transferQuantity: 1,
+            sourceProjectId: 24,
+            sourceWarehouseId: 24,
+            sourceStorageLocation: null,
+          },
+        ],
+        lookupAvailableQuantity
+      )
+    ).rejects.toThrow("Disponible: 2.00, solicitado total: 3.00");
+
+    expect(lookupAvailableQuantity).toHaveBeenCalledTimes(1);
+    expect(lookupAvailableQuantity).toHaveBeenCalledWith({
+      sapItemCode: "050500180",
+      itemName: "BREAKER 1 POLO 60A",
+      projectId: 24,
+      warehouseId: 24,
+      storageLocation: null,
+      requestedQuantity: 3,
+    });
+  });
+
+  it("validates the same SAP code separately when the source warehouse changes", async () => {
+    const lookupAvailableQuantity = vi.fn().mockResolvedValue(2);
+
+    await expect(
+      db.assertAggregatedTransferStockAvailability(
+        [
+          {
+            item: {
+              sapItemCode: "050500180",
+              itemName: "BREAKER 1 POLO 60A",
+            },
+            transferQuantity: 2,
+            sourceProjectId: 24,
+            sourceWarehouseId: 24,
+            sourceStorageLocation: null,
+          },
+          {
+            item: {
+              sapItemCode: "050500180",
+              itemName: "BREAKER 1 POLO 60A",
+            },
+            transferQuantity: 1,
+            sourceProjectId: 24,
+            sourceWarehouseId: 25,
+            sourceStorageLocation: null,
+          },
+        ],
+        lookupAvailableQuantity
+      )
+    ).resolves.toBeUndefined();
+
+    expect(lookupAvailableQuantity).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("BuildReq - Transfer Requests", () => {
   it("Bodeguero de Proyecto can convert transfer requests for their project", async () => {
     const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });

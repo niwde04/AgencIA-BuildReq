@@ -2367,10 +2367,7 @@ async function buildFixedAssetTargetDiagnostic(params: {
       ? await getProjectForDiagnostic(catalogItem.projectId)
       : undefined;
     reasons.push(
-      `pertenece a ${formatProjectForDiagnostic(
-        catalogProject,
-        catalogItem.projectId
-      )}`
+      `pertenece a ${formatProjectForDiagnostic(catalogProject, catalogItem.projectId)}`
     );
   }
 
@@ -2417,10 +2414,7 @@ export function buildProjectScopedDocumentNumber(params: {
     return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
   }, 0);
 
-  return `${documentPrefix}${String(maxSequence + 1).padStart(
-    DOCUMENT_SEQUENCE_WIDTH,
-    "0"
-  )}`;
+  return `${documentPrefix}${String(maxSequence + 1).padStart(DOCUMENT_SEQUENCE_WIDTH, "0")}`;
 }
 
 export async function findAvailableProjectScopedDocumentNumber(params: {
@@ -2444,10 +2438,7 @@ export async function findAvailableProjectScopedDocumentNumber(params: {
     if (!Number.isSafeInteger(sequence)) {
       throw new Error("No se pudo generar un correlativo válido");
     }
-    documentNumber = `${documentPrefix}${String(sequence).padStart(
-      DOCUMENT_SEQUENCE_WIDTH,
-      "0"
-    )}`;
+    documentNumber = `${documentPrefix}${String(sequence).padStart(DOCUMENT_SEQUENCE_WIDTH, "0")}`;
   }
 
   return documentNumber;
@@ -3322,9 +3313,7 @@ export async function listVisibleWarehouseStockForItems(params: {
       }
 
       const isUnclassifiedStock = typeof row.projectId !== "number";
-      const scopeKey = `${
-        isUnclassifiedStock ? "unclassified" : row.projectId
-      }:${row.warehouseId}`;
+      const scopeKey = `${isUnclassifiedStock ? "unclassified" : row.projectId}:${row.warehouseId}`;
       const existing = optionsByScope.get(scopeKey);
       const nextQuantity =
         parseDecimal(existing?.quantity) + parseDecimal(row.quantity);
@@ -6211,9 +6200,7 @@ function buildPurchaseOrderDocument(params: {
           verificationCode: params.digitalSeal.verificationCode,
           signerName: params.digitalSeal.signerName,
           signerRole: getBuildReqRoleLabel(params.digitalSeal.signerRole),
-          signedDateLabel: `Firmado: ${formatPrintDateTimeLabel(
-            params.digitalSeal.signedAt
-          )}`,
+          signedDateLabel: `Firmado: ${formatPrintDateTimeLabel(params.digitalSeal.signedAt)}`,
           sealTypeLabel:
             params.digitalSeal.sealType === "approval"
               ? "APROBACIÓN REGISTRADA"
@@ -11084,6 +11071,88 @@ export async function updateTransferRequest(
   return { success: true };
 }
 
+type TransferStockValidationEntry = {
+  item: {
+    sapItemCode?: string | null;
+    itemName: string;
+  };
+  transferQuantity: number;
+  sourceProjectId: number | null;
+  sourceWarehouseId: number | null;
+  sourceStorageLocation: string | null;
+};
+
+type TransferStockLookupParams = {
+  sapItemCode?: string | null;
+  itemName: string;
+  projectId: number | null;
+  warehouseId: number | null;
+  storageLocation: string | null;
+};
+
+export async function assertAggregatedTransferStockAvailability(
+  entries: TransferStockValidationEntry[],
+  lookupAvailableQuantity: (
+    params: TransferStockLookupParams
+  ) => Promise<number> = async params =>
+    parseDecimal(await getStockByItem(params))
+) {
+  const stockGroups = new Map<
+    string,
+    TransferStockLookupParams & {
+      requestedQuantity: number;
+    }
+  >();
+
+  for (const entry of entries) {
+    if (entry.transferQuantity <= 0) continue;
+
+    const sapItemCode = entry.item.sapItemCode?.trim() || null;
+    const itemName = entry.item.itemName.trim();
+    const storageLocation = normalizeInventoryStorageLocation(
+      entry.sourceStorageLocation
+    );
+    const identityKey = sapItemCode
+      ? ["sap", sapItemCode.toLowerCase()]
+      : ["name", itemName.toLowerCase()];
+    const key = JSON.stringify([
+      ...identityKey,
+      entry.sourceProjectId,
+      entry.sourceWarehouseId,
+      storageLocation?.toLowerCase() ?? null,
+    ]);
+    const current = stockGroups.get(key) ?? {
+      sapItemCode,
+      itemName,
+      projectId: entry.sourceProjectId,
+      warehouseId: entry.sourceWarehouseId,
+      storageLocation,
+      requestedQuantity: 0,
+    };
+    current.requestedQuantity += entry.transferQuantity;
+    stockGroups.set(key, current);
+  }
+
+  await Promise.all(
+    Array.from(stockGroups.values()).map(async group => {
+      const availableQuantity = await lookupAvailableQuantity(group);
+      if (availableQuantity + 0.0001 >= group.requestedQuantity) return;
+
+      throw new Error(
+        "Stock insuficiente para " +
+          group.itemName +
+          " en " +
+          (group.storageLocation ?? "Sin ubicación") +
+          ". Disponible: " +
+          toDecimalString(availableQuantity) +
+          ", solicitado total: " +
+          toDecimalString(group.requestedQuantity) +
+          "."
+      );
+    })
+  );
+}
+
 export async function createTransferFromRequest(
   transferRequestId: number,
   confirmedById: number,
@@ -11191,6 +11260,8 @@ export async function createTransferFromRequest(
   if (!transferItems.some(entry => entry.transferQuantity > 0)) {
     throw new Error("Debe trasladar al menos una cantidad mayor que cero");
   }
+
+  await assertAggregatedTransferStockAvailability(transferItems);
 
   const positiveSourceOrigins = Array.from(
     new Set(
@@ -14438,7 +14509,10 @@ export async function listDmcReportSourceInvoices(filters?: {
     const created: Pick<
       DmcReportSourceInvoice,
       "materialRequests" | "subProjectLabels"
-    > = { materialRequests: [], subProjectLabels: [] };
+    > = {
+      materialRequests: [],
+      subProjectLabels: [],
+    };
     sourceDataByInvoiceId.set(invoiceId, created);
     return created;
   };
@@ -16349,10 +16423,7 @@ function buildWarehouseExitDocument(params: {
       metaLines: [
         ...(item.sapItemCode ? [`SAP: ${item.sapItemCode}`] : []),
         ...(item.warehouseLabel ? [`Bodega: ${item.warehouseLabel}`] : []),
-        `Ubicación: ${
-          normalizeInventoryStorageLocation(item.storageLocation) ??
-          "Sin ubicación"
-        }`,
+        `Ubicación: ${normalizeInventoryStorageLocation(item.storageLocation) ?? "Sin ubicación"}`,
         ...(item.targetLabel ? [`Destino: ${item.targetLabel}`] : []),
         ...((item.notes ?? params.notes)
           ? [`Notas: ${item.notes ?? params.notes}`]
@@ -18421,7 +18492,9 @@ export async function createTransferFromReverseLogistic(
 
     const destinationWarehouses = await listProjectWarehouses(
       detail.return.destinationProjectId,
-      { isActive: true }
+      {
+        isActive: true,
+      }
     );
     const validDestinationWarehouse = destinationWarehouses.some(
       warehouse => warehouse.id === detail.return.destinationWarehouseId
@@ -18435,7 +18508,9 @@ export async function createTransferFromReverseLogistic(
 
   const activeWarehouses = await listProjectWarehouses(
     detail.return.sourceProjectId,
-    { isActive: true }
+    {
+      isActive: true,
+    }
   );
   const activeWarehouseIds = new Set(
     activeWarehouses.map(warehouse => warehouse.id)
@@ -19359,10 +19434,7 @@ async function consumeInventoryStock(params: {
     throw new Error(
       `Stock insuficiente para ${params.itemName}${
         "storageLocation" in params
-          ? ` en ${
-              normalizeInventoryStorageLocation(params.storageLocation) ??
-              "Sin ubicación"
-            }`
+          ? ` en ${normalizeInventoryStorageLocation(params.storageLocation) ?? "Sin ubicación"}`
           : ""
       }. Disponible: ${toDecimalString(
         available
@@ -22338,20 +22410,14 @@ export async function getDashboardSidebarCounts(params: {
         from ${purchaseRequests}
         where ${params.includePurchaseRequests}
           and ${purchaseRequests.status} = ${params.purchaseRequestStatus}
-          and ${projectScope(
-            purchaseRequests.projectId,
-            params.purchaseProjectIds
-          )}
+          and ${projectScope(purchaseRequests.projectId, params.purchaseProjectIds)}
       ) as "purchaseRequestsPending",
       (
         select count(*)::integer
         from ${purchaseOrders}
         where ${params.includePurchaseOrders}
           and ${purchaseOrders.status} = ${params.purchaseOrderStatus}
-          and ${projectScope(
-            purchaseOrders.projectId,
-            params.purchaseProjectIds
-          )}
+          and ${projectScope(purchaseOrders.projectId, params.purchaseProjectIds)}
       ) as "purchaseOrdersEmitted",
       (
         select count(*)::integer
@@ -22360,10 +22426,7 @@ export async function getDashboardSidebarCounts(params: {
           and ${transferRequests.status} = 'pendiente'
           and (
             ${projectScope(transferRequests.projectId, params.projectIds)}
-            or ${projectScope(
-              transferRequests.destinationProjectId,
-              params.projectIds
-            )}
+            or ${projectScope(transferRequests.destinationProjectId, params.projectIds)}
           )
       ) as "transferRequestsPending",
       (
@@ -23276,9 +23339,7 @@ export async function updateArticle(
     ...(data.description !== undefined
       ? { description: normalizeArticleDescription(data.description) }
       : {}),
-    ...(data.unit !== undefined
-      ? { unit: normalizeUnitValue(data.unit) }
-      : {}),
+    ...(data.unit !== undefined ? { unit: normalizeUnitValue(data.unit) } : {}),
   };
 
   const [article] = await db
