@@ -27,6 +27,7 @@ import {
 } from "@shared/material-requests";
 import { isSuperintendentFamilyRole } from "@shared/buildreq-roles";
 import { DataPagination } from "@/components/DataPagination";
+import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 const PAGE_SIZE = 50;
@@ -81,7 +82,9 @@ function getRequestTargetLabels(itemTargets: any[] = []) {
   return Array.from(
     new Set<string>(
       itemTargets
-        .map((target: any) => target.label?.replace(TARGET_PREFIX_PATTERN, "").trim())
+        .map((target: any) =>
+          target.label?.replace(TARGET_PREFIX_PATTERN, "").trim()
+        )
         .filter(Boolean)
     )
   );
@@ -98,15 +101,20 @@ function getRequestedByLabel(row: any) {
 
 function RequestTargetBadges({ labels }: { labels: string[] }) {
   if (labels.length === 0) {
-    return <span className="text-xs text-muted-foreground">Sin subproyecto</span>;
+    return (
+      <span className="text-xs text-muted-foreground">Sin subproyecto</span>
+    );
   }
 
   const visibleLabels = labels.slice(0, 2);
   const hiddenCount = labels.length - visibleLabels.length;
 
   return (
-    <div className="flex max-w-[280px] flex-wrap gap-1" title={labels.join("\n")}>
-      {visibleLabels.map((label) => (
+    <div
+      className="flex max-w-[280px] flex-wrap gap-1"
+      title={labels.join("\n")}
+    >
+      {visibleLabels.map(label => (
         <Badge
           key={label}
           variant="outline"
@@ -131,6 +139,7 @@ export default function Solicitudes() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [projectFilter, setProjectFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [expandedItemsId, setExpandedItemsId] = useState<number | null>(null);
@@ -142,6 +151,7 @@ export default function Solicitudes() {
   const { data, isLoading, error, isPlaceholderData } =
     trpc.materialRequests.listPage.useQuery(
       {
+        projectId: projectFilter === "all" ? undefined : Number(projectFilter),
         status: statusFilter !== "all" ? statusFilter : undefined,
         search: debouncedSearch.trim() || undefined,
         page,
@@ -159,7 +169,7 @@ export default function Solicitudes() {
     { enabled: expandedItemsId !== null }
   );
 
-  useEffect(() => setPage(1), [debouncedSearch, statusFilter]);
+  useEffect(() => setPage(1), [debouncedSearch, projectFilter, statusFilter]);
   useEffect(() => {
     if (!isPlaceholderData && data?.page && data.page !== page) {
       setPage(data.page);
@@ -179,30 +189,40 @@ export default function Solicitudes() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Buscar por número, artículo, proyecto o solicitante..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={e => setSearch(e.target.value)}
             className="pl-9 h-9"
           />
         </div>
+        <ProjectFilterSelect
+          value={projectFilter}
+          onValueChange={setProjectFilter}
+        />
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-52 h-9">
+          <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue placeholder="Filtrar por estatus" />
           </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos los estatus</SelectItem>
-                    <SelectItem value="borrador">Borrador</SelectItem>
-                    <SelectItem value="pendiente_aprobar">Pendiente de aprobar</SelectItem>
-                    <SelectItem value="en_espera">En espera</SelectItem>
-                    <SelectItem value="en_proceso">En proceso de atención</SelectItem>
-                    <SelectItem value="parcialmente_atendida">Parcialmente atendida</SelectItem>
-                    <SelectItem value="flujo_completado">Flujo completado</SelectItem>
-                    <SelectItem value="cerrada">Cerrada</SelectItem>
-                    <SelectItem value="cerrada_incompleta">Cerrada incompleta</SelectItem>
+          <SelectContent>
+            <SelectItem value="all">Todos los estatus</SelectItem>
+            <SelectItem value="borrador">Borrador</SelectItem>
+            <SelectItem value="pendiente_aprobar">
+              Pendiente de aprobar
+            </SelectItem>
+            <SelectItem value="en_espera">En espera</SelectItem>
+            <SelectItem value="en_proceso">En proceso de atención</SelectItem>
+            <SelectItem value="parcialmente_atendida">
+              Parcialmente atendida
+            </SelectItem>
+            <SelectItem value="flujo_completado">Flujo completado</SelectItem>
+            <SelectItem value="cerrada">Cerrada</SelectItem>
+            <SelectItem value="cerrada_incompleta">
+              Cerrada incompleta
+            </SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -270,7 +290,9 @@ export default function Solicitudes() {
                       r.request.createdAt
                     );
                     const dueStatus = getDueDateStatus(neededByDate);
-                    const targetLabels = getRequestTargetLabels(r.itemTargets ?? []);
+                    const targetLabels = getRequestTargetLabels(
+                      r.itemTargets ?? []
+                    );
                     const requestedByLabel = getRequestedByLabel(r);
                     const targetPath =
                       r.request.status === "borrador" && !isSuperintendent
@@ -301,82 +323,106 @@ export default function Solicitudes() {
                               {r.request.requestNumber}
                             </DocumentNumberButton>
                           </td>
-                          <td className="p-3" onClick={event => event.stopPropagation()}>
+                          <td
+                            className="p-3"
+                            onClick={event => event.stopPropagation()}
+                          >
                             <DocumentItemsAccordionTrigger
                               expanded={itemsExpanded}
                               count={
-                                itemsExpanded ? expandedItemsDetail?.items?.length : undefined
+                                itemsExpanded
+                                  ? expandedItemsDetail?.items?.length
+                                  : undefined
                               }
                               onToggle={() =>
-                                setExpandedItemsId(itemsExpanded ? null : r.request.id)
+                                setExpandedItemsId(
+                                  itemsExpanded ? null : r.request.id
+                                )
                               }
                             />
                           </td>
                           <td className="p-3">
                             <div>
-                              <span className="font-medium text-xs">{r.project?.code}</span>
-                              <p className="text-xs text-muted-foreground">{r.project?.name}</p>
+                              <span className="font-medium text-xs">
+                                {r.project?.code}
+                              </span>
+                              <p className="text-xs text-muted-foreground">
+                                {r.project?.name}
+                              </p>
                             </div>
                           </td>
                           <td className="p-3">
-                          <RequestTargetBadges labels={targetLabels} />
+                            <RequestTargetBadges labels={targetLabels} />
                           </td>
                           <td className="p-3">
-                          <div>
-                            <span className="font-medium text-xs">{requestedByLabel}</span>
-                            {r.requestedBy?.email &&
-                            r.requestedBy.email !== requestedByLabel ? (
-                              <p className="text-xs text-muted-foreground">
-                                {r.requestedBy.email}
-                              </p>
-                            ) : null}
-                          </div>
+                            <div>
+                              <span className="font-medium text-xs">
+                                {requestedByLabel}
+                              </span>
+                              {r.requestedBy?.email &&
+                              r.requestedBy.email !== requestedByLabel ? (
+                                <p className="text-xs text-muted-foreground">
+                                  {r.requestedBy.email}
+                                </p>
+                              ) : null}
+                            </div>
                           </td>
                           <td className="p-3 text-xs">
-                          {RECIPIENT_LABELS[r.request.recipient] || r.request.recipient}
+                            {RECIPIENT_LABELS[r.request.recipient] ||
+                              r.request.recipient}
                           </td>
                           <td className="p-3">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${URGENCY_COLORS[r.request.purchaseUrgency] || ""}`}
-                          >
-                            {PURCHASE_URGENCY_LABELS[
-                              r.request.purchaseUrgency as "urgente" | "no_urgente"
-                            ] || "No urgente"}
-                          </Badge>
+                            <Badge
+                              variant="outline"
+                              className={`text-xs ${URGENCY_COLORS[r.request.purchaseUrgency] || ""}`}
+                            >
+                              {PURCHASE_URGENCY_LABELS[
+                                r.request.purchaseUrgency as
+                                  | "urgente"
+                                  | "no_urgente"
+                              ] || "No urgente"}
+                            </Badge>
                           </td>
                           <td className="p-3 text-xs">
-                          <p className="font-medium">
-                            {formatDateForDisplay(neededByDate)}
-                          </p>
-                          {dueStatus && (
-                            <p className={DUE_STATUS_COLORS[dueStatus.tone] || "text-muted-foreground"}>
-                              {dueStatus.label}
+                            <p className="font-medium">
+                              {formatDateForDisplay(neededByDate)}
                             </p>
-                          )}
+                            {dueStatus && (
+                              <p
+                                className={
+                                  DUE_STATUS_COLORS[dueStatus.tone] ||
+                                  "text-muted-foreground"
+                                }
+                              >
+                                {dueStatus.label}
+                              </p>
+                            )}
                           </td>
                           <td className="p-3">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${STATUS_COLORS[r.request.status] || ""}`}
-                          >
-                            {STATUS_LABELS[r.request.status] || r.request.status}
-                          </Badge>
+                            <Badge
+                              variant="outline"
+                              className={`text-xs ${STATUS_COLORS[r.request.status] || ""}`}
+                            >
+                              {STATUS_LABELS[r.request.status] ||
+                                r.request.status}
+                            </Badge>
                           </td>
                           <td className="p-3 text-xs text-muted-foreground">
-                          {new Date(r.request.createdAt).toLocaleDateString("es")}
+                            {new Date(r.request.createdAt).toLocaleDateString(
+                              "es"
+                            )}
                           </td>
                           <td className="sticky right-0 z-20 w-[96px] min-w-[96px] border-l border-border/60 bg-card p-3 text-right shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setLocation(targetPath);
-                            }}
-                          >
-                            {actionIcon}
-                          </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setLocation(targetPath);
+                              }}
+                            >
+                              {actionIcon}
+                            </Button>
                           </td>
                         </tr>
                         {itemsExpanded ? (

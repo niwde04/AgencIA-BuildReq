@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
+import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import { DocumentNumberButton } from "@/components/DocumentNumberButton";
 import {
   DocumentItemsAccordionPanel,
@@ -331,7 +332,10 @@ function normalizeReceiptPrintLabel(value: unknown) {
   return label;
 }
 
-function formatReceiptWarehouseLabel(detail: any, fallback = "Almacén de ingreso") {
+function formatReceiptWarehouseLabel(
+  detail: any,
+  fallback = "Almacén de ingreso"
+) {
   const itemWarehouseLabels = Array.from(
     new Set(
       (detail?.items || [])
@@ -567,9 +571,7 @@ function formatMoneyPayload(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed.toFixed(4) : "0.0000";
 }
 
-function formatExchangeRateDraft(
-  value: string | number | null | undefined
-) {
+function formatExchangeRateDraft(value: string | number | null | undefined) {
   const raw = String(value ?? "");
   return raw.includes(".") ? raw.replace(/0+$/, "").replace(/\.$/, "") : raw;
 }
@@ -580,9 +582,8 @@ function formatUnitPricePayload(value: number | string | null | undefined) {
 }
 
 function formatUnitPriceDisplay(value: number | string | null | undefined) {
-  const [integerPart, decimalPart = ""] = formatUnitPricePayload(value).split(
-    "."
-  );
+  const [integerPart, decimalPart = ""] =
+    formatUnitPricePayload(value).split(".");
   const visibleDecimals = decimalPart.replace(/0+$/, "").padEnd(2, "0");
   return `${integerPart}.${visibleDecimals}`;
 }
@@ -623,11 +624,7 @@ function calculateReceiptSubtotalFromSource(
   );
   const parsedReceivedQuantity = toPurchaseOrderNumber(receivedQuantity);
 
-  if (
-    sourceSubtotal > 0 &&
-    sourceQuantity > 0 &&
-    parsedReceivedQuantity > 0
-  ) {
+  if (sourceSubtotal > 0 && sourceQuantity > 0 && parsedReceivedQuantity > 0) {
     return formatMoneyDisplay(
       (sourceSubtotal * parsedReceivedQuantity) / sourceQuantity
     );
@@ -727,9 +724,7 @@ function getFixedAssetDetailCount(
 }
 
 function getReceiptFixedAssetArticles(item: any) {
-  return Array.isArray(item?.fixedAssetArticles)
-    ? item.fixedAssetArticles
-    : [];
+  return Array.isArray(item?.fixedAssetArticles) ? item.fixedAssetArticles : [];
 }
 
 function getReceiptFixedAssetProgress(item: any, fallbackCount = 0) {
@@ -782,9 +777,7 @@ function getReceiptFixedAssetArticleDetail(
     serialNumber: String(
       article?.fixedAssetSerialNumber ?? detail?.serialNumber ?? ""
     ).trim(),
-    condition: ASSET_CONDITION_VALUES.includes(condition)
-      ? condition
-      : "nuevo",
+    condition: ASSET_CONDITION_VALUES.includes(condition) ? condition : "nuevo",
     color: String(article?.fixedAssetColor ?? detail?.color ?? "").trim(),
     model: String(article?.fixedAssetModel ?? detail?.model ?? "").trim(),
     brand: String(article?.fixedAssetBrand ?? detail?.brand ?? "").trim(),
@@ -928,14 +921,16 @@ function getProjectWarehouseIds(project: any) {
   ]
     .map((warehouseId: any) => Number(warehouseId))
     .filter(
-      (warehouseId: number) =>
-        Number.isInteger(warehouseId) && warehouseId > 0
+      (warehouseId: number) => Number.isInteger(warehouseId) && warehouseId > 0
     );
 
   return new Set<number>(warehouseIds);
 }
 
-function projectUsesWarehouse(project: any, warehouseId?: string | number | null) {
+function projectUsesWarehouse(
+  project: any,
+  warehouseId?: string | number | null
+) {
   const selectedWarehouseId = Number(warehouseId);
   if (!Number.isInteger(selectedWarehouseId) || selectedWarehouseId <= 0) {
     return false;
@@ -995,12 +990,14 @@ function formatTransferReceiptSourceLabel(row: any) {
 function getTransferOriginLabel(transferDetail: any, fallback: string) {
   if (!transferDetail?.transferRequest) return fallback;
   const labels = Array.from(
-    new Set<string>([
-      ...(transferDetail.sourceProjects || []).map((project: any) =>
-        formatProjectReference(project, fallback)
-      ),
-      ...(transferDetail.hasUnclassifiedSource ? ["Por clasificar"] : []),
-    ].filter(Boolean))
+    new Set<string>(
+      [
+        ...(transferDetail.sourceProjects || []).map((project: any) =>
+          formatProjectReference(project, fallback)
+        ),
+        ...(transferDetail.hasUnclassifiedSource ? ["Por clasificar"] : []),
+      ].filter(Boolean)
+    )
   );
   if (labels.length === 1) return labels[0];
   if (labels.length > 1) return "Varios proyectos";
@@ -1224,6 +1221,7 @@ export default function Recepciones() {
   );
   const [transferCloseNote, setTransferCloseNote] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [projectFilter, setProjectFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sourceTypeFilter, setSourceTypeFilter] = useState("all");
   const [page, setPage] = useState(1);
@@ -1245,6 +1243,7 @@ export default function Recepciones() {
   } = trpc.receipts.listPage.useQuery(
     {
       search: debouncedSearchTerm.trim() || undefined,
+      projectId: projectFilter === "all" ? undefined : Number(projectFilter),
       sourceType:
         sourceTypeFilter === "all"
           ? undefined
@@ -1443,10 +1442,7 @@ export default function Recepciones() {
   useEffect(() => {
     const queryParams = new URLSearchParams(urlSearch);
     const requestedViewReceiptId = Number(queryParams.get("ver"));
-    if (
-      Number.isFinite(requestedViewReceiptId) &&
-      requestedViewReceiptId > 0
-    ) {
+    if (Number.isFinite(requestedViewReceiptId) && requestedViewReceiptId > 0) {
       setDialogOpen(false);
       setEditingDraftReceiptId(null);
       setViewReceiptId(requestedViewReceiptId);
@@ -1512,10 +1508,7 @@ export default function Recepciones() {
       isActive: true,
     },
     {
-      enabled:
-        canManageReceipts &&
-        dialogOpen &&
-        Boolean(sourceId),
+      enabled: canManageReceipts && dialogOpen && Boolean(sourceId),
     }
   );
   const receiptWarehouseOptions = useMemo(() => {
@@ -1567,9 +1560,7 @@ export default function Recepciones() {
     }
 
     const originProjectId = Number(
-      item?.sourceProjectId ??
-        transferDetail?.transferRequest?.projectId ??
-        0
+      item?.sourceProjectId ?? transferDetail?.transferRequest?.projectId ?? 0
     );
     const destinationProjectId = Number(selectedReceiptProjectId ?? 0);
     if (
@@ -1635,7 +1626,8 @@ export default function Recepciones() {
           current === lockedReturnDestinationWarehouseId);
 
       if (currentIsAvailable) return current;
-      if (lockedReturnDestinationWarehouseId) return lockedReturnDestinationWarehouseId;
+      if (lockedReturnDestinationWarehouseId)
+        return lockedReturnDestinationWarehouseId;
       return "";
     });
   }, [
@@ -1885,10 +1877,7 @@ export default function Recepciones() {
       const draftWarehouseId = draftItem?.warehouseId
         ? String(draftItem.warehouseId)
         : "";
-      if (
-        sourceType === "purchase_order" &&
-        isReceiptNonInventoryItem(item)
-      ) {
+      if (sourceType === "purchase_order" && isReceiptNonInventoryItem(item)) {
         nextWarehouseMap[item.id] = "";
         nextStorageLocationMap[item.id] = "";
       } else {
@@ -2477,7 +2466,7 @@ export default function Recepciones() {
   );
   const storageLocationSuggestionSapCode = String(
     storageLocationSuggestionItem
-      ? getSourceItemCode(storageLocationSuggestionItem) ?? ""
+      ? (getSourceItemCode(storageLocationSuggestionItem) ?? "")
       : ""
   ).trim();
   const storageLocationSuggestionWarehouseId =
@@ -2519,7 +2508,9 @@ export default function Recepciones() {
     const suggestions = new Map<string, string>();
 
     for (const row of storageLocationSuggestionInventory?.items ?? []) {
-      const rowCode = String(row.sapItemCode ?? "").trim().toUpperCase();
+      const rowCode = String(row.sapItemCode ?? "")
+        .trim()
+        .toUpperCase();
       const rowWarehouseId = Number(row.warehouseId ?? row.warehouse?.id ?? 0);
       const rowProjectId = Number(row.projectId ?? row.project?.id ?? 0);
       const storageLocation = String(row.storageLocation ?? "").trim();
@@ -2695,10 +2686,7 @@ export default function Recepciones() {
   ) => {
     const selectedWarehouseId = Number(warehouseId);
     const lockedProjectId = Number(lockedReceiptProjectId ?? 0);
-    if (
-      !Number.isInteger(selectedWarehouseId) ||
-      selectedWarehouseId <= 0
-    ) {
+    if (!Number.isInteger(selectedWarehouseId) || selectedWarehouseId <= 0) {
       return lockedProjectId
         ? (receiptProjects ?? []).filter(
             (project: any) => project.id === lockedProjectId
@@ -2814,7 +2802,8 @@ export default function Recepciones() {
       return "Seleccione un almacén de ingreso antes de guardar o registrar.";
     }
     const selectedWarehouseIsAvailable = receiptHeaderWarehouseOptions.some(
-      (warehouse: any) => String(warehouse.id) === receiptWarehouseSelectionValue
+      (warehouse: any) =>
+        String(warehouse.id) === receiptWarehouseSelectionValue
     );
     if (!selectedWarehouseIsAvailable) {
       return "Seleccione un almacén de ingreso válido.";
@@ -2832,7 +2821,8 @@ export default function Recepciones() {
       !lockedReceiptProjectId &&
       selectedReceiptProjectId &&
       !nextProjectOptions.some(
-        (project: any) => Number(project.id) === Number(selectedReceiptProjectId)
+        (project: any) =>
+          Number(project.id) === Number(selectedReceiptProjectId)
       )
     ) {
       setReceiptProjectId("");
@@ -2923,9 +2913,7 @@ export default function Recepciones() {
           <div className="flex min-h-10 min-w-52 items-center rounded-md border border-dashed border-border bg-muted/20 px-3 text-sm font-medium text-muted-foreground">
             {noInventoryLabel}
           </div>
-          <p className="text-[10px] text-muted-foreground">
-            {noInventoryHint}
-          </p>
+          <p className="text-[10px] text-muted-foreground">{noInventoryHint}</p>
         </div>
       );
     }
@@ -2946,16 +2934,19 @@ export default function Recepciones() {
     const selectedWarehouse = itemWarehouseOptions.find(
       (warehouse: any) => String(warehouse.id) === selectedWarehouseValue
     );
-    const projectOptions =
-      getReceiptProjectOptionsForWarehouse(selectedWarehouseValue);
+    const projectOptions = getReceiptProjectOptionsForWarehouse(
+      selectedWarehouseValue
+    );
     const selectedProjectValue = selectedReceiptProjectId
       ? String(selectedReceiptProjectId)
       : undefined;
     const selectedProjectInWarehouse = projectOptions.find(
       (project: any) => String(project.id) === selectedProjectValue
     );
-    const selectedIsSourceWarehouse =
-      isSameTransferOriginScope(item, selectedWarehouseValue);
+    const selectedIsSourceWarehouse = isSameTransferOriginScope(
+      item,
+      selectedWarehouseValue
+    );
     const selectedIsWrongReturnDestination =
       Boolean(lockedDestinationWarehouseId) &&
       Boolean(selectedWarehouseValue) &&
@@ -2988,8 +2979,10 @@ export default function Recepciones() {
           <SelectContent className="max-w-[min(680px,calc(100vw-2rem))]">
             {itemWarehouseOptions.map((warehouse: any) => {
               const warehouseId = String(warehouse.id);
-              const isSourceWarehouse =
-                isSameTransferOriginScope(item, warehouseId);
+              const isSourceWarehouse = isSameTransferOriginScope(
+                item,
+                warehouseId
+              );
               const isWrongReturnDestination =
                 Boolean(lockedDestinationWarehouseId) &&
                 warehouseId !== lockedDestinationWarehouseId;
@@ -3032,8 +3025,7 @@ export default function Recepciones() {
             }
           }}
           disabled={
-            Boolean(lockedReceiptProjectId) ||
-            registerMutation.isPending
+            Boolean(lockedReceiptProjectId) || registerMutation.isPending
           }
         >
           <SelectTrigger className={compact ? "min-w-64" : "w-full min-w-0"}>
@@ -3101,8 +3093,7 @@ export default function Recepciones() {
                 type="button"
                 variant="outline"
                 disabled={
-                  !selectedReceiptProjectId ||
-                  registerMutation.isPending
+                  !selectedReceiptProjectId || registerMutation.isPending
                 }
                 className="min-w-0 flex-1 justify-between font-normal"
               >
@@ -3956,9 +3947,10 @@ export default function Recepciones() {
             : warehouseByItemId[item.id]
               ? Number(warehouseByItemId[item.id])
               : undefined,
-          storageLocation: isNonInventoryLine || isFixedAsset
-            ? undefined
-            : storageLocationByItemId[item.id]?.trim() || undefined,
+          storageLocation:
+            isNonInventoryLine || isFixedAsset
+              ? undefined
+              : storageLocationByItemId[item.id]?.trim() || undefined,
           itemName: item.itemName,
           quantityExpected: String(getReceivableQuantity(item)),
           quantityReceived: receivedMap[item.id] || "0",
@@ -4011,11 +4003,10 @@ export default function Recepciones() {
           if (articleRows.length > 1) {
             return articleRows.map(({ article, detail }: any, index) => {
               const absoluteIndex = receivedOffset + index;
-              const articleCode =
-                getReceiptFixedAssetArticleDisplayCode(
-                  article,
-                  getSourceItemCode(item)
-                );
+              const articleCode = getReceiptFixedAssetArticleDisplayCode(
+                article,
+                getSourceItemCode(item)
+              );
               const unitDetail = getReceiptFixedAssetArticleDetail(
                 article,
                 detail
@@ -4043,20 +4034,22 @@ export default function Recepciones() {
           }
         }
 
-        return [{
-          ...basePayload,
-          ...getReceivedArticlePayload(item),
-          subtotal:
-            sourceType === "purchase_order"
-              ? formatMoneyPayload(getReceiptLineSubtotalDraft(item))
-              : undefined,
-          assetDetails: isFixedAsset
-            ? normalizeFixedAssetDetails(
-                assetDraft.assetDetails,
-                receivedQuantity
-              )
-            : [],
-        }];
+        return [
+          {
+            ...basePayload,
+            ...getReceivedArticlePayload(item),
+            subtotal:
+              sourceType === "purchase_order"
+                ? formatMoneyPayload(getReceiptLineSubtotalDraft(item))
+                : undefined,
+            assetDetails: isFixedAsset
+              ? normalizeFixedAssetDetails(
+                  assetDraft.assetDetails,
+                  receivedQuantity
+                )
+              : [],
+          },
+        ];
       }),
       ...(sourceType === "purchase_order"
         ? buildManualReceiptItemPayload()
@@ -4332,35 +4325,32 @@ export default function Recepciones() {
   const receiptCorrectionDisabledReason =
     !receiptDetail ||
     receiptDetail.receipt.sourceType !== "purchase_order" ||
-    receiptDetail.receipt.status === "anulada"
-      ? null
-      : !receiptDetail.invoice?.id
-        ? "Esta recepción no tiene factura vinculada para corregir."
-        : receiptDetail.invoice.status === "registrada"
-          ? (
-              <>
-                La factura{" "}
-                <DocumentNumberButton
-                  className="inline text-xs text-primary"
-                  onClick={() =>
-                    setLocation(`/facturas?editar=${receiptDetail.invoice!.id}`)
-                  }
-                  ariaLabel={`Abrir factura ${receiptDetail.invoice.invoiceDocumentNumber}`}
-                >
-                  {receiptDetail.invoice.invoiceDocumentNumber}
-                </DocumentNumberButton>{" "}
-                ya está contabilizada; no se puede corregir la recepción.
-              </>
-            )
-          : receiptDetail.invoice.status === "anulada"
-            ? "La factura ya está anulada."
-            : !CORRECTABLE_RECEIPT_INVOICE_STATUSES.has(
-                  receiptCorrectionInvoiceStatus
-                )
-              ? "Esta factura no permite corrección de recepción."
-              : !canEditReceiptCorrections
-                ? "No tienes permisos para corregir recepciones."
-                : null;
+    receiptDetail.receipt.status === "anulada" ? null : !receiptDetail.invoice
+        ?.id ? (
+      "Esta recepción no tiene factura vinculada para corregir."
+    ) : receiptDetail.invoice.status === "registrada" ? (
+      <>
+        La factura{" "}
+        <DocumentNumberButton
+          className="inline text-xs text-primary"
+          onClick={() =>
+            setLocation(`/facturas?editar=${receiptDetail.invoice!.id}`)
+          }
+          ariaLabel={`Abrir factura ${receiptDetail.invoice.invoiceDocumentNumber}`}
+        >
+          {receiptDetail.invoice.invoiceDocumentNumber}
+        </DocumentNumberButton>{" "}
+        ya está contabilizada; no se puede corregir la recepción.
+      </>
+    ) : receiptDetail.invoice.status === "anulada" ? (
+      "La factura ya está anulada."
+    ) : !CORRECTABLE_RECEIPT_INVOICE_STATUSES.has(
+        receiptCorrectionInvoiceStatus
+      ) ? (
+      "Esta factura no permite corrección de recepción."
+    ) : !canEditReceiptCorrections ? (
+      "No tienes permisos para corregir recepciones."
+    ) : null;
   const canOpenReceiptCorrection =
     Boolean(receiptDetail?.invoice?.id) &&
     !receiptCorrectionDisabledReason &&
@@ -4379,7 +4369,10 @@ export default function Recepciones() {
       sourceItems.map((item: any) => [item.id, item])
     );
     const warehouseLabel = formatReceiptWarehouseLabel(receiptDetail);
-    const projectLabel = formatReceiptProjectLabel(receiptDetail, warehouseLabel);
+    const projectLabel = formatReceiptProjectLabel(
+      receiptDetail,
+      warehouseLabel
+    );
     const receivedByLabel = formatUserReference(
       (receiptDetail as any).receivedBy,
       receipt.receivedById
@@ -4423,8 +4416,7 @@ export default function Recepciones() {
       : [];
 
     const printableItems = receiptDetail.items.filter(
-      (item: any) =>
-        Number(item.quantityReceived ?? 0) > 0
+      (item: any) => Number(item.quantityReceived ?? 0) > 0
     );
     const summaryLines: Array<{
       quantity: string | number | null | undefined;
@@ -4441,8 +4433,7 @@ export default function Recepciones() {
           getSourceItemCode(sourceItem ?? item) ||
           receiptSourceItemCodes.get(item.sourceItemId) ||
           "-";
-        const requestedCode =
-          item.requestedSapItemCode || sourceCode || "-";
+        const requestedCode = item.requestedSapItemCode || sourceCode || "-";
         const requestedName =
           item.requestedItemName || sourceItem?.itemName || item.itemName;
         const requestedBrand =
@@ -4552,11 +4543,10 @@ export default function Recepciones() {
       .join("");
     const fiscalSummary = summarizePurchaseOrderLines(summaryLines);
     const otherChargesTotal = getOtherChargesTotal(receiptOtherCharges);
-  const fiscalSummaryBaseRows =
-      getPurchaseOrderFiscalSummaryRows(
-        fiscalSummary,
-        receipt.currency ?? "HNL"
-      );
+    const fiscalSummaryBaseRows = getPurchaseOrderFiscalSummaryRows(
+      fiscalSummary,
+      receipt.currency ?? "HNL"
+    );
     const fiscalSummaryRowsWithCharges =
       otherChargesTotal > 0
         ? [
@@ -4863,10 +4853,14 @@ export default function Recepciones() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearchTerm, sourceTypeFilter, statusFilter]);
+  }, [debouncedSearchTerm, projectFilter, sourceTypeFilter, statusFilter]);
 
   useEffect(() => {
-    if (!isPlaceholderData && receiptsPage?.page && receiptsPage.page !== page) {
+    if (
+      !isPlaceholderData &&
+      receiptsPage?.page &&
+      receiptsPage.page !== page
+    ) {
       setPage(receiptsPage.page);
     }
   }, [isPlaceholderData, page, receiptsPage?.page]);
@@ -4879,6 +4873,8 @@ export default function Recepciones() {
       exportRows = await fetchAllFilteredPages((exportPage, pageSize) =>
         utils.receipts.listPage.fetch({
           search: debouncedSearchTerm.trim() || undefined,
+          projectId:
+            projectFilter === "all" ? undefined : Number(projectFilter),
           sourceType:
             sourceTypeFilter === "all"
               ? undefined
@@ -5171,9 +5167,7 @@ export default function Recepciones() {
                             <CommandGroup>
                               {sourceType === "purchase_order"
                                 ? availablePurchaseOrders.map((row: any) => {
-                                    const value = String(
-                                      row.purchaseOrder.id
-                                    );
+                                    const value = String(row.purchaseOrder.id);
                                     const label =
                                       formatPurchaseOrderReceiptSourceLabel(
                                         row
@@ -5348,7 +5342,8 @@ export default function Recepciones() {
                           Ingreso
                         </Label>
                         <p className="text-xs text-muted-foreground">
-                          El cambio se aplica a todas las líneas de la recepción.
+                          El cambio se aplica a todas las líneas de la
+                          recepción.
                         </p>
                       </div>
                     </div>
@@ -5966,8 +5961,7 @@ export default function Recepciones() {
                           const sourceCode = getSourceItemCode(item);
                           const requestedArticle =
                             getRequestedReceiptArticle(item);
-                          const receivedArticle =
-                            getReceivedArticleDraft(item);
+                          const receivedArticle = getReceivedArticleDraft(item);
                           const canSubstituteArticle =
                             sourceType === "purchase_order" &&
                             supportsReceiptArticleSubstitution(item);
@@ -6194,7 +6188,8 @@ export default function Recepciones() {
                                           <td className="p-4 text-right font-semibold">
                                             {formatPurchaseOrderCurrency(
                                               receiptUnitPriceDraft,
-                                              purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
+                                              purchaseOrderDetail?.purchaseOrder
+                                                .currency ?? "HNL"
                                             )}
                                           </td>
                                           {taxDraft &&
@@ -6208,19 +6203,25 @@ export default function Recepciones() {
                                               <td className="p-4 text-right font-semibold">
                                                 {formatPurchaseOrderCurrency(
                                                   fixedAssetUnitLineAmounts.subtotal,
-                                                  purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
+                                                  purchaseOrderDetail
+                                                    ?.purchaseOrder.currency ??
+                                                    "HNL"
                                                 )}
                                               </td>
                                               <td className="p-4 text-right font-semibold">
                                                 {formatPurchaseOrderCurrency(
                                                   fixedAssetUnitLineAmounts.taxAmount,
-                                                  purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
+                                                  purchaseOrderDetail
+                                                    ?.purchaseOrder.currency ??
+                                                    "HNL"
                                                 )}
                                               </td>
                                               <td className="p-4 text-right font-semibold">
                                                 {formatPurchaseOrderCurrency(
                                                   fixedAssetUnitLineAmounts.total,
-                                                  purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
+                                                  purchaseOrderDetail
+                                                    ?.purchaseOrder.currency ??
+                                                    "HNL"
                                                 )}
                                               </td>
                                             </>
@@ -6252,178 +6253,90 @@ export default function Recepciones() {
                                 : null}
                               {!shouldRenderFixedAssetReceiptRows ? (
                                 <tr className="border-b border-border/70">
-                                <td className="p-4">
-                                  <div className="font-semibold">
-                                    {item.itemName}
-                                    {isManualItem ? (
-                                      <Badge
-                                        variant="outline"
-                                        className="ml-2 align-middle"
-                                      >
-                                        Agregado
-                                      </Badge>
-                                    ) : null}
-                                  </div>
-                                  {sourceCode ? (
-                                    <div className="mt-1 text-xs text-muted-foreground">
-                                      {isManualItem ? "SKU" : "Original"}:{" "}
-                                      {sourceCode}
-                                    </div>
-                                  ) : null}
-                                  <div className="mt-2 flex max-w-[360px] flex-wrap items-center gap-1.5">
-                                    {renderReceiptLineDetailsButton(
-                                      item.id,
-                                      receiptLineDetailsExpanded
-                                    )}
-                                    {sourceType === "purchase_order" ? (
-                                      selectedReceiptTarget?.label ? (
-                                        <span className="truncate text-xs text-muted-foreground">
-                                          {formatReceiptTargetSummary(
-                                            selectedReceiptTarget
-                                          )}
-                                        </span>
-                                      ) : (
+                                  <td className="p-4">
+                                    <div className="font-semibold">
+                                      {item.itemName}
+                                      {isManualItem ? (
                                         <Badge
                                           variant="outline"
-                                          className="border-amber-300 text-amber-700"
+                                          className="ml-2 align-middle"
                                         >
-                                          Destino pendiente
+                                          Agregado
                                         </Badge>
-                                      )
+                                      ) : null}
+                                    </div>
+                                    {sourceCode ? (
+                                      <div className="mt-1 text-xs text-muted-foreground">
+                                        {isManualItem ? "SKU" : "Original"}:{" "}
+                                        {sourceCode}
+                                      </div>
                                     ) : null}
-                                    {isLineFixedAsset ? (
-                                      <Badge
-                                        variant="outline"
-                                        className="border-blue-300 text-blue-700"
-                                      >
-                                        Activo fijo
-                                      </Badge>
-                                    ) : null}
-                                    {articleIsSubstitution ? (
-                                      <Badge
-                                        variant="outline"
-                                        className="border-violet-300 text-violet-700"
-                                      >
-                                        Sustitución
-                                      </Badge>
-                                    ) : null}
-                                    {hasReceiptLineNotes ? (
-                                      <Badge variant="outline">
-                                        Con observación
-                                      </Badge>
-                                    ) : null}
-                                  </div>
-                                </td>
-                                <td className="p-4 font-mono text-sm">
-                                  {sourceCode || "—"}
-                                </td>
-                                <td className="p-4 text-right font-semibold">
-                                  {formatQuantity(pendingQuantity)}{" "}
-                                  {item.unit || ""}
-                                </td>
-                                <td className="p-4 text-right text-muted-foreground">
-                                  {formatQuantity(
-                                    isManualItem
-                                      ? "0.00"
-                                      : item.receivedQuantity
-                                  )}{" "}
-                                  {item.unit || ""}
-                                </td>
-                                <td className="p-4 text-right">
-                                  {sourceType === "purchase_order" ? (
-                                    <Input
-                                      type="text"
-                                      inputMode="decimal"
-                                      className="ml-auto w-36 text-right"
-                                      value={receiptUnitPriceDraft}
-                                      onFocus={event =>
-                                        event.currentTarget.select()
-                                      }
-                                      onClick={event =>
-                                        event.currentTarget.select()
-                                      }
-                                      onChange={event => {
-                                        const nextUnitPrice =
-                                          event.target.value;
-                                        setPriceMap(current => ({
-                                          ...current,
-                                          [item.id]: nextUnitPrice,
-                                        }));
-                                        setSubtotalMap(current => ({
-                                          ...current,
-                                          [item.id]:
-                                            calculateReceiptSubtotalDraftValue(
-                                              receivedMap[item.id] ?? "0",
-                                              nextUnitPrice
-                                            ),
-                                        }));
-                                      }}
-                                      onBlur={event => {
-                                        const nextUnitPrice =
-                                          sourcePricesIncludeTax
-                                            ? formatUnitPriceDisplay(
-                                                event.target.value
-                                              )
-                                            : formatMoneyDisplay(
-                                                event.target.value
-                                              );
-                                        setPriceMap(current => ({
-                                          ...current,
-                                          [item.id]: nextUnitPrice,
-                                        }));
-                                        setSubtotalMap(current => ({
-                                          ...current,
-                                          [item.id]:
-                                            calculateReceiptSubtotalDraftValue(
-                                              receivedMap[item.id] ?? "0",
-                                              nextUnitPrice
-                                            ),
-                                        }));
-                                      }}
-                                      disabled={registerMutation.isPending}
-                                    />
-                                  ) : (
-                                    <span className="text-muted-foreground">
-                                      —
-                                    </span>
-                                  )}
-                                </td>
-                                {sourceType === "purchase_order" &&
-                                taxDraft &&
-                                lineAmounts ? (
-                                  <>
-                                    <td className="p-4">
-                                      <PurchaseOrderTaxControls
-                                        draft={taxDraft}
-                                        taxes={activeSalesTaxes}
-                                        disabled={registerMutation.isPending}
-                                        onChange={nextDraft => {
-                                          setTaxCodeByItemId(current => ({
-                                            ...current,
-                                            [item.id]: nextDraft.taxCode,
-                                          }));
-                                          setAdditionalTaxCodesByItemId(
-                                            current => ({
-                                              ...current,
-                                              [item.id]:
-                                                nextDraft.additionalTaxCodes,
-                                            })
-                                          );
-                                        }}
-                                      />
-                                    </td>
-                                    <td className="p-4 text-right">
+                                    <div className="mt-2 flex max-w-[360px] flex-wrap items-center gap-1.5">
+                                      {renderReceiptLineDetailsButton(
+                                        item.id,
+                                        receiptLineDetailsExpanded
+                                      )}
+                                      {sourceType === "purchase_order" ? (
+                                        selectedReceiptTarget?.label ? (
+                                          <span className="truncate text-xs text-muted-foreground">
+                                            {formatReceiptTargetSummary(
+                                              selectedReceiptTarget
+                                            )}
+                                          </span>
+                                        ) : (
+                                          <Badge
+                                            variant="outline"
+                                            className="border-amber-300 text-amber-700"
+                                          >
+                                            Destino pendiente
+                                          </Badge>
+                                        )
+                                      ) : null}
+                                      {isLineFixedAsset ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-blue-300 text-blue-700"
+                                        >
+                                          Activo fijo
+                                        </Badge>
+                                      ) : null}
+                                      {articleIsSubstitution ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-violet-300 text-violet-700"
+                                        >
+                                          Sustitución
+                                        </Badge>
+                                      ) : null}
+                                      {hasReceiptLineNotes ? (
+                                        <Badge variant="outline">
+                                          Con observación
+                                        </Badge>
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                  <td className="p-4 font-mono text-sm">
+                                    {sourceCode || "—"}
+                                  </td>
+                                  <td className="p-4 text-right font-semibold">
+                                    {formatQuantity(pendingQuantity)}{" "}
+                                    {item.unit || ""}
+                                  </td>
+                                  <td className="p-4 text-right text-muted-foreground">
+                                    {formatQuantity(
+                                      isManualItem
+                                        ? "0.00"
+                                        : item.receivedQuantity
+                                    )}{" "}
+                                    {item.unit || ""}
+                                  </td>
+                                  <td className="p-4 text-right">
+                                    {sourceType === "purchase_order" ? (
                                       <Input
                                         type="text"
                                         inputMode="decimal"
-                                        className="ml-auto w-36 text-right font-semibold"
-                                        value={
-                                          sourcePricesIncludeTax
-                                            ? formatMoneyDisplay(
-                                                lineAmounts.subtotal
-                                              )
-                                            : getReceiptLineSubtotalDraft(item)
-                                        }
+                                        className="ml-auto w-36 text-right"
+                                        value={receiptUnitPriceDraft}
                                         onFocus={event =>
                                           event.currentTarget.select()
                                         }
@@ -6431,166 +6344,259 @@ export default function Recepciones() {
                                           event.currentTarget.select()
                                         }
                                         onChange={event => {
-                                          const nextSubtotal =
+                                          const nextUnitPrice =
                                             event.target.value;
-                                          setSubtotalMap(current => ({
-                                            ...current,
-                                            [item.id]: nextSubtotal,
-                                          }));
                                           setPriceMap(current => ({
                                             ...current,
+                                            [item.id]: nextUnitPrice,
+                                          }));
+                                          setSubtotalMap(current => ({
+                                            ...current,
                                             [item.id]:
-                                              calculateReceiptUnitPriceDraftValue(
+                                              calculateReceiptSubtotalDraftValue(
                                                 receivedMap[item.id] ?? "0",
-                                                nextSubtotal
+                                                nextUnitPrice
                                               ),
                                           }));
                                         }}
                                         onBlur={event => {
-                                          const nextSubtotal =
-                                            formatMoneyDisplay(
-                                              event.target.value
-                                            );
-                                          setSubtotalMap(current => ({
-                                            ...current,
-                                            [item.id]: nextSubtotal,
-                                          }));
+                                          const nextUnitPrice =
+                                            sourcePricesIncludeTax
+                                              ? formatUnitPriceDisplay(
+                                                  event.target.value
+                                                )
+                                              : formatMoneyDisplay(
+                                                  event.target.value
+                                                );
                                           setPriceMap(current => ({
                                             ...current,
+                                            [item.id]: nextUnitPrice,
+                                          }));
+                                          setSubtotalMap(current => ({
+                                            ...current,
                                             [item.id]:
-                                              calculateReceiptUnitPriceDraftValue(
+                                              calculateReceiptSubtotalDraftValue(
                                                 receivedMap[item.id] ?? "0",
-                                                nextSubtotal
+                                                nextUnitPrice
                                               ),
                                           }));
                                         }}
-                                        disabled={
-                                          registerMutation.isPending ||
-                                          sourcePricesIncludeTax
-                                        }
+                                        disabled={registerMutation.isPending}
                                       />
-                                    </td>
-                                    <td className="p-4 text-right font-semibold">
-                                      {formatPurchaseOrderCurrency(
-                                        lineAmounts.taxAmount,
-                                        purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
-                                      )}
-                                    </td>
-                                    <td className="p-4 text-right font-semibold">
-                                      {formatPurchaseOrderCurrency(
-                                        lineAmounts.total,
-                                        purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
-                                      )}
-                                    </td>
-                                  </>
-                                ) : null}
-                                <td className="p-4 text-right">
-                                  <Input
-                                    type="text"
-                                    inputMode="decimal"
-                                    className="ml-auto w-36 text-right"
-                                    value={receivedMap[item.id] ?? ""}
-                                    onFocus={event =>
-                                      event.currentTarget.select()
-                                    }
-                                    onClick={event =>
-                                      event.currentTarget.select()
-                                    }
-                                    onChange={event =>
-                                      handleReceivedQuantityChange(
-                                        item,
-                                        event.target.value
-                                      )
-                                    }
-                                    disabled={
-                                      !isManualItem && pendingQuantity <= 0
-                                    }
-                                  />
-                                  {!isManualItem && excessQuantity > 0 ? (
-                                    <p className="mt-1 text-xs font-medium text-emerald-700">
-                                      Exceso permitido:{" "}
-                                      {formatQuantity(excessQuantity)}{" "}
-                                      {item.unit || ""}
-                                    </p>
-                                  ) : null}
-                                </td>
-                                <td className="p-4">
-                                  {renderReceiptWarehouseSelector(item, true)}
-                                </td>
-                                <td className="p-4">
-                                  {renderReceiptStorageLocationInput(
-                                    item,
-                                    true,
-                                    warehouseByItemId[item.id]
-                                  ) ?? (
-                                    <span className="text-xs text-muted-foreground">
-                                      No aplica
-                                    </span>
-                                  )}
-                                </td>
-                                {sourceType === "transfer" ? (
-                                  <td className="p-4 text-right">
-                                    <div className="flex flex-col items-end gap-1.5">
-                                      <Button
-                                        variant={
-                                          transferClosureDraft &&
-                                          transferCloseQuantity > 0
-                                            ? "default"
-                                            : "outline"
-                                        }
-                                        size="sm"
-                                        className="ml-auto gap-2"
-                                        onClick={() => {
-                                          if (!canCloseTransferLines) return;
-                                          setCloseTransferLineItem(item);
-                                          setTransferCloseReason(
-                                            transferClosureDraft?.reason ||
-                                              TRANSFER_CLOSE_REASONS[0].value
-                                          );
-                                          setTransferCloseNote(
-                                            transferClosureDraft?.note || ""
-                                          );
-                                        }}
-                                        disabled={
-                                          !canCloseTransferLines ||
-                                          transferCloseQuantity <= 0
-                                        }
-                                        title={
-                                          !canCloseTransferLines
-                                            ? "Solo Administración Central o el administrador del proyecto destino pueden cerrar saldos de traslado"
-                                            : transferCloseQuantity <= 0
-                                              ? "No hay saldo restante para cerrar; baja Recibir ahora si no recibiste todo"
-                                              : "Cerrar saldo pendiente, devolverlo al origen y regresarlo a requisición"
-                                        }
-                                      >
-                                        <RotateCcw className="h-4 w-4" />
-                                        {!canCloseTransferLines
-                                          ? "Sin autorización"
-                                          : transferCloseQuantity <= 0
-                                            ? "Sin saldo"
-                                            : transferClosureDraft
-                                              ? "Cierre marcado"
-                                              : "Cerrar saldo"}
-                                      </Button>
-                                      {transferClosureDraft &&
-                                      transferCloseQuantity > 0 ? (
-                                        <span className="text-xs text-muted-foreground">
-                                          Devuelve{" "}
-                                          {formatQuantity(
-                                            transferCloseQuantity
-                                          )}{" "}
-                                          {item.unit || ""} al origen y a
-                                          requisición
-                                        </span>
-                                      ) : canCloseTransferLines &&
-                                        transferCloseQuantity <= 0 ? (
-                                        <span className="max-w-48 text-right text-xs text-muted-foreground">
-                                          Baja Recibir ahora para cerrar saldo.
-                                        </span>
-                                      ) : null}
-                                    </div>
+                                    ) : (
+                                      <span className="text-muted-foreground">
+                                        —
+                                      </span>
+                                    )}
                                   </td>
-                                ) : null}
+                                  {sourceType === "purchase_order" &&
+                                  taxDraft &&
+                                  lineAmounts ? (
+                                    <>
+                                      <td className="p-4">
+                                        <PurchaseOrderTaxControls
+                                          draft={taxDraft}
+                                          taxes={activeSalesTaxes}
+                                          disabled={registerMutation.isPending}
+                                          onChange={nextDraft => {
+                                            setTaxCodeByItemId(current => ({
+                                              ...current,
+                                              [item.id]: nextDraft.taxCode,
+                                            }));
+                                            setAdditionalTaxCodesByItemId(
+                                              current => ({
+                                                ...current,
+                                                [item.id]:
+                                                  nextDraft.additionalTaxCodes,
+                                              })
+                                            );
+                                          }}
+                                        />
+                                      </td>
+                                      <td className="p-4 text-right">
+                                        <Input
+                                          type="text"
+                                          inputMode="decimal"
+                                          className="ml-auto w-36 text-right font-semibold"
+                                          value={
+                                            sourcePricesIncludeTax
+                                              ? formatMoneyDisplay(
+                                                  lineAmounts.subtotal
+                                                )
+                                              : getReceiptLineSubtotalDraft(
+                                                  item
+                                                )
+                                          }
+                                          onFocus={event =>
+                                            event.currentTarget.select()
+                                          }
+                                          onClick={event =>
+                                            event.currentTarget.select()
+                                          }
+                                          onChange={event => {
+                                            const nextSubtotal =
+                                              event.target.value;
+                                            setSubtotalMap(current => ({
+                                              ...current,
+                                              [item.id]: nextSubtotal,
+                                            }));
+                                            setPriceMap(current => ({
+                                              ...current,
+                                              [item.id]:
+                                                calculateReceiptUnitPriceDraftValue(
+                                                  receivedMap[item.id] ?? "0",
+                                                  nextSubtotal
+                                                ),
+                                            }));
+                                          }}
+                                          onBlur={event => {
+                                            const nextSubtotal =
+                                              formatMoneyDisplay(
+                                                event.target.value
+                                              );
+                                            setSubtotalMap(current => ({
+                                              ...current,
+                                              [item.id]: nextSubtotal,
+                                            }));
+                                            setPriceMap(current => ({
+                                              ...current,
+                                              [item.id]:
+                                                calculateReceiptUnitPriceDraftValue(
+                                                  receivedMap[item.id] ?? "0",
+                                                  nextSubtotal
+                                                ),
+                                            }));
+                                          }}
+                                          disabled={
+                                            registerMutation.isPending ||
+                                            sourcePricesIncludeTax
+                                          }
+                                        />
+                                      </td>
+                                      <td className="p-4 text-right font-semibold">
+                                        {formatPurchaseOrderCurrency(
+                                          lineAmounts.taxAmount,
+                                          purchaseOrderDetail?.purchaseOrder
+                                            .currency ?? "HNL"
+                                        )}
+                                      </td>
+                                      <td className="p-4 text-right font-semibold">
+                                        {formatPurchaseOrderCurrency(
+                                          lineAmounts.total,
+                                          purchaseOrderDetail?.purchaseOrder
+                                            .currency ?? "HNL"
+                                        )}
+                                      </td>
+                                    </>
+                                  ) : null}
+                                  <td className="p-4 text-right">
+                                    <Input
+                                      type="text"
+                                      inputMode="decimal"
+                                      className="ml-auto w-36 text-right"
+                                      value={receivedMap[item.id] ?? ""}
+                                      onFocus={event =>
+                                        event.currentTarget.select()
+                                      }
+                                      onClick={event =>
+                                        event.currentTarget.select()
+                                      }
+                                      onChange={event =>
+                                        handleReceivedQuantityChange(
+                                          item,
+                                          event.target.value
+                                        )
+                                      }
+                                      disabled={
+                                        !isManualItem && pendingQuantity <= 0
+                                      }
+                                    />
+                                    {!isManualItem && excessQuantity > 0 ? (
+                                      <p className="mt-1 text-xs font-medium text-emerald-700">
+                                        Exceso permitido:{" "}
+                                        {formatQuantity(excessQuantity)}{" "}
+                                        {item.unit || ""}
+                                      </p>
+                                    ) : null}
+                                  </td>
+                                  <td className="p-4">
+                                    {renderReceiptWarehouseSelector(item, true)}
+                                  </td>
+                                  <td className="p-4">
+                                    {renderReceiptStorageLocationInput(
+                                      item,
+                                      true,
+                                      warehouseByItemId[item.id]
+                                    ) ?? (
+                                      <span className="text-xs text-muted-foreground">
+                                        No aplica
+                                      </span>
+                                    )}
+                                  </td>
+                                  {sourceType === "transfer" ? (
+                                    <td className="p-4 text-right">
+                                      <div className="flex flex-col items-end gap-1.5">
+                                        <Button
+                                          variant={
+                                            transferClosureDraft &&
+                                            transferCloseQuantity > 0
+                                              ? "default"
+                                              : "outline"
+                                          }
+                                          size="sm"
+                                          className="ml-auto gap-2"
+                                          onClick={() => {
+                                            if (!canCloseTransferLines) return;
+                                            setCloseTransferLineItem(item);
+                                            setTransferCloseReason(
+                                              transferClosureDraft?.reason ||
+                                                TRANSFER_CLOSE_REASONS[0].value
+                                            );
+                                            setTransferCloseNote(
+                                              transferClosureDraft?.note || ""
+                                            );
+                                          }}
+                                          disabled={
+                                            !canCloseTransferLines ||
+                                            transferCloseQuantity <= 0
+                                          }
+                                          title={
+                                            !canCloseTransferLines
+                                              ? "Solo Administración Central o el administrador del proyecto destino pueden cerrar saldos de traslado"
+                                              : transferCloseQuantity <= 0
+                                                ? "No hay saldo restante para cerrar; baja Recibir ahora si no recibiste todo"
+                                                : "Cerrar saldo pendiente, devolverlo al origen y regresarlo a requisición"
+                                          }
+                                        >
+                                          <RotateCcw className="h-4 w-4" />
+                                          {!canCloseTransferLines
+                                            ? "Sin autorización"
+                                            : transferCloseQuantity <= 0
+                                              ? "Sin saldo"
+                                              : transferClosureDraft
+                                                ? "Cierre marcado"
+                                                : "Cerrar saldo"}
+                                        </Button>
+                                        {transferClosureDraft &&
+                                        transferCloseQuantity > 0 ? (
+                                          <span className="text-xs text-muted-foreground">
+                                            Devuelve{" "}
+                                            {formatQuantity(
+                                              transferCloseQuantity
+                                            )}{" "}
+                                            {item.unit || ""} al origen y a
+                                            requisición
+                                          </span>
+                                        ) : canCloseTransferLines &&
+                                          transferCloseQuantity <= 0 ? (
+                                          <span className="max-w-48 text-right text-xs text-muted-foreground">
+                                            Baja Recibir ahora para cerrar
+                                            saldo.
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </td>
+                                  ) : null}
                                 </tr>
                               ) : null}
                               {receiptLineDetailsExpanded ? (
@@ -6602,640 +6608,654 @@ export default function Recepciones() {
                                     colSpan={receiptTableColumnCount}
                                     className="p-4 pt-0"
                                   >
-                                  <div className="space-y-4 rounded-xl border border-border/70 bg-background p-3">
-                                    {canSubstituteArticle ? (
-                                      <div className="grid gap-3 lg:grid-cols-2">
-                                        <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
-                                          <div className="mb-2 text-sm font-semibold">
-                                            Artículo solicitado
-                                          </div>
-                                          <dl className="grid gap-2 text-sm sm:grid-cols-3">
-                                            <div>
-                                              <dt className="text-xs text-muted-foreground">
-                                                Código SAP
-                                              </dt>
-                                              <dd className="font-mono">
-                                                {requestedArticle.sapItemCode ||
-                                                  "—"}
-                                              </dd>
+                                    <div className="space-y-4 rounded-xl border border-border/70 bg-background p-3">
+                                      {canSubstituteArticle ? (
+                                        <div className="grid gap-3 lg:grid-cols-2">
+                                          <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                                            <div className="mb-2 text-sm font-semibold">
+                                              Artículo solicitado
                                             </div>
-                                            <div>
-                                              <dt className="text-xs text-muted-foreground">
-                                                Marca
-                                              </dt>
-                                              <dd>
-                                                {requestedArticle.brand || "—"}
-                                              </dd>
-                                            </div>
-                                            <div>
-                                              <dt className="text-xs text-muted-foreground">
-                                                Número de parte
-                                              </dt>
-                                              <dd>
-                                                {requestedArticle.partNumber ||
-                                                  "—"}
-                                              </dd>
-                                            </div>
-                                          </dl>
-                                        </div>
-                                        <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-3">
-                                          <div className="mb-2 flex items-center justify-between gap-2">
-                                            <div className="text-sm font-semibold">
-                                              Artículo recibido
-                                            </div>
-                                            {articleIsSubstitution ? (
-                                              <Badge
-                                                variant="outline"
-                                                className="border-violet-300 text-violet-700"
-                                              >
-                                                Sustitución
-                                              </Badge>
-                                            ) : null}
-                                          </div>
-                                          <div className="grid gap-2 sm:grid-cols-2">
-                                            <div className="space-y-1">
-                                              <Label
-                                                htmlFor={`received-brand-${item.id}`}
-                                              >
-                                                Marca recibida
-                                              </Label>
-                                              <Input
-                                                id={`received-brand-${item.id}`}
-                                                value={receivedArticle.brand}
-                                                maxLength={120}
-                                                disabled={
-                                                  registerMutation.isPending
-                                                }
-                                                onChange={event =>
-                                                  updateReceivedArticleDraft(
-                                                    item,
-                                                    "brand",
-                                                    event.target.value
-                                                  )
-                                                }
-                                              />
-                                            </div>
-                                            <div className="space-y-1">
-                                              <Label
-                                                htmlFor={`received-part-${item.id}`}
-                                              >
-                                                Número de parte recibido
-                                              </Label>
-                                              <Input
-                                                id={`received-part-${item.id}`}
-                                                value={
-                                                  receivedArticle.partNumber
-                                                }
-                                                maxLength={120}
-                                                disabled={
-                                                  registerMutation.isPending
-                                                }
-                                                onChange={event =>
-                                                  updateReceivedArticleDraft(
-                                                    item,
-                                                    "partNumber",
-                                                    event.target.value
-                                                  )
-                                                }
-                                              />
-                                            </div>
-                                            {articleIsSubstitution ? (
-                                              <div className="space-y-1 sm:col-span-2">
-                                                <Label>
-                                                  Código SAP definitivo
-                                                  (automático)
-                                                </Label>
-                                                <div className="flex min-h-10 items-center rounded-md border border-violet-200 bg-background px-3 font-mono text-sm">
-                                                  {sapItemGroupCode
-                                                    ? `${sapItemGroupCode} + siguiente secuencia disponible`
-                                                    : "Se validará el grupo al registrar"}
-                                                </div>
-                                                <p className="text-xs text-muted-foreground">
-                                                  Si la combinación ya existe,
-                                                  se usará automáticamente su
-                                                  SAP. Si es nueva, el sistema
-                                                  reservará el siguiente código
-                                                  del grupo al registrar la
-                                                  recepción.
-                                                </p>
+                                            <dl className="grid gap-2 text-sm sm:grid-cols-3">
+                                              <div>
+                                                <dt className="text-xs text-muted-foreground">
+                                                  Código SAP
+                                                </dt>
+                                                <dd className="font-mono">
+                                                  {requestedArticle.sapItemCode ||
+                                                    "—"}
+                                                </dd>
                                               </div>
-                                            ) : null}
+                                              <div>
+                                                <dt className="text-xs text-muted-foreground">
+                                                  Marca
+                                                </dt>
+                                                <dd>
+                                                  {requestedArticle.brand ||
+                                                    "—"}
+                                                </dd>
+                                              </div>
+                                              <div>
+                                                <dt className="text-xs text-muted-foreground">
+                                                  Número de parte
+                                                </dt>
+                                                <dd>
+                                                  {requestedArticle.partNumber ||
+                                                    "—"}
+                                                </dd>
+                                              </div>
+                                            </dl>
+                                          </div>
+                                          <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-3">
+                                            <div className="mb-2 flex items-center justify-between gap-2">
+                                              <div className="text-sm font-semibold">
+                                                Artículo recibido
+                                              </div>
+                                              {articleIsSubstitution ? (
+                                                <Badge
+                                                  variant="outline"
+                                                  className="border-violet-300 text-violet-700"
+                                                >
+                                                  Sustitución
+                                                </Badge>
+                                              ) : null}
+                                            </div>
+                                            <div className="grid gap-2 sm:grid-cols-2">
+                                              <div className="space-y-1">
+                                                <Label
+                                                  htmlFor={`received-brand-${item.id}`}
+                                                >
+                                                  Marca recibida
+                                                </Label>
+                                                <Input
+                                                  id={`received-brand-${item.id}`}
+                                                  value={receivedArticle.brand}
+                                                  maxLength={120}
+                                                  disabled={
+                                                    registerMutation.isPending
+                                                  }
+                                                  onChange={event =>
+                                                    updateReceivedArticleDraft(
+                                                      item,
+                                                      "brand",
+                                                      event.target.value
+                                                    )
+                                                  }
+                                                />
+                                              </div>
+                                              <div className="space-y-1">
+                                                <Label
+                                                  htmlFor={`received-part-${item.id}`}
+                                                >
+                                                  Número de parte recibido
+                                                </Label>
+                                                <Input
+                                                  id={`received-part-${item.id}`}
+                                                  value={
+                                                    receivedArticle.partNumber
+                                                  }
+                                                  maxLength={120}
+                                                  disabled={
+                                                    registerMutation.isPending
+                                                  }
+                                                  onChange={event =>
+                                                    updateReceivedArticleDraft(
+                                                      item,
+                                                      "partNumber",
+                                                      event.target.value
+                                                    )
+                                                  }
+                                                />
+                                              </div>
+                                              {articleIsSubstitution ? (
+                                                <div className="space-y-1 sm:col-span-2">
+                                                  <Label>
+                                                    Código SAP definitivo
+                                                    (automático)
+                                                  </Label>
+                                                  <div className="flex min-h-10 items-center rounded-md border border-violet-200 bg-background px-3 font-mono text-sm">
+                                                    {sapItemGroupCode
+                                                      ? `${sapItemGroupCode} + siguiente secuencia disponible`
+                                                      : "Se validará el grupo al registrar"}
+                                                  </div>
+                                                  <p className="text-xs text-muted-foreground">
+                                                    Si la combinación ya existe,
+                                                    se usará automáticamente su
+                                                    SAP. Si es nueva, el sistema
+                                                    reservará el siguiente
+                                                    código del grupo al
+                                                    registrar la recepción.
+                                                  </p>
+                                                </div>
+                                              ) : null}
+                                            </div>
                                           </div>
                                         </div>
-                                      </div>
-                                    ) : null}
-                                    {sourceType === "purchase_order" ? (
-                                      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
-                                        {renderReceiptTargetSelector(item)}
-
-                                        <div className="flex justify-start lg:justify-end">
-                                          {isManualItem ? (
-                                            <Button
-                                              type="button"
-                                              variant="outline"
-                                              size="sm"
-                                              className="gap-2"
-                                              onClick={() =>
-                                                removeManualReceiptItem(item.id)
-                                              }
-                                              disabled={
-                                                registerMutation.isPending
-                                              }
-                                            >
-                                              <Trash2 className="h-4 w-4" />
-                                              Quitar
-                                            </Button>
-                                          ) : !isContractPurchaseOrder &&
-                                            canManuallyCloseReceiptLine(
-                                              item
-                                            ) ? (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              className="gap-2"
-                                              onClick={() =>
-                                                setCloseReceiptLineItem(item)
-                                              }
-                                              disabled={
-                                                closeReceiptLineMutation.isPending
-                                              }
-                                            >
-                                              {closeReceiptLineMutation.isPending &&
-                                              closeReceiptLineItem?.id ===
-                                                item.id ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
-                                              ) : (
-                                                <ShieldX className="h-4 w-4" />
-                                              )}
-                                              Cerrar línea
-                                            </Button>
-                                          ) : (
-                                            <span className="text-xs text-muted-foreground">
-                                              Sin acción pendiente
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    ) : null}
-
-                                    <div className="flex flex-wrap items-center gap-4">
-                                      <label className="flex items-center gap-2 text-sm font-medium">
-                                        <Checkbox
-                                          checked={isLineFixedAsset}
-                                          disabled={
-                                            sourceType !== "purchase_order" ||
-                                            isManualItem ||
-                                            Boolean(item.fixedAssetArticleId) ||
-                                            (!isLineFixedAsset &&
-                                              Boolean(fixedAssetUnavailableReason))
-                                          }
-                                          onCheckedChange={checked =>
-                                            handleFixedAssetToggle(
-                                              item,
-                                              checked === true
-                                            )
-                                          }
-                                        />
-                                        Activo fijo
-                                      </label>
-                                      {!isLineFixedAsset &&
-                                      fixedAssetUnavailableReason ? (
-                                        <span className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded border border-border/50">
-                                          {fixedAssetUnavailableReason}
-                                        </span>
                                       ) : null}
-                                      {isLineFixedAsset ? (
+                                      {sourceType === "purchase_order" ? (
+                                        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
+                                          {renderReceiptTargetSelector(item)}
+
+                                          <div className="flex justify-start lg:justify-end">
+                                            {isManualItem ? (
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="gap-2"
+                                                onClick={() =>
+                                                  removeManualReceiptItem(
+                                                    item.id
+                                                  )
+                                                }
+                                                disabled={
+                                                  registerMutation.isPending
+                                                }
+                                              >
+                                                <Trash2 className="h-4 w-4" />
+                                                Quitar
+                                              </Button>
+                                            ) : !isContractPurchaseOrder &&
+                                              canManuallyCloseReceiptLine(
+                                                item
+                                              ) ? (
+                                              <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="gap-2"
+                                                onClick={() =>
+                                                  setCloseReceiptLineItem(item)
+                                                }
+                                                disabled={
+                                                  closeReceiptLineMutation.isPending
+                                                }
+                                              >
+                                                {closeReceiptLineMutation.isPending &&
+                                                closeReceiptLineItem?.id ===
+                                                  item.id ? (
+                                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                  <ShieldX className="h-4 w-4" />
+                                                )}
+                                                Cerrar línea
+                                              </Button>
+                                            ) : (
+                                              <span className="text-xs text-muted-foreground">
+                                                Sin acción pendiente
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ) : null}
+
+                                      <div className="flex flex-wrap items-center gap-4">
                                         <label className="flex items-center gap-2 text-sm font-medium">
                                           <Checkbox
-                                            checked={assetDraft.isLeasing}
-                                            disabled={assetInputsDisabled}
+                                            checked={isLineFixedAsset}
+                                            disabled={
+                                              sourceType !== "purchase_order" ||
+                                              isManualItem ||
+                                              Boolean(
+                                                item.fixedAssetArticleId
+                                              ) ||
+                                              (!isLineFixedAsset &&
+                                                Boolean(
+                                                  fixedAssetUnavailableReason
+                                                ))
+                                            }
                                             onCheckedChange={checked =>
-                                              updateReceiptAssetDraft(
-                                                item.id,
-                                                draft => ({
-                                                  ...draft,
-                                                  isLeasing: checked === true,
-                                                })
+                                              handleFixedAssetToggle(
+                                                item,
+                                                checked === true
                                               )
                                             }
                                           />
-                                          Leasing
+                                          Activo fijo
                                         </label>
-                                      ) : null}
-                                      {isLineFixedAsset ? (
-                                        <Badge
-                                          variant="outline"
-                                          className="border-blue-300 text-blue-700"
-                                        >
-                                          {assetUnitCount} unidad(es) con serie
-                                        </Badge>
-                                      ) : null}
-                                      {isLineFixedAsset &&
-                                      fixedAssetArticles.length > 0 ? (
-                                        <Badge
-                                          variant="outline"
-                                          className={
-                                            fixedAssetResolved
-                                              ? "border-emerald-300 text-emerald-700"
-                                              : "border-amber-300 text-amber-700"
+                                        {!isLineFixedAsset &&
+                                        fixedAssetUnavailableReason ? (
+                                          <span className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded border border-border/50">
+                                            {fixedAssetUnavailableReason}
+                                          </span>
+                                        ) : null}
+                                        {isLineFixedAsset ? (
+                                          <label className="flex items-center gap-2 text-sm font-medium">
+                                            <Checkbox
+                                              checked={assetDraft.isLeasing}
+                                              disabled={assetInputsDisabled}
+                                              onCheckedChange={checked =>
+                                                updateReceiptAssetDraft(
+                                                  item.id,
+                                                  draft => ({
+                                                    ...draft,
+                                                    isLeasing: checked === true,
+                                                  })
+                                                )
+                                              }
+                                            />
+                                            Leasing
+                                          </label>
+                                        ) : null}
+                                        {isLineFixedAsset ? (
+                                          <Badge
+                                            variant="outline"
+                                            className="border-blue-300 text-blue-700"
+                                          >
+                                            {assetUnitCount} unidad(es) con
+                                            serie
+                                          </Badge>
+                                        ) : null}
+                                        {isLineFixedAsset &&
+                                        fixedAssetArticles.length > 0 ? (
+                                          <Badge
+                                            variant="outline"
+                                            className={
+                                              fixedAssetResolved
+                                                ? "border-emerald-300 text-emerald-700"
+                                                : "border-amber-300 text-amber-700"
+                                            }
+                                          >
+                                            {fixedAssetProgress.resolved}/
+                                            {fixedAssetProgress.expected}{" "}
+                                            resueltos
+                                          </Badge>
+                                        ) : null}
+                                        {fixedAssetDraftSaved ? (
+                                          <Badge
+                                            variant="outline"
+                                            className="border-amber-300 text-amber-700"
+                                          >
+                                            Pendiente Contabilidad
+                                          </Badge>
+                                        ) : null}
+                                        {fixedAssetResolved ? (
+                                          <Badge
+                                            variant="outline"
+                                            className="border-emerald-300 text-emerald-700"
+                                          >
+                                            Código real listo
+                                          </Badge>
+                                        ) : null}
+                                      </div>
+
+                                      <div className="space-y-2">
+                                        <Label>Observación de línea</Label>
+                                        <Textarea
+                                          rows={2}
+                                          value={assetDraft.notes}
+                                          disabled={assetInputsDisabled}
+                                          onChange={event =>
+                                            updateReceiptAssetDraft(
+                                              item.id,
+                                              draft => ({
+                                                ...draft,
+                                                notes: event.target.value,
+                                              })
+                                            )
                                           }
-                                        >
-                                          {fixedAssetProgress.resolved}/
-                                          {fixedAssetProgress.expected}{" "}
-                                          resueltos
-                                        </Badge>
-                                      ) : null}
-                                      {fixedAssetDraftSaved ? (
-                                        <Badge
-                                          variant="outline"
-                                          className="border-amber-300 text-amber-700"
-                                        >
-                                          Pendiente Contabilidad
-                                        </Badge>
-                                      ) : null}
-                                      {fixedAssetResolved ? (
-                                        <Badge
-                                          variant="outline"
-                                          className="border-emerald-300 text-emerald-700"
-                                        >
-                                          Código real listo
-                                        </Badge>
-                                      ) : null}
-                                    </div>
+                                          placeholder="Observaciones de este producto recibido"
+                                        />
+                                      </div>
 
-                                    <div className="space-y-2">
-                                      <Label>Observación de línea</Label>
-                                      <Textarea
-                                        rows={2}
-                                        value={assetDraft.notes}
-                                        disabled={assetInputsDisabled}
-                                        onChange={event =>
-                                          updateReceiptAssetDraft(
-                                            item.id,
-                                            draft => ({
-                                              ...draft,
-                                              notes: event.target.value,
-                                            })
-                                          )
-                                        }
-                                        placeholder="Observaciones de este producto recibido"
-                                      />
-                                    </div>
-
-                                    {isLineFixedAsset ? (
-                                      assetUnitCount === 0 ? (
-                                        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                                          Ingrese una cantidad entera mayor que
-                                          cero en “Recibir ahora” para capturar
-                                          las unidades del activo.
-                                        </div>
-                                      ) : (
-                                        <div className="space-y-3">
-                                          <div className="overflow-hidden rounded-lg border border-border/70">
-                                            <div className="overflow-x-auto">
-                                              <table className="w-full min-w-[1320px] border-collapse text-sm">
-                                                <thead className="bg-muted/40">
-                                                  <tr className="border-b border-border/70 text-left text-xs font-semibold text-muted-foreground">
-                                                    <th className="w-16 px-3 py-2.5">
-                                                      Unidad
-                                                    </th>
-                                                    <th className="min-w-[160px] px-2 py-2.5">
-                                                      Número de serie
-                                                    </th>
-                                                    <th className="w-32 px-2 py-2.5">
-                                                      Condición
-                                                    </th>
-                                                    {ASSET_DETAIL_OPTIONAL_FIELDS.map(
-                                                      field => (
-                                                        <th
-                                                          key={field.key}
-                                                          className="min-w-[145px] px-2 py-2.5"
-                                                        >
-                                                          {field.label}
-                                                        </th>
-                                                      )
-                                                    )}
-                                                  </tr>
-                                                </thead>
-                                                <tbody>
-                                                  {assetDetails.map(
-                                                    (detail, index) => (
-                                                      <tr
-                                                        key={`${item.id}-asset-${index}`}
-                                                        className="border-b border-border/60 last:border-b-0"
-                                                      >
-                                                        <td className="px-3 py-2 font-semibold">
-                                                          {index + 1}
-                                                        </td>
-                                                        <td className="px-2 py-2">
-                                                          <Input
-                                                            className="h-9"
-                                                            aria-label={`Número de serie de la unidad ${index + 1}`}
-                                                            value={
-                                                              detail.serialNumber
-                                                            }
-                                                            disabled={
-                                                              assetInputsDisabled
-                                                            }
-                                                            onChange={event =>
-                                                              updateAssetDetail(
-                                                                item.id,
-                                                                index,
-                                                                "serialNumber",
-                                                                event.target.value
-                                                              )
-                                                            }
-                                                            placeholder="Ej. SN123456"
-                                                          />
-                                                        </td>
-                                                        <td className="px-2 py-2">
-                                                          <Select
-                                                            value={
-                                                              detail.condition
-                                                            }
-                                                            disabled={
-                                                              assetInputsDisabled
-                                                            }
-                                                            onValueChange={value =>
-                                                              updateAssetDetail(
-                                                                item.id,
-                                                                index,
-                                                                "condition",
-                                                                value
-                                                              )
-                                                            }
-                                                          >
-                                                            <SelectTrigger
-                                                              className="h-9"
-                                                              aria-label={`Condición de la unidad ${index + 1}`}
-                                                            >
-                                                              <SelectValue />
-                                                            </SelectTrigger>
-                                                            <SelectContent>
-                                                              {ASSET_CONDITION_VALUES.map(
-                                                                condition => (
-                                                                  <SelectItem
-                                                                    key={
-                                                                      condition
-                                                                    }
-                                                                    value={
-                                                                      condition
-                                                                    }
-                                                                  >
-                                                                    {
-                                                                      ASSET_CONDITION_LABELS[
-                                                                        condition
-                                                                      ]
-                                                                    }
-                                                                  </SelectItem>
-                                                                )
-                                                              )}
-                                                            </SelectContent>
-                                                          </Select>
-                                                        </td>
-                                                        {ASSET_DETAIL_OPTIONAL_FIELDS.map(
-                                                          field => (
-                                                            <td
-                                                              key={field.key}
-                                                              className="px-2 py-2"
-                                                            >
-                                                              <Input
-                                                                className="h-9"
-                                                                aria-label={`${field.label} de la unidad ${index + 1}`}
-                                                                value={String(
-                                                                  detail[
-                                                                    field.key
-                                                                  ] ?? ""
-                                                                )}
-                                                                disabled={
-                                                                  assetInputsDisabled
-                                                                }
-                                                                onChange={event =>
-                                                                  updateAssetDetail(
-                                                                    item.id,
-                                                                    index,
-                                                                    field.key,
-                                                                    event.target
-                                                                      .value
-                                                                  )
-                                                                }
-                                                                placeholder={
-                                                                  field.placeholder
-                                                                }
-                                                              />
-                                                            </td>
-                                                          )
-                                                        )}
-                                                      </tr>
-                                                    )
-                                                  )}
-                                                </tbody>
-                                              </table>
-                                            </div>
-                                            <div className="border-t border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                                              Mostrando {assetDetails.length} de{" "}
-                                              {assetUnitCount} unidad(es)
-                                            </div>
+                                      {isLineFixedAsset ? (
+                                        assetUnitCount === 0 ? (
+                                          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                                            Ingrese una cantidad entera mayor
+                                            que cero en “Recibir ahora” para
+                                            capturar las unidades del activo.
                                           </div>
-                                          {fixedAssetArticles.length > 0 ? (
-                                            <div className="rounded-lg border border-border/70">
-                                              <div className="flex flex-col gap-2 border-b border-border/70 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-                                                <div>
-                                                  <div className="text-sm font-semibold">
-                                                    Estado de Contabilidad
-                                                  </div>
-                                                  <div className="text-xs text-muted-foreground">
-                                                    {
-                                                      fixedAssetProgress.resolved
-                                                    }
-                                                    /
-                                                    {
-                                                      fixedAssetProgress.expected
-                                                    }{" "}
-                                                    activo(s) con código real
-                                                  </div>
-                                                </div>
-                                                <Button
-                                                  type="button"
-                                                  variant="outline"
-                                                  size="sm"
-                                                  className="gap-2 self-start sm:self-auto"
-                                                  disabled={
-                                                    purchaseOrderDetailFetching
-                                                  }
-                                                  onClick={() => {
-                                                    void refetchPurchaseOrderDetail();
-                                                  }}
-                                                >
-                                                  <RotateCcw className="h-4 w-4" />
-                                                  Actualizar estado
-                                                </Button>
-                                              </div>
+                                        ) : (
+                                          <div className="space-y-3">
+                                            <div className="overflow-hidden rounded-lg border border-border/70">
                                               <div className="overflow-x-auto">
-                                                <table className="w-full min-w-[720px] text-sm">
-                                                  <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
-                                                    <tr>
-                                                      <th className="p-2 text-left">
+                                                <table className="w-full min-w-[1320px] border-collapse text-sm">
+                                                  <thead className="bg-muted/40">
+                                                    <tr className="border-b border-border/70 text-left text-xs font-semibold text-muted-foreground">
+                                                      <th className="w-16 px-3 py-2.5">
                                                         Unidad
                                                       </th>
-                                                      <th className="p-2 text-left">
-                                                        Serie
+                                                      <th className="min-w-[160px] px-2 py-2.5">
+                                                        Número de serie
                                                       </th>
-                                                      <th className="p-2 text-left">
-                                                        Código temporal
+                                                      <th className="w-32 px-2 py-2.5">
+                                                        Condición
                                                       </th>
-                                                      <th className="p-2 text-left">
-                                                        Código real
-                                                      </th>
-                                                      <th className="p-2 text-left">
-                                                        Estado
-                                                      </th>
-                                                      <th className="p-2 text-right">
-                                                        Acciones
-                                                      </th>
+                                                      {ASSET_DETAIL_OPTIONAL_FIELDS.map(
+                                                        field => (
+                                                          <th
+                                                            key={field.key}
+                                                            className="min-w-[145px] px-2 py-2.5"
+                                                          >
+                                                            {field.label}
+                                                          </th>
+                                                        )
+                                                      )}
                                                     </tr>
                                                   </thead>
                                                   <tbody>
-                                                    {fixedAssetArticleRows.map(
-                                                      (
-                                                        {
-                                                          article,
-                                                          detail,
-                                                        }: any,
-                                                        index
-                                                      ) => {
-                                                        const isResolved =
-                                                          article?.fixedAssetStatus ===
-                                                          "resuelto";
-                                                        const temporaryCode =
-                                                          article?.temporaryItemCode ||
-                                                          (!isResolved
-                                                            ? article?.itemCode
-                                                            : "");
-                                                        const realCode =
-                                                          isResolved
-                                                            ? article?.itemCode
-                                                            : "";
-                                                        const serialNumber =
-                                                          article?.fixedAssetSerialNumber ||
-                                                          detail?.serialNumber ||
-                                                          "";
-
-                                                        return (
-                                                          <tr
-                                                            key={`${item.id}-article-${index}`}
-                                                            className="border-t border-border/60"
-                                                          >
-                                                            <td className="p-2 font-medium">
-                                                              {index + 1}
-                                                            </td>
-                                                            <td className="p-2">
-                                                              {serialNumber ||
-                                                                "—"}
-                                                            </td>
-                                                            <td className="p-2 font-mono text-xs">
-                                                              {temporaryCode ||
-                                                                "—"}
-                                                            </td>
-                                                            <td className="p-2 font-mono text-xs">
-                                                              {realCode || "—"}
-                                                            </td>
-                                                            <td className="p-2">
-                                                              <Badge
-                                                                variant="outline"
-                                                                className={
-                                                                  isResolved
-                                                                    ? "border-emerald-300 text-emerald-700"
-                                                                    : article
-                                                                      ? "border-amber-300 text-amber-700"
-                                                                      : "border-muted-foreground/30 text-muted-foreground"
-                                                                }
+                                                    {assetDetails.map(
+                                                      (detail, index) => (
+                                                        <tr
+                                                          key={`${item.id}-asset-${index}`}
+                                                          className="border-b border-border/60 last:border-b-0"
+                                                        >
+                                                          <td className="px-3 py-2 font-semibold">
+                                                            {index + 1}
+                                                          </td>
+                                                          <td className="px-2 py-2">
+                                                            <Input
+                                                              className="h-9"
+                                                              aria-label={`Número de serie de la unidad ${index + 1}`}
+                                                              value={
+                                                                detail.serialNumber
+                                                              }
+                                                              disabled={
+                                                                assetInputsDisabled
+                                                              }
+                                                              onChange={event =>
+                                                                updateAssetDetail(
+                                                                  item.id,
+                                                                  index,
+                                                                  "serialNumber",
+                                                                  event.target
+                                                                    .value
+                                                                )
+                                                              }
+                                                              placeholder="Ej. SN123456"
+                                                            />
+                                                          </td>
+                                                          <td className="px-2 py-2">
+                                                            <Select
+                                                              value={
+                                                                detail.condition
+                                                              }
+                                                              disabled={
+                                                                assetInputsDisabled
+                                                              }
+                                                              onValueChange={value =>
+                                                                updateAssetDetail(
+                                                                  item.id,
+                                                                  index,
+                                                                  "condition",
+                                                                  value
+                                                                )
+                                                              }
+                                                            >
+                                                              <SelectTrigger
+                                                                className="h-9"
+                                                                aria-label={`Condición de la unidad ${index + 1}`}
                                                               >
-                                                                {isResolved
-                                                                  ? "Resuelto"
-                                                                  : article
-                                                                    ? "Pendiente"
-                                                                  : "Sin crear"}
-                                                              </Badge>
-                                                            </td>
-                                                            <td className="p-2 text-right">
-                                                              {article ? (
-                                                                <Button
-                                                                  type="button"
-                                                                  variant="outline"
-                                                                  size="sm"
-                                                                  className="gap-2"
-                                                                  onClick={() =>
-                                                                    openReceiptFixedAssetArticleDialog(
-                                                                      article
+                                                                <SelectValue />
+                                                              </SelectTrigger>
+                                                              <SelectContent>
+                                                                {ASSET_CONDITION_VALUES.map(
+                                                                  condition => (
+                                                                    <SelectItem
+                                                                      key={
+                                                                        condition
+                                                                      }
+                                                                      value={
+                                                                        condition
+                                                                      }
+                                                                    >
+                                                                      {
+                                                                        ASSET_CONDITION_LABELS[
+                                                                          condition
+                                                                        ]
+                                                                      }
+                                                                    </SelectItem>
+                                                                  )
+                                                                )}
+                                                              </SelectContent>
+                                                            </Select>
+                                                          </td>
+                                                          {ASSET_DETAIL_OPTIONAL_FIELDS.map(
+                                                            field => (
+                                                              <td
+                                                                key={field.key}
+                                                                className="px-2 py-2"
+                                                              >
+                                                                <Input
+                                                                  className="h-9"
+                                                                  aria-label={`${field.label} de la unidad ${index + 1}`}
+                                                                  value={String(
+                                                                    detail[
+                                                                      field.key
+                                                                    ] ?? ""
+                                                                  )}
+                                                                  disabled={
+                                                                    assetInputsDisabled
+                                                                  }
+                                                                  onChange={event =>
+                                                                    updateAssetDetail(
+                                                                      item.id,
+                                                                      index,
+                                                                      field.key,
+                                                                      event
+                                                                        .target
+                                                                        .value
                                                                     )
                                                                   }
-                                                                >
-                                                                  <Pencil className="h-3.5 w-3.5" />
-                                                                  {isResolved
-                                                                    ? "Ver"
-                                                                    : "Resolver"}
-                                                                </Button>
-                                                              ) : (
-                                                                <span className="text-xs text-muted-foreground">
-                                                                  —
-                                                                </span>
-                                                              )}
-                                                            </td>
-                                                          </tr>
-                                                        );
-                                                      }
+                                                                  placeholder={
+                                                                    field.placeholder
+                                                                  }
+                                                                />
+                                                              </td>
+                                                            )
+                                                          )}
+                                                        </tr>
+                                                      )
                                                     )}
                                                   </tbody>
                                                 </table>
                                               </div>
+                                              <div className="border-t border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                                                Mostrando {assetDetails.length}{" "}
+                                                de {assetUnitCount} unidad(es)
+                                              </div>
                                             </div>
-                                          ) : null}
-                                          <div className="flex flex-col items-start gap-2 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
-                                            <p className="text-xs text-muted-foreground">
-                                              {fixedAssetResolved
-                                                ? `Código final: ${
-                                                    getSourceItemCode(item) ||
-                                                    "—"
-                                                  }`
-                                                : fixedAssetDraftSaved
-                                                  ? `Borrador temporal: ${
+                                            {fixedAssetArticles.length > 0 ? (
+                                              <div className="rounded-lg border border-border/70">
+                                                <div className="flex flex-col gap-2 border-b border-border/70 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                                                  <div>
+                                                    <div className="text-sm font-semibold">
+                                                      Estado de Contabilidad
+                                                    </div>
+                                                    <div className="text-xs text-muted-foreground">
+                                                      {
+                                                        fixedAssetProgress.resolved
+                                                      }
+                                                      /
+                                                      {
+                                                        fixedAssetProgress.expected
+                                                      }{" "}
+                                                      activo(s) con código real
+                                                    </div>
+                                                  </div>
+                                                  <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-2 self-start sm:self-auto"
+                                                    disabled={
+                                                      purchaseOrderDetailFetching
+                                                    }
+                                                    onClick={() => {
+                                                      void refetchPurchaseOrderDetail();
+                                                    }}
+                                                  >
+                                                    <RotateCcw className="h-4 w-4" />
+                                                    Actualizar estado
+                                                  </Button>
+                                                </div>
+                                                <div className="overflow-x-auto">
+                                                  <table className="w-full min-w-[720px] text-sm">
+                                                    <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+                                                      <tr>
+                                                        <th className="p-2 text-left">
+                                                          Unidad
+                                                        </th>
+                                                        <th className="p-2 text-left">
+                                                          Serie
+                                                        </th>
+                                                        <th className="p-2 text-left">
+                                                          Código temporal
+                                                        </th>
+                                                        <th className="p-2 text-left">
+                                                          Código real
+                                                        </th>
+                                                        <th className="p-2 text-left">
+                                                          Estado
+                                                        </th>
+                                                        <th className="p-2 text-right">
+                                                          Acciones
+                                                        </th>
+                                                      </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                      {fixedAssetArticleRows.map(
+                                                        (
+                                                          {
+                                                            article,
+                                                            detail,
+                                                          }: any,
+                                                          index
+                                                        ) => {
+                                                          const isResolved =
+                                                            article?.fixedAssetStatus ===
+                                                            "resuelto";
+                                                          const temporaryCode =
+                                                            article?.temporaryItemCode ||
+                                                            (!isResolved
+                                                              ? article?.itemCode
+                                                              : "");
+                                                          const realCode =
+                                                            isResolved
+                                                              ? article?.itemCode
+                                                              : "";
+                                                          const serialNumber =
+                                                            article?.fixedAssetSerialNumber ||
+                                                            detail?.serialNumber ||
+                                                            "";
+
+                                                          return (
+                                                            <tr
+                                                              key={`${item.id}-article-${index}`}
+                                                              className="border-t border-border/60"
+                                                            >
+                                                              <td className="p-2 font-medium">
+                                                                {index + 1}
+                                                              </td>
+                                                              <td className="p-2">
+                                                                {serialNumber ||
+                                                                  "—"}
+                                                              </td>
+                                                              <td className="p-2 font-mono text-xs">
+                                                                {temporaryCode ||
+                                                                  "—"}
+                                                              </td>
+                                                              <td className="p-2 font-mono text-xs">
+                                                                {realCode ||
+                                                                  "—"}
+                                                              </td>
+                                                              <td className="p-2">
+                                                                <Badge
+                                                                  variant="outline"
+                                                                  className={
+                                                                    isResolved
+                                                                      ? "border-emerald-300 text-emerald-700"
+                                                                      : article
+                                                                        ? "border-amber-300 text-amber-700"
+                                                                        : "border-muted-foreground/30 text-muted-foreground"
+                                                                  }
+                                                                >
+                                                                  {isResolved
+                                                                    ? "Resuelto"
+                                                                    : article
+                                                                      ? "Pendiente"
+                                                                      : "Sin crear"}
+                                                                </Badge>
+                                                              </td>
+                                                              <td className="p-2 text-right">
+                                                                {article ? (
+                                                                  <Button
+                                                                    type="button"
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    className="gap-2"
+                                                                    onClick={() =>
+                                                                      openReceiptFixedAssetArticleDialog(
+                                                                        article
+                                                                      )
+                                                                    }
+                                                                  >
+                                                                    <Pencil className="h-3.5 w-3.5" />
+                                                                    {isResolved
+                                                                      ? "Ver"
+                                                                      : "Resolver"}
+                                                                  </Button>
+                                                                ) : (
+                                                                  <span className="text-xs text-muted-foreground">
+                                                                    —
+                                                                  </span>
+                                                                )}
+                                                              </td>
+                                                            </tr>
+                                                          );
+                                                        }
+                                                      )}
+                                                    </tbody>
+                                                  </table>
+                                                </div>
+                                              </div>
+                                            ) : null}
+                                            <div className="flex flex-col items-start gap-2 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                                              <p className="text-xs text-muted-foreground">
+                                                {fixedAssetResolved
+                                                  ? `Código final: ${
                                                       getSourceItemCode(item) ||
-                                                      "pendiente"
+                                                      "—"
                                                     }`
-                                                  : "Guarde el activo como borrador para crear el artículo temporal."}
-                                            </p>
-                                            <Button
-                                              type="button"
-                                              variant={
-                                                fixedAssetResolved
-                                                  ? "outline"
-                                                  : "default"
-                                              }
-                                              size="sm"
-                                              onClick={() =>
-                                                handleSaveFixedAssetDraft(item)
-                                              }
-                                              disabled={
-                                                fixedAssetResolved ||
-                                                saveFixedAssetDraftMutation.isPending ||
-                                                saveReceiptDraftMutation.isPending
-                                              }
-                                            >
-                                              {saveFixedAssetDraftMutation.isPending ||
-                                              saveReceiptDraftMutation.isPending
-                                                ? "Guardando..."
-                                                : fixedAssetResolved
-                                                  ? "Código real listo"
                                                   : fixedAssetDraftSaved
-                                                    ? "Actualizar borrador"
-                                                    : "Guardar como borrador"}
-                                            </Button>
+                                                    ? `Borrador temporal: ${
+                                                        getSourceItemCode(
+                                                          item
+                                                        ) || "pendiente"
+                                                      }`
+                                                    : "Guarde el activo como borrador para crear el artículo temporal."}
+                                              </p>
+                                              <Button
+                                                type="button"
+                                                variant={
+                                                  fixedAssetResolved
+                                                    ? "outline"
+                                                    : "default"
+                                                }
+                                                size="sm"
+                                                onClick={() =>
+                                                  handleSaveFixedAssetDraft(
+                                                    item
+                                                  )
+                                                }
+                                                disabled={
+                                                  fixedAssetResolved ||
+                                                  saveFixedAssetDraftMutation.isPending ||
+                                                  saveReceiptDraftMutation.isPending
+                                                }
+                                              >
+                                                {saveFixedAssetDraftMutation.isPending ||
+                                                saveReceiptDraftMutation.isPending
+                                                  ? "Guardando..."
+                                                  : fixedAssetResolved
+                                                    ? "Código real listo"
+                                                    : fixedAssetDraftSaved
+                                                      ? "Actualizar borrador"
+                                                      : "Guardar como borrador"}
+                                              </Button>
+                                            </div>
                                           </div>
-                                        </div>
-                                      )
-                                    ) : null}
-                                  </div>
+                                        )
+                                      ) : null}
+                                    </div>
                                   </td>
                                 </tr>
                               ) : null}
@@ -7347,7 +7367,9 @@ export default function Recepciones() {
                     <FiscalSummaryCard
                       summary={receiptPricingSummary}
                       otherChargesTotal={receiptOtherChargesTotal}
-                      currency={purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"}
+                      currency={
+                        purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
+                      }
                     />
                   </div>
                 ) : null}
@@ -7393,9 +7415,12 @@ export default function Recepciones() {
                       </p>
                       {purchaseOrderDetail.purchaseOrder.currency === "USD" ? (
                         <p className="text-xs text-muted-foreground">
-                          1 USD = {formatExchangeRateDraft(
+                          1 USD ={" "}
+                          {formatExchangeRateDraft(
                             purchaseOrderDetail.purchaseOrder.exchangeRate
-                          )} HNL · {formatDateLabel(
+                          )}{" "}
+                          HNL ·{" "}
+                          {formatDateLabel(
                             purchaseOrderDetail.purchaseOrder.exchangeRateDate
                           )}
                         </p>
@@ -7675,9 +7700,12 @@ export default function Recepciones() {
                     </p>
                     {receiptDetail.receipt.currency === "USD" ? (
                       <p className="text-xs text-muted-foreground">
-                        1 USD = {formatExchangeRateDraft(
+                        1 USD ={" "}
+                        {formatExchangeRateDraft(
                           receiptDetail.receipt.exchangeRate
-                        )} HNL · {formatDateLabel(
+                        )}{" "}
+                        HNL ·{" "}
+                        {formatDateLabel(
                           receiptDetail.receipt.exchangeRateDate
                         )}
                       </p>
@@ -7994,15 +8022,18 @@ export default function Recepciones() {
                                         Artículo solicitado
                                       </div>
                                       <div>
-                                        SAP: {requestedArticleSnapshot.sapItemCode ||
+                                        SAP:{" "}
+                                        {requestedArticleSnapshot.sapItemCode ||
                                           "—"}
                                       </div>
                                       <div>
                                         {requestedArticleSnapshot.itemName}
                                       </div>
                                       <div>
-                                        Marca: {requestedArticleSnapshot.brand ||
-                                          "—"} · Parte: {requestedArticleSnapshot.partNumber ||
+                                        Marca:{" "}
+                                        {requestedArticleSnapshot.brand || "—"}{" "}
+                                        · Parte:{" "}
+                                        {requestedArticleSnapshot.partNumber ||
                                           "—"}
                                       </div>
                                     </div>
@@ -8019,15 +8050,18 @@ export default function Recepciones() {
                                         ) : null}
                                       </div>
                                       <div>
-                                        SAP: {receivedArticleSnapshot.sapItemCode ||
+                                        SAP:{" "}
+                                        {receivedArticleSnapshot.sapItemCode ||
                                           "—"}
                                       </div>
                                       <div>
                                         {receivedArticleSnapshot.itemName}
                                       </div>
                                       <div>
-                                        Marca: {receivedArticleSnapshot.brand ||
-                                          "—"} · Parte: {receivedArticleSnapshot.partNumber ||
+                                        Marca:{" "}
+                                        {receivedArticleSnapshot.brand || "—"} ·
+                                        Parte:{" "}
+                                        {receivedArticleSnapshot.partNumber ||
                                           "—"}
                                       </div>
                                     </div>
@@ -8243,8 +8277,8 @@ export default function Recepciones() {
             <DialogHeader className="space-y-2">
               <DialogTitle>Corregir recepción</DialogTitle>
               <DialogDescription>
-                La factura y la recepción original quedarán anuladas. El
-                sistema devolverá las entradas de inventario, restará cantidades
+                La factura y la recepción original quedarán anuladas. El sistema
+                devolverá las entradas de inventario, restará cantidades
                 recibidas y creará una nueva recepción en borrador.
               </DialogDescription>
             </DialogHeader>
@@ -8483,6 +8517,10 @@ export default function Recepciones() {
             className="h-10 pl-9"
           />
         </div>
+        <ProjectFilterSelect
+          value={projectFilter}
+          onValueChange={setProjectFilter}
+        />
         <Select value={sourceTypeFilter} onValueChange={setSourceTypeFilter}>
           <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue placeholder="Tipo de origen" />
@@ -8557,8 +8595,7 @@ export default function Recepciones() {
                   {filteredReceipts.map((row: any) => {
                     const canEditDraft =
                       canManageReceipts && row.receipt.status === "borrador";
-                    const itemsExpanded =
-                      expandedItemsId === row.receipt.id;
+                    const itemsExpanded = expandedItemsId === row.receipt.id;
 
                     return (
                       <Fragment key={row.receipt.id}>
@@ -8623,10 +8660,7 @@ export default function Recepciones() {
                                 row.invoice
                               )}`}
                             >
-                              {getReceiptStatusLabel(
-                                row.receipt,
-                                row.invoice
-                              )}
+                              {getReceiptStatusLabel(row.receipt, row.invoice)}
                             </Badge>
                           </td>
                           <td className="p-3 text-xs">

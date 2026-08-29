@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import {
   Select,
   SelectContent,
@@ -157,13 +158,7 @@ function summarizeWarehouseLabels(labels: string[], fallback = "-") {
   return fallback;
 }
 
-function DetailField({
-  label,
-  value,
-}: {
-  label: string;
-  value: ReactNode;
-}) {
+function DetailField({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="min-w-0 border-l border-border/70 pl-4 first:border-l-0 first:pl-0">
       <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -203,14 +198,17 @@ export default function Devoluciones() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState("");
+  const [projectFilter, setProjectFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [selectedReturnId, setSelectedReturnId] = useState<number | null>(() => {
-    const returnId = Number(
-      new URLSearchParams(window.location.search).get("returnId")
-    );
-    return Number.isInteger(returnId) && returnId > 0 ? returnId : null;
-  });
+  const [selectedReturnId, setSelectedReturnId] = useState<number | null>(
+    () => {
+      const returnId = Number(
+        new URLSearchParams(window.location.search).get("returnId")
+      );
+      return Number.isInteger(returnId) && returnId > 0 ? returnId : null;
+    }
+  );
   const [creditNoteReturnId, setCreditNoteReturnId] = useState<number | null>(
     null
   );
@@ -219,12 +217,13 @@ export default function Devoluciones() {
   const isAdmin = user?.role === "admin";
   const canCreateReturn = userRole === "jefe_bodega_central" || isAdmin;
 
-  const { data: returns, isLoading } = trpc.reverseLogistics.list.useQuery(
-    {
-      ...(typeFilter !== "all" ? { returnType: typeFilter } : {}),
-      ...(statusFilter !== "all" ? { status: statusFilter } : {}),
-    }
-  );
+  const { data: returns, isLoading } = trpc.reverseLogistics.list.useQuery({
+    ...(typeFilter !== "all" ? { returnType: typeFilter } : {}),
+    ...(statusFilter !== "all" ? { status: statusFilter } : {}),
+    ...(projectFilter !== "all"
+      ? { sourceProjectId: Number(projectFilter) }
+      : {}),
+  });
   const { data: detail, isLoading: isDetailLoading } =
     trpc.reverseLogistics.getById.useQuery(
       { id: selectedReturnId ?? 0 },
@@ -253,11 +252,10 @@ export default function Devoluciones() {
     (sourceProject
       ? `Bodega del Proyecto - ${sourceProject.code} - ${sourceProject.name}`
       : "-");
-  const sourceWarehouseLabel =
-    summarizeWarehouseLabels(
-      itemSourceWarehouseLabels,
-      fallbackSourceWarehouseLabel
-    );
+  const sourceWarehouseLabel = summarizeWarehouseLabels(
+    itemSourceWarehouseLabels,
+    fallbackSourceWarehouseLabel
+  );
   const destinationProjectLabel = destinationProject
     ? `${destinationProject.code} - ${destinationProject.name}`
     : selectedReturn?.destinationProjectId
@@ -270,7 +268,9 @@ export default function Devoluciones() {
       ? `Bodega #${selectedReturn.destinationWarehouseId}`
       : "-");
   const createdByLabel =
-    createdBy?.name || createdBy?.email || `Usuario #${selectedReturn?.createdById ?? "-"}`;
+    createdBy?.name ||
+    createdBy?.email ||
+    `Usuario #${selectedReturn?.createdById ?? "-"}`;
   const receivedByLabel = selectedReturn?.receivedByName?.trim() || "-";
   const canGenerateCreditNote =
     canCreateReturn &&
@@ -314,9 +314,7 @@ export default function Devoluciones() {
         destinationWarehouseLabel,
       ]
         .filter(Boolean)
-        .some(value =>
-          String(value).toLowerCase().includes(normalizedSearch)
-        );
+        .some(value => String(value).toLowerCase().includes(normalizedSearch));
     });
   }, [returns, searchTerm]);
 
@@ -327,7 +325,9 @@ export default function Devoluciones() {
         setCreditNoteReturnId(null);
         void utils.reverseLogistics.list.invalidate();
         if (selectedReturnId) {
-          void utils.reverseLogistics.getById.invalidate({ id: selectedReturnId });
+          void utils.reverseLogistics.getById.invalidate({
+            id: selectedReturnId,
+          });
         }
       },
       onError: error => toast.error(error.message),
@@ -341,7 +341,9 @@ export default function Devoluciones() {
         void utils.transferRequests.list.invalidate();
         void utils.transfers.list.invalidate();
         if (selectedReturnId) {
-          void utils.reverseLogistics.getById.invalidate({ id: selectedReturnId });
+          void utils.reverseLogistics.getById.invalidate({
+            id: selectedReturnId,
+          });
         }
       },
       onError: error => toast.error(error.message),
@@ -360,7 +362,8 @@ export default function Devoluciones() {
     const printWarehouseTitle =
       sourceWarehouseLabel !== "-" ? sourceWarehouseLabel : sourceProjectLabel;
     const requestedByLabel = `${selectedReturn.returnNumber} - ${createdByLabel}`;
-    const isProviderReturn = selectedReturn.returnType === "devolucion_proveedor";
+    const isProviderReturn =
+      selectedReturn.returnType === "devolucion_proveedor";
     const isCentralReturn =
       selectedReturn.returnType === "devolucion_bodega_central";
     const isProjectWarehouseReturn =
@@ -392,11 +395,10 @@ export default function Devoluciones() {
       REASON_LABELS[selectedReturn.reasonCategory] ||
       selectedReturn.reasonCategory;
     const itemRows = returnItems
-      .map(
-        (item: any) => {
-          const itemWarehouseLabel =
-            formatWarehouseLabel(item.warehouse) || sourceWarehouseLabel;
-          return `
+      .map((item: any) => {
+        const itemWarehouseLabel =
+          formatWarehouseLabel(item.warehouse) || sourceWarehouseLabel;
+        return `
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
@@ -410,8 +412,7 @@ export default function Devoluciones() {
             <td class="numeric">1</td>
           </tr>
         `;
-        }
-      )
+      })
       .join("");
     const totalLines = returnItems.length;
 
@@ -685,6 +686,10 @@ export default function Devoluciones() {
             className="h-10 pl-9"
           />
         </div>
+        <ProjectFilterSelect
+          value={projectFilter}
+          onValueChange={setProjectFilter}
+        />
         <Select value={typeFilter} onValueChange={setTypeFilter}>
           <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue placeholder="Tipo de devolución" />
@@ -700,9 +705,7 @@ export default function Devoluciones() {
             <SelectItem value="devolucion_entre_proyectos">
               Entre Bodegas
             </SelectItem>
-            <SelectItem value="devolucion_proveedor">
-              A Proveedor
-            </SelectItem>
+            <SelectItem value="devolucion_proveedor">A Proveedor</SelectItem>
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -809,7 +812,7 @@ export default function Devoluciones() {
 
       <Dialog
         open={Boolean(selectedReturnId)}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open) setSelectedReturnId(null);
         }}
       >
@@ -919,8 +922,12 @@ export default function Devoluciones() {
 
               <DetailSection icon={Warehouse} title="Información general">
                 <div className="grid grid-cols-1 gap-5 md:grid-cols-4">
-                  <DetailField label="Bodega origen" value={sourceWarehouseLabel} />
-                  {selectedReturn.returnType === "devolucion_entre_proyectos" ? (
+                  <DetailField
+                    label="Bodega origen"
+                    value={sourceWarehouseLabel}
+                  />
+                  {selectedReturn.returnType ===
+                  "devolucion_entre_proyectos" ? (
                     <>
                       <DetailField
                         label="Proyecto destino"
@@ -984,7 +991,8 @@ export default function Devoluciones() {
               {[
                 "devolucion_bodega_central",
                 "devolucion_entre_proyectos",
-              ].includes(selectedReturn.returnType) && linkedTransfers.length > 0 ? (
+              ].includes(selectedReturn.returnType) &&
+              linkedTransfers.length > 0 ? (
                 <DetailSection icon={Truck} title="Traslado vinculado">
                   <div className="overflow-x-auto rounded-md border border-border">
                     <table className="w-full text-sm">
@@ -1093,7 +1101,8 @@ export default function Devoluciones() {
                                   : "border-emerald-200 bg-emerald-50 text-emerald-700"
                               }
                             >
-                              {CONDITION_LABELS[item.condition] || item.condition}
+                              {CONDITION_LABELS[item.condition] ||
+                                item.condition}
                             </Badge>
                           </td>
                           <td className="p-3 text-xs text-muted-foreground">
@@ -1120,9 +1129,9 @@ export default function Devoluciones() {
           <AlertDialogHeader>
             <AlertDialogTitle>Generar nota de crédito</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta acción descontará del inventario del proyecto los ítems de
-              la devolución y marcará el documento como aprobado con número de
-              nota de crédito. No se puede repetir para la misma devolución.
+              Esta acción descontará del inventario del proyecto los ítems de la
+              devolución y marcará el documento como aprobado con número de nota
+              de crédito. No se puede repetir para la misma devolución.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

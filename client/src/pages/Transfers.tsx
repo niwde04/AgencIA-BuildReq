@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
+import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -122,12 +123,14 @@ function getTransferSourceWarehouseSummary(detail: any) {
 
 function getTransferSourceProjectSummary(detail: any) {
   const labels = Array.from(
-    new Set<string>([
-      ...(detail?.sourceProjects || []).map((project: any) =>
-        [project?.code, project?.name].filter(Boolean).join(" — ")
-      ),
-      ...(detail?.hasUnclassifiedSource ? ["Por clasificar"] : []),
-    ].filter(Boolean))
+    new Set<string>(
+      [
+        ...(detail?.sourceProjects || []).map((project: any) =>
+          [project?.code, project?.name].filter(Boolean).join(" — ")
+        ),
+        ...(detail?.hasUnclassifiedSource ? ["Por clasificar"] : []),
+      ].filter(Boolean)
+    )
   );
 
   if (labels.length === 1) return labels[0];
@@ -160,6 +163,7 @@ export default function Transfers() {
   const utils = trpc.useUtils();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [projectFilter, setProjectFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
@@ -172,6 +176,8 @@ export default function Transfers() {
   } = trpc.transfers.listPage.useQuery(
     {
       search: debouncedSearchTerm.trim() || undefined,
+      sourceProjectId:
+        projectFilter === "all" ? undefined : Number(projectFilter),
       status: statusFilter === "all" ? undefined : statusFilter,
       page,
       pageSize: PAGE_SIZE,
@@ -183,25 +189,26 @@ export default function Transfers() {
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
   );
-  const updatePrintFieldsMutation = trpc.transfers.updatePrintFields.useMutation({
-    onSuccess: (transfer) => {
-      if (!transfer) return;
-      utils.transfers.getById.setData({ id: transfer.id }, (current: any) =>
-        current
-          ? {
-              ...current,
-              transfer: {
-                ...current.transfer,
-                preparedByName: transfer.preparedByName,
-                deliveredToName: transfer.deliveredToName,
-              },
-            }
-          : current
-      );
-      void utils.transfers.invalidate();
-    },
-    onError: (error) => toast.error(error.message),
-  });
+  const updatePrintFieldsMutation =
+    trpc.transfers.updatePrintFields.useMutation({
+      onSuccess: transfer => {
+        if (!transfer) return;
+        utils.transfers.getById.setData({ id: transfer.id }, (current: any) =>
+          current
+            ? {
+                ...current,
+                transfer: {
+                  ...current.transfer,
+                  preparedByName: transfer.preparedByName,
+                  deliveredToName: transfer.deliveredToName,
+                },
+              }
+            : current
+        );
+        void utils.transfers.invalidate();
+      },
+      onError: error => toast.error(error.message),
+    });
 
   useEffect(() => {
     if (!detail?.transfer?.id) return;
@@ -216,9 +223,16 @@ export default function Transfers() {
 
   const filteredTransfers = transfers;
 
-  useEffect(() => setPage(1), [debouncedSearchTerm, statusFilter]);
+  useEffect(
+    () => setPage(1),
+    [debouncedSearchTerm, projectFilter, statusFilter]
+  );
   useEffect(() => {
-    if (!isPlaceholderData && transfersPage?.page && transfersPage.page !== page) {
+    if (
+      !isPlaceholderData &&
+      transfersPage?.page &&
+      transfersPage.page !== page
+    ) {
       setPage(transfersPage.page);
     }
   }, [isPlaceholderData, page, transfersPage?.page]);
@@ -228,8 +242,12 @@ export default function Transfers() {
 
     const preparedByLabel = preparedByName.trim();
     const deliveredToLabel = deliveredToName.trim();
-    const currentPreparedBy = String(detail.transfer.preparedByName || "").trim();
-    const currentDeliveredTo = String(detail.transfer.deliveredToName || "").trim();
+    const currentPreparedBy = String(
+      detail.transfer.preparedByName || ""
+    ).trim();
+    const currentDeliveredTo = String(
+      detail.transfer.deliveredToName || ""
+    ).trim();
 
     if (
       preparedByLabel === currentPreparedBy &&
@@ -571,6 +589,10 @@ export default function Transfers() {
             className="h-10 pl-9"
           />
         </div>
+        <ProjectFilterSelect
+          value={projectFilter}
+          onValueChange={setProjectFilter}
+        />
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue placeholder="Estado" />
@@ -630,14 +652,25 @@ export default function Transfers() {
                 </thead>
                 <tbody>
                   {filteredTransfers.map((row: any) => (
-                    <tr key={row.transfer.id} className="border-b border-border last:border-0">
-                      <td className="p-3 font-medium">{row.transfer.transferNumber}</td>
-                      <td className="p-3 text-xs">{row.transferRequest?.requestNumber || "—"}</td>
+                    <tr
+                      key={row.transfer.id}
+                      className="border-b border-border last:border-0"
+                    >
+                      <td className="p-3 font-medium">
+                        {row.transfer.transferNumber}
+                      </td>
+                      <td className="p-3 text-xs">
+                        {row.transferRequest?.requestNumber || "—"}
+                      </td>
                       <td className="p-3 text-xs">
                         {getTransferSourceProjectSummary(row)}
                       </td>
-                      <td className="p-3 text-xs">{row.transfer.remissionGuideNumber || "—"}</td>
-                      <td className="p-3 text-xs font-mono">{row.transfer.sapCorrelative || "—"}</td>
+                      <td className="p-3 text-xs">
+                        {row.transfer.remissionGuideNumber || "—"}
+                      </td>
+                      <td className="p-3 text-xs font-mono">
+                        {row.transfer.sapCorrelative || "—"}
+                      </td>
                       <td className="p-3">
                         <Badge
                           variant="outline"
@@ -645,7 +678,8 @@ export default function Transfers() {
                             STATUS_COLORS[row.transfer.status] || ""
                           }`}
                         >
-                          {STATUS_LABELS[row.transfer.status] || row.transfer.status}
+                          {STATUS_LABELS[row.transfer.status] ||
+                            row.transfer.status}
                         </Badge>
                       </td>
                       <td className="p-3 text-right">
@@ -676,10 +710,15 @@ export default function Transfers() {
         </CardContent>
       </Card>
 
-      <Dialog open={Boolean(selectedId)} onOpenChange={(open) => !open && setSelectedId(null)}>
+      <Dialog
+        open={Boolean(selectedId)}
+        onOpenChange={open => !open && setSelectedId(null)}
+      >
         <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px] sm:p-6 lg:p-7 xl:max-w-[1600px]">
           <DialogHeader>
-            <DialogTitle>{detail?.transfer.transferNumber || "Traslado"}</DialogTitle>
+            <DialogTitle>
+              {detail?.transfer.transferNumber || "Traslado"}
+            </DialogTitle>
           </DialogHeader>
 
           {detail ? (
@@ -714,7 +753,8 @@ export default function Transfers() {
                     Bodega destino
                   </p>
                   <p className="mt-2 truncate text-sm font-medium">
-                    {detail.transferRequest?.destinationType === "bodega_central"
+                    {detail.transferRequest?.destinationType ===
+                    "bodega_central"
                       ? "Bodega Central"
                       : getWarehouseLabel(detail.destinationWarehouse)}
                   </p>
@@ -760,7 +800,8 @@ export default function Transfers() {
                       STATUS_COLORS[detail.transfer.status] || ""
                     }`}
                   >
-                    {STATUS_LABELS[detail.transfer.status] || detail.transfer.status}
+                    {STATUS_LABELS[detail.transfer.status] ||
+                      detail.transfer.status}
                   </Badge>
                 </div>
               </div>
@@ -797,7 +838,10 @@ export default function Transfers() {
                       const lineTargetLabel = getTransferItemTargetLabel(item);
 
                       return (
-                        <tr key={item.id} className="border-b border-border last:border-0">
+                        <tr
+                          key={item.id}
+                          className="border-b border-border last:border-0"
+                        >
                           <td className="p-3 font-mono text-xs text-muted-foreground">
                             {item.sapItemCode || "-"}
                           </td>
@@ -823,9 +867,13 @@ export default function Transfers() {
                               {item.returnedToOriginQuantity || "0.00"}{" "}
                               {item.unit || ""}
                             </div>
-                            {item.receiptCloseReason || item.receiptCloseNote ? (
+                            {item.receiptCloseReason ||
+                            item.receiptCloseNote ? (
                               <div className="mt-1 text-xs text-muted-foreground">
-                                {[item.receiptCloseReason, item.receiptCloseNote]
+                                {[
+                                  item.receiptCloseReason,
+                                  item.receiptCloseNote,
+                                ]
                                   .filter(Boolean)
                                   .join(" — ")}
                               </div>
@@ -845,7 +893,7 @@ export default function Transfers() {
                   </Label>
                   <Input
                     value={preparedByName}
-                    onChange={(event) => setPreparedByName(event.target.value)}
+                    onChange={event => setPreparedByName(event.target.value)}
                     onBlur={() => void savePrintFields({ silent: true })}
                     placeholder="Nombre de quien elabora"
                     maxLength={160}
@@ -858,7 +906,7 @@ export default function Transfers() {
                   </Label>
                   <Input
                     value={deliveredToName}
-                    onChange={(event) => setDeliveredToName(event.target.value)}
+                    onChange={event => setDeliveredToName(event.target.value)}
                     onBlur={() => void savePrintFields({ silent: true })}
                     placeholder="Nombre de quien recibe"
                     maxLength={160}
