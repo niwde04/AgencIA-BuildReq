@@ -245,6 +245,7 @@ export const treasuryBatchStatusEnum = pgEnum("treasury_batch_status", [
   "enviado_banco",
   "conciliacion",
   "pendiente_contabilizacion",
+  "rechazado_contabilidad",
   "cerrado",
   "devuelto",
   "rechazado",

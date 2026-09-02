@@ -66,6 +66,8 @@ import {
 } from "@/lib/treasury-payment-report";
 import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
 import {
+  TREASURY_ACCOUNTING_REJECTION_REASON_CODES,
+  TREASURY_ACCOUNTING_REJECTION_REASON_LABELS,
   TREASURY_BATCH_STATUS_CODES,
   TREASURY_BATCH_STATUS_LABELS,
   TREASURY_ITEM_STATUS_LABELS,
@@ -73,6 +75,7 @@ import {
   getTreasuryBatchStatusLabel,
   matchesTreasuryBatchSearch,
   roundTreasuryMoney,
+  type TreasuryAccountingRejectionReason,
   type TreasuryBatchStatus,
 } from "@shared/treasury";
 import {
@@ -111,6 +114,7 @@ type PendingReasonAction =
   | { type: "cancel" }
   | { type: "reopen" }
   | { type: "reject" }
+  | { type: "rejectAccounting" }
   | { type: "reopenRejected" }
   | { type: "resolve"; itemId: number; resolution: "accept" | "reject" };
 
@@ -465,6 +469,7 @@ function statusVariant(status: string) {
   if (
     status === "anulado" ||
     status === "rechazado" ||
+    status === "rechazado_contabilidad" ||
     status === "rechazada_banco"
   )
     return "destructive" as const;
@@ -492,6 +497,8 @@ function auditActionLabel(action: string) {
     reabrir_sin_aprobacion: "reabrir directamente para banco",
     omitir_aprobacion_configuracion: "omitir aprobación por configuración",
     registrar_pago_banco: "registrar pago bancario",
+    rechazar_pago_contabilidad: "rechazar pago desde Contabilidad",
+    corregir_pago_contabilidad: "corregir pago rechazado por Contabilidad",
     reabrir_respuesta_bancaria: "restaurar respuesta bancaria",
     reabrir_lote: "reabrir lote para corregir respuesta bancaria",
     regresar_borrador: "regresar lote a borrador",
@@ -1728,6 +1735,15 @@ function BatchDetailDialog({
   const [pendingReasonAction, setPendingReasonAction] =
     useState<PendingReasonAction>();
   const [actionReason, setActionReason] = useState("");
+  const [accountingRejectionReason, setAccountingRejectionReason] =
+    useState<TreasuryAccountingRejectionReason>("referencia_incorrecta");
+  const [correctionDialogOpen, setCorrectionDialogOpen] = useState(false);
+  const [correctedBankReference, setCorrectedBankReference] = useState("");
+  const [correctionAttachment, setCorrectionAttachment] =
+    useState<PreparedBankAttachment>();
+  const [preparingCorrectionAttachment, setPreparingCorrectionAttachment] =
+    useState(false);
+  const [correctionComment, setCorrectionComment] = useState("");
   const [detailSearch, setDetailSearch] = useState("");
 
   useEffect(() => {
@@ -1735,6 +1751,12 @@ function BatchDetailDialog({
     setBankPaymentDate(currentLocalDateInput());
     setBankAttachment(undefined);
     setPreparingBankAttachment(false);
+    setAccountingRejectionReason("referencia_incorrecta");
+    setCorrectionDialogOpen(false);
+    setCorrectedBankReference("");
+    setCorrectionAttachment(undefined);
+    setPreparingCorrectionAttachment(false);
+    setCorrectionComment("");
     setDetailSearch("");
   }, [batchId]);
 
@@ -1834,6 +1856,21 @@ function BatchDetailDialog({
   const accountMutation = trpc.treasury.accountItems.useMutation(
     mutationOptions("Abonos contabilizados")
   );
+  const rejectPaymentForCorrectionMutation =
+    trpc.treasury.rejectPaymentForCorrection.useMutation(
+      mutationOptions("Pago rechazado y enviado a corrección")
+    );
+  const correctRejectedPaymentMutation =
+    trpc.treasury.correctRejectedPayment.useMutation({
+      onSuccess: async () => {
+        setCorrectionDialogOpen(false);
+        setCorrectionAttachment(undefined);
+        setCorrectionComment("");
+        toast.success("Pago corregido y reenviado a Contabilidad");
+        await refresh();
+      },
+      onError: error => toast.error(error.message),
+    });
   const reopenMutation = trpc.treasury.reopenClosed.useMutation(
     mutationOptions("Lote reabierto en Enviado al banco")
   );
@@ -1883,6 +1920,39 @@ function BatchDetailDialog({
     );
   const canReopenRejectedBatch =
     status === "rechazado" && (isCentral || (approvalsEnabled && isApprover));
+  const isAdministrator = user?.role === "admin";
+  const accountingRejectionEvent = (detail?.events ?? []).find(
+    (event: any) => event.action === "rechazar_pago_contabilidad"
+  );
+  const rawAccountingRejectionReason =
+    accountingRejectionEvent?.metadata?.reasonCode;
+  const accountingRejectionReasonCode =
+    TREASURY_ACCOUNTING_REJECTION_REASON_CODES.includes(
+      rawAccountingRejectionReason as TreasuryAccountingRejectionReason
+    )
+      ? (rawAccountingRejectionReason as TreasuryAccountingRejectionReason)
+      : undefined;
+  const correctionRequiresReference =
+    accountingRejectionReasonCode !== "soporte_incorrecto";
+  const correctionRequiresAttachment =
+    accountingRejectionReasonCode !== "referencia_incorrecta";
+  const currentBankReference =
+    (detail?.items ?? []).find((item: any) => item.status === "pagada")
+      ?.bankReference ?? "";
+  const currentPaymentAttachmentId = (detail?.attachments ?? [])
+    .filter((attachment: any) => attachment.category === "comprobante_pago")
+    .reduce(
+      (latestId: number, attachment: any) =>
+        Math.max(latestId, Number(attachment.id) || 0),
+      0
+    );
+  const canRejectPaymentForCorrection =
+    status === "pendiente_contabilizacion" &&
+    isAccountant &&
+    (detail?.items ?? []).some((item: any) => item.status === "pagada") &&
+    !(detail?.items ?? []).some((item: any) => item.status === "contabilizada");
+  const canCorrectRejectedPayment =
+    status === "rechazado_contabilidad" && isAdministrator;
   const visibleDetailItems = useMemo(
     () =>
       (detail?.items ?? []).filter((item: any) =>
@@ -1976,6 +2046,44 @@ function BatchDetailDialog({
         mimeType: bankAttachment.mimeType,
         base64: bankAttachment.base64,
       },
+    });
+  }
+
+  function openCorrectionDialog() {
+    setCorrectedBankReference(String(currentBankReference));
+    setCorrectionAttachment(undefined);
+    setCorrectionComment("");
+    setCorrectionDialogOpen(true);
+  }
+
+  function submitAccountingCorrection() {
+    if (!detail) return;
+    if (correctionRequiresReference && !correctedBankReference.trim()) {
+      toast.error("Ingrese la referencia bancaria corregida.");
+      return;
+    }
+    if (correctionRequiresAttachment && !correctionAttachment) {
+      toast.error("Adjunte el documento soporte corregido.");
+      return;
+    }
+    if (correctionComment.trim().length < 5) {
+      toast.error("Explique la corrección realizada.");
+      return;
+    }
+    correctRejectedPaymentMutation.mutate({
+      id: detail.batch.id,
+      bankReference: correctionRequiresReference
+        ? correctedBankReference.trim()
+        : undefined,
+      attachment:
+        correctionRequiresAttachment && correctionAttachment
+          ? {
+              fileName: correctionAttachment.fileName,
+              mimeType: correctionAttachment.mimeType,
+              base64: correctionAttachment.base64,
+            }
+          : undefined,
+      comment: correctionComment.trim(),
     });
   }
 
@@ -2105,6 +2213,17 @@ function BatchDetailDialog({
       );
       return;
     }
+    if (pendingReasonAction.type === "rejectAccounting") {
+      rejectPaymentForCorrectionMutation.mutate(
+        {
+          id: detail.batch.id,
+          reason: accountingRejectionReason,
+          comment: actionReason,
+        },
+        { onSuccess }
+      );
+      return;
+    }
     if (pendingReasonAction.type === "reopenRejected") {
       reopenRejectedMutation.mutate(
         { id: detail.batch.id, reason: actionReason },
@@ -2136,6 +2255,8 @@ function BatchDetailDialog({
     removeDraftItemMutation,
     resolveMutation,
     accountMutation,
+    rejectPaymentForCorrectionMutation,
+    correctRejectedPaymentMutation,
     reopenMutation,
     reopenRejectedMutation,
   ].some(mutation => mutation.isPending);
@@ -2215,6 +2336,31 @@ function BatchDetailDialog({
                   {status === "rechazado" ? "Lote rechazado" : "Lote devuelto"}
                 </AlertTitle>
                 <AlertDescription>{detail.batch.returnReason}</AlertDescription>
+              </Alert>
+            )}
+
+            {status === "rechazado_contabilidad" && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Pago rechazado por Contabilidad</AlertTitle>
+                <AlertDescription className="space-y-1">
+                  <div className="font-medium">
+                    {accountingRejectionReasonCode
+                      ? TREASURY_ACCOUNTING_REJECTION_REASON_LABELS[
+                          accountingRejectionReasonCode
+                        ]
+                      : "Referencia o documento soporte pendiente de corrección"}
+                  </div>
+                  {accountingRejectionEvent?.comment && (
+                    <div>{accountingRejectionEvent.comment}</div>
+                  )}
+                  {!isAdministrator && (
+                    <div>
+                      El rol Administrador debe realizar la corrección antes de
+                      continuar con la contabilización.
+                    </div>
+                  )}
+                </AlertDescription>
               </Alert>
             )}
 
@@ -2802,21 +2948,34 @@ function BatchDetailDialog({
                 <h3 className="font-semibold">Archivos bancarios</h3>
                 <div className="flex flex-wrap gap-2">
                   {detail.attachments.map((attachment: any) => (
-                    <Button
+                    <div
                       key={attachment.id}
-                      variant="outline"
-                      size="sm"
-                      asChild
+                      className="flex items-center gap-1"
                     >
-                      <a
-                        href={attachment.fileUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <FileSpreadsheet className="mr-2 h-4 w-4" />{" "}
-                        {attachment.fileName}
-                      </a>
-                    </Button>
+                      <Button variant="outline" size="sm" asChild>
+                        <a
+                          href={attachment.fileUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <FileSpreadsheet className="mr-2 h-4 w-4" />{" "}
+                          {attachment.fileName}
+                        </a>
+                      </Button>
+                      {attachment.category === "comprobante_pago" && (
+                        <Badge
+                          variant={
+                            attachment.id === currentPaymentAttachmentId
+                              ? "default"
+                              : "outline"
+                          }
+                        >
+                          {attachment.id === currentPaymentAttachmentId
+                            ? "Vigente"
+                            : "Anterior"}
+                        </Badge>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -2967,6 +3126,20 @@ function BatchDetailDialog({
                   <Banknote className="mr-2 h-4 w-4" /> Contabilizar abonos
                 </Button>
               )}
+              {canRejectPaymentForCorrection && (
+                <Button
+                  variant="destructive"
+                  disabled={pending}
+                  onClick={() => requestReason({ type: "rejectAccounting" })}
+                >
+                  <XCircle className="mr-2 h-4 w-4" /> Rechazar pago
+                </Button>
+              )}
+              {canCorrectRejectedPayment && (
+                <Button disabled={pending} onClick={openCorrectionDialog}>
+                  <RefreshCcw className="mr-2 h-4 w-4" /> Corregir pago
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={() => void generatePaymentReport()}
@@ -3005,6 +3178,7 @@ function BatchDetailDialog({
                 ![
                   "conciliacion",
                   "pendiente_contabilizacion",
+                  "rechazado_contabilidad",
                   "cerrado",
                   "anulado",
                   "consolidado",
@@ -3079,11 +3253,13 @@ function BatchDetailDialog({
                       ? "Reabrir lote"
                       : pendingReasonAction?.type === "reject"
                         ? "Rechazar lote"
-                        : pendingReasonAction?.type === "reopenRejected"
-                          ? "Reabrir lote rechazado"
-                          : pendingReasonAction?.resolution === "accept"
-                            ? "Aceptar abono real"
-                            : "Rechazar línea bancaria"}
+                        : pendingReasonAction?.type === "rejectAccounting"
+                          ? "Rechazar pago bancario"
+                          : pendingReasonAction?.type === "reopenRejected"
+                            ? "Reabrir lote rechazado"
+                            : pendingReasonAction?.resolution === "accept"
+                              ? "Aceptar abono real"
+                              : "Rechazar línea bancaria"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pendingReasonAction?.type === "reopen"
@@ -3094,13 +3270,41 @@ function BatchDetailDialog({
                     ? "El lote quedará anulado y sus facturas volverán a estar disponibles para incluirlas en otro lote. Esta acción solo se permite antes de registrar una respuesta o pago bancario."
                     : pendingReasonAction?.type === "reject"
                       ? "El lote completo quedará rechazado. Escriba el motivo obligatorio para registrarlo en la auditoría."
-                      : pendingReasonAction?.type === "reopenRejected"
-                        ? approvalsEnabled
-                          ? "El lote volverá a quedar pendiente de aprobación. Escriba el motivo de la reapertura."
-                          : "El lote quedará listo para banco sin revisión ni aprobación. Escriba el motivo de la reapertura."
-                        : "Escriba un motivo de al menos 5 caracteres para registrar esta acción en la auditoría."}
+                      : pendingReasonAction?.type === "rejectAccounting"
+                        ? "El pago quedará bloqueado hasta que el Administrador corrija la referencia bancaria, el documento soporte o ambos. Ningún abono será eliminado."
+                        : pendingReasonAction?.type === "reopenRejected"
+                          ? approvalsEnabled
+                            ? "El lote volverá a quedar pendiente de aprobación. Escriba el motivo de la reapertura."
+                            : "El lote quedará listo para banco sin revisión ni aprobación. Escriba el motivo de la reapertura."
+                          : "Escriba un motivo de al menos 5 caracteres para registrar esta acción en la auditoría."}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {pendingReasonAction?.type === "rejectAccounting" && (
+            <div className="space-y-2">
+              <Label htmlFor="treasury-accounting-rejection-reason">
+                Dato incorrecto
+              </Label>
+              <Select
+                value={accountingRejectionReason}
+                onValueChange={value =>
+                  setAccountingRejectionReason(
+                    value as TreasuryAccountingRejectionReason
+                  )
+                }
+              >
+                <SelectTrigger id="treasury-accounting-rejection-reason">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TREASURY_ACCOUNTING_REJECTION_REASON_CODES.map(reason => (
+                    <SelectItem key={reason} value={reason}>
+                      {TREASURY_ACCOUNTING_REJECTION_REASON_LABELS[reason]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="treasury-action-reason">Motivo</Label>
             <Textarea
@@ -3124,6 +3328,157 @@ function BatchDetailDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <Dialog
+        open={correctionDialogOpen}
+        onOpenChange={open => {
+          if (!open && !correctRejectedPaymentMutation.isPending) {
+            setCorrectionDialogOpen(false);
+            setCorrectionAttachment(undefined);
+            setCorrectionComment("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Corregir pago rechazado</DialogTitle>
+            <DialogDescription>
+              Corrija únicamente los datos observados por Contabilidad. El
+              soporte anterior permanecerá disponible en la auditoría.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>
+                {accountingRejectionReasonCode
+                  ? TREASURY_ACCOUNTING_REJECTION_REASON_LABELS[
+                      accountingRejectionReasonCode
+                    ]
+                  : "Corrección solicitada por Contabilidad"}
+              </AlertTitle>
+              {accountingRejectionEvent?.comment && (
+                <AlertDescription>
+                  {accountingRejectionEvent.comment}
+                </AlertDescription>
+              )}
+            </Alert>
+            {correctionRequiresReference && (
+              <div className="space-y-2">
+                <Label htmlFor="corrected-bank-reference">
+                  Referencia bancaria corregida
+                </Label>
+                <Input
+                  id="corrected-bank-reference"
+                  maxLength={255}
+                  value={correctedBankReference}
+                  onChange={event =>
+                    setCorrectedBankReference(event.target.value)
+                  }
+                  disabled={correctRejectedPaymentMutation.isPending}
+                />
+                {currentBankReference && (
+                  <p className="text-xs text-muted-foreground">
+                    Referencia rechazada: {currentBankReference}
+                  </p>
+                )}
+              </div>
+            )}
+            {correctionRequiresAttachment && (
+              <div className="space-y-2">
+                <Label htmlFor="corrected-payment-attachment">
+                  Documento soporte corregido
+                </Label>
+                <Input
+                  id="corrected-payment-attachment"
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,.webp,.xls,.xlsx"
+                  disabled={
+                    correctRejectedPaymentMutation.isPending ||
+                    preparingCorrectionAttachment
+                  }
+                  onChange={async event => {
+                    const input = event.currentTarget;
+                    const file = input.files?.[0];
+                    if (!file) {
+                      setCorrectionAttachment(undefined);
+                      return;
+                    }
+                    setPreparingCorrectionAttachment(true);
+                    try {
+                      setCorrectionAttachment(
+                        await prepareBankAttachment(file)
+                      );
+                    } catch (error) {
+                      input.value = "";
+                      setCorrectionAttachment(undefined);
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : "No se pudo preparar el documento soporte."
+                      );
+                    } finally {
+                      setPreparingCorrectionAttachment(false);
+                    }
+                  }}
+                />
+                {preparingCorrectionAttachment && (
+                  <div className="flex items-center text-sm text-muted-foreground">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Preparando documento…
+                  </div>
+                )}
+                {correctionAttachment && (
+                  <div className="rounded-md bg-muted px-3 py-2 text-sm">
+                    {correctionAttachment.fileName} ·{" "}
+                    {(correctionAttachment.fileSize / 1024 / 1024).toFixed(2)}{" "}
+                    MB
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="treasury-correction-comment">
+                Detalle de la corrección
+              </Label>
+              <Textarea
+                id="treasury-correction-comment"
+                value={correctionComment}
+                onChange={event => setCorrectionComment(event.target.value)}
+                placeholder="Describa qué dato fue corregido"
+                maxLength={2000}
+                disabled={correctRejectedPaymentMutation.isPending}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={correctRejectedPaymentMutation.isPending}
+              onClick={() => setCorrectionDialogOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                correctRejectedPaymentMutation.isPending ||
+                preparingCorrectionAttachment ||
+                correctionComment.trim().length < 5 ||
+                (correctionRequiresReference &&
+                  !correctedBankReference.trim()) ||
+                (correctionRequiresAttachment && !correctionAttachment)
+              }
+              onClick={submitAccountingCorrection}
+            >
+              {correctRejectedPaymentMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Guardar y reenviar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }

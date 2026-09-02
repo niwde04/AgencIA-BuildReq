@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
+  TREASURY_ACCOUNTING_REJECTION_REASON_CODES,
   TREASURY_BATCH_STATUS_CODES,
   TREASURY_PAYMENT_KIND_CODES,
   getTreasuryPaymentStatus,
@@ -1062,6 +1063,67 @@ export const treasuryRouter = router({
           batchId: input.id,
           itemIds: input.itemIds,
           actor: ctx.user,
+          comment: input.comment,
+        });
+      } catch (error) {
+        rethrowTreasuryError(error);
+      }
+    }),
+
+  rejectPaymentForCorrection: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        reason: z.enum(TREASURY_ACCOUNTING_REJECTION_REASON_CODES),
+        comment: z.string().trim().min(5).max(2000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertBatchAccess(ctx.user, input.id);
+      if (!isAccountant(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Solo Contabilidad puede rechazar pagos para corrección.",
+        });
+      }
+      try {
+        return await treasury.rejectTreasuryPaymentForCorrection({
+          batchId: input.id,
+          actor: ctx.user,
+          reason: input.reason,
+          comment: input.comment,
+        });
+      } catch (error) {
+        rethrowTreasuryError(error);
+      }
+    }),
+
+  correctRejectedPayment: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        bankReference: z.string().trim().min(1).max(255).optional(),
+        attachment: bankResponseAttachmentSchema.optional(),
+        comment: z.string().trim().min(5).max(2000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertBatchAccess(ctx.user, input.id);
+      if (ctx.user.role !== "admin") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el rol Administrador puede corregir pagos rechazados por Contabilidad.",
+        });
+      }
+      try {
+        return await treasury.correctTreasuryPayment({
+          batchId: input.id,
+          actor: ctx.user,
+          bankReference: input.bankReference,
+          attachment: input.attachment,
           comment: input.comment,
         });
       } catch (error) {

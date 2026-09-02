@@ -40,10 +40,12 @@ import {
   type TreasuryPaymentsSourceProduct,
 } from "../shared/treasury-payments-report";
 import {
+  TREASURY_ACCOUNTING_REJECTION_REASON_CODES,
   buildTreasuryMoneySummary,
   getTreasuryBatchStatusLabel,
   getTreasuryPaymentStatus,
   roundTreasuryMoney,
+  type TreasuryAccountingRejectionReason,
   type TreasuryBatchStatus,
   type TreasuryItemStatus,
   type TreasuryPaymentKind,
@@ -346,6 +348,73 @@ export function assertTreasuryBatchCanReturnToDraft(
       "El lote contiene líneas que ya no están listas para regresar a borrador."
     );
   }
+}
+
+export function getTreasuryAccountingCorrectionRequirements(
+  reason: TreasuryAccountingRejectionReason
+) {
+  return {
+    reference:
+      reason === "referencia_incorrecta" ||
+      reason === "referencia_y_soporte_incorrectos",
+    attachment:
+      reason === "soporte_incorrecto" ||
+      reason === "referencia_y_soporte_incorrectos",
+  };
+}
+
+export function assertTreasuryPaymentCanBeRejectedForCorrection(
+  batchStatus: TreasuryBatchStatus,
+  itemStatuses: TreasuryItemStatus[]
+) {
+  if (batchStatus !== "pendiente_contabilizacion") {
+    throw new TreasuryRuleError(
+      "Solo se puede rechazar un pago pendiente de contabilización."
+    );
+  }
+  if (itemStatuses.includes("contabilizada")) {
+    throw new TreasuryRuleError(
+      "El lote ya tiene abonos contabilizados y no puede rechazarse completo."
+    );
+  }
+  if (!itemStatuses.includes("pagada")) {
+    throw new TreasuryRuleError(
+      "El lote no contiene pagos bancarios pendientes de contabilización."
+    );
+  }
+}
+
+export function validateTreasuryAccountingCorrection(input: {
+  reason: TreasuryAccountingRejectionReason;
+  currentBankReferences: string[];
+  bankReference?: string | null;
+  hasAttachment: boolean;
+}) {
+  const requirements = getTreasuryAccountingCorrectionRequirements(
+    input.reason
+  );
+  const bankReference = input.bankReference?.trim() || null;
+  const currentBankReferences = Array.from(
+    new Set(
+      input.currentBankReferences.map(value => value.trim()).filter(Boolean)
+    )
+  );
+  if (requirements.reference && !bankReference) {
+    throw new TreasuryRuleError("Ingrese la referencia bancaria corregida.");
+  }
+  if (
+    requirements.reference &&
+    currentBankReferences.length === 1 &&
+    currentBankReferences[0] === bankReference
+  ) {
+    throw new TreasuryRuleError(
+      "La referencia corregida debe ser diferente de la referencia rechazada."
+    );
+  }
+  if (requirements.attachment && !input.hasAttachment) {
+    throw new TreasuryRuleError("Adjunte el documento soporte corregido.");
+  }
+  return { requirements, bankReference };
 }
 
 export function resolveTreasuryPaymentSignatures(
@@ -3222,7 +3291,7 @@ async function persistTreasuryAttachment(input: {
   const key = `treasury/${input.batchId}/${Date.now()}-${randomUUID()}-${input.fileName}`;
   const stored = await storagePut(key, input.buffer, input.mimeType);
   try {
-    await createAttachment({
+    const attachment = await createAttachment({
       entityType: "treasury_payment_batch",
       entityId: input.batchId,
       fileName: input.fileName,
@@ -3233,11 +3302,11 @@ async function persistTreasuryAttachment(input: {
       category: input.category,
       uploadedById: input.actorId,
     });
+    return { ...stored, attachmentId: attachment.id };
   } catch (error) {
     await storageDelete(stored.key).catch(() => undefined);
     throw error;
   }
-  return stored;
 }
 
 export async function exportTreasuryBankWorkbook(
@@ -3951,6 +4020,267 @@ export async function accountTreasuryItems(input: {
   });
 }
 
+function parseTreasuryAccountingRejectionReason(
+  value: unknown
+): TreasuryAccountingRejectionReason {
+  if (
+    typeof value === "string" &&
+    TREASURY_ACCOUNTING_REJECTION_REASON_CODES.includes(
+      value as TreasuryAccountingRejectionReason
+    )
+  ) {
+    return value as TreasuryAccountingRejectionReason;
+  }
+  throw new TreasuryRuleError(
+    "No se encontró el motivo vigente del rechazo contable."
+  );
+}
+
+async function readLatestTreasuryAccountingRejection(
+  executor: any,
+  batchId: number
+) {
+  const [event] = await executor
+    .select()
+    .from(treasuryPaymentEvents)
+    .where(
+      and(
+        eq(treasuryPaymentEvents.batchId, batchId),
+        eq(treasuryPaymentEvents.action, "rechazar_pago_contabilidad")
+      )
+    )
+    .orderBy(
+      desc(treasuryPaymentEvents.createdAt),
+      desc(treasuryPaymentEvents.id)
+    )
+    .limit(1);
+  if (!event) {
+    throw new TreasuryRuleError(
+      "No se encontró el rechazo contable que debe corregirse."
+    );
+  }
+  return event;
+}
+
+export async function rejectTreasuryPaymentForCorrection(input: {
+  batchId: number;
+  actor: TreasuryActor;
+  reason: TreasuryAccountingRejectionReason;
+  comment: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const comment = input.comment.trim();
+  const result = await db.transaction(async tx => {
+    const batch = await readBatch(tx, input.batchId);
+    const items = await readBatchItems(tx, input.batchId);
+    assertTreasuryPaymentCanBeRejectedForCorrection(
+      batch.status,
+      items.map((item: any) => item.status as TreasuryItemStatus)
+    );
+    const now = new Date();
+    const [updated] = await tx
+      .update(treasuryPaymentBatches)
+      .set({
+        status: "rechazado_contabilidad",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(treasuryPaymentBatches.id, input.batchId),
+          eq(treasuryPaymentBatches.status, "pendiente_contabilizacion")
+        )
+      )
+      .returning();
+    if (!updated) {
+      throw new TreasuryRuleError(
+        "El lote cambió de estado. Actualice e intente nuevamente."
+      );
+    }
+    await insertEvent(tx, {
+      batchId: input.batchId,
+      action: "rechazar_pago_contabilidad",
+      previousStatus: batch.status,
+      newStatus: "rechazado_contabilidad",
+      actor: input.actor,
+      comment,
+      metadata: { reasonCode: input.reason },
+    });
+    return updated;
+  });
+  await notifySystemAdministrators({
+    title: "Pago rechazado por Contabilidad",
+    message: `El pago ${result.batchNumber} requiere corrección: ${comment}`,
+    batchId: input.batchId,
+  });
+  return result;
+}
+
+export async function correctTreasuryPayment(input: {
+  batchId: number;
+  actor: TreasuryActor;
+  bankReference?: string | null;
+  attachment?: TreasuryBankResponseAttachmentInput;
+  comment: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const preliminaryBatch = await readBatch(db, input.batchId);
+  if (preliminaryBatch.status !== "rechazado_contabilidad") {
+    throw new TreasuryRuleError(
+      "Solo se puede corregir un pago rechazado por Contabilidad."
+    );
+  }
+  const preliminaryItems = await readBatchItems(db, input.batchId);
+  const preliminaryRejection = await readLatestTreasuryAccountingRejection(
+    db,
+    input.batchId
+  );
+  const rejectionReason = parseTreasuryAccountingRejectionReason(
+    preliminaryRejection.metadata?.reasonCode
+  );
+  const currentBankReferences = preliminaryItems
+    .filter((item: any) => item.status === "pagada")
+    .map((item: any) => String(item.bankReference ?? ""));
+  const correction = validateTreasuryAccountingCorrection({
+    reason: rejectionReason,
+    currentBankReferences,
+    bankReference: input.bankReference,
+    hasAttachment: Boolean(input.attachment),
+  });
+  const previousPaymentAttachments = await db
+    .select({
+      id: attachments.id,
+      fileName: attachments.fileName,
+      createdAt: attachments.createdAt,
+    })
+    .from(attachments)
+    .where(
+      and(
+        eq(attachments.entityType, "treasury_payment_batch"),
+        eq(attachments.entityId, input.batchId),
+        eq(attachments.category, "comprobante_pago")
+      )
+    )
+    .orderBy(desc(attachments.createdAt), desc(attachments.id));
+  const preparedAttachment = input.attachment
+    ? prepareTreasuryBankAttachment(input.attachment)
+    : null;
+  const stored = preparedAttachment
+    ? await persistTreasuryAttachment({
+        batchId: input.batchId,
+        actorId: input.actor.id,
+        fileName: preparedAttachment.fileName,
+        buffer: preparedAttachment.buffer,
+        mimeType: preparedAttachment.mimeType,
+        category: "comprobante_pago",
+      })
+    : null;
+
+  try {
+    const result = await db.transaction(async tx => {
+      const batch = await readBatch(tx, input.batchId);
+      if (batch.status !== "rechazado_contabilidad") {
+        throw new TreasuryRuleError(
+          "El lote cambió de estado. Actualice e intente nuevamente."
+        );
+      }
+      const items = await readBatchItems(tx, input.batchId);
+      assertTreasuryPaymentCanBeRejectedForCorrection(
+        "pendiente_contabilizacion",
+        items.map((item: any) => item.status as TreasuryItemStatus)
+      );
+      const rejection = await readLatestTreasuryAccountingRejection(
+        tx,
+        input.batchId
+      );
+      const currentReason = parseTreasuryAccountingRejectionReason(
+        rejection.metadata?.reasonCode
+      );
+      if (currentReason !== rejectionReason) {
+        throw new TreasuryRuleError(
+          "El motivo del rechazo cambió. Actualice e intente nuevamente."
+        );
+      }
+      if (correction.bankReference) {
+        await tx
+          .update(treasuryPaymentItems)
+          .set({
+            bankReference: correction.bankReference,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(treasuryPaymentItems.batchId, input.batchId),
+              eq(treasuryPaymentItems.status, "pagada")
+            )
+          );
+      }
+      const now = new Date();
+      const [updated] = await tx
+        .update(treasuryPaymentBatches)
+        .set({
+          status: "pendiente_contabilizacion",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(treasuryPaymentBatches.id, input.batchId),
+            eq(treasuryPaymentBatches.status, "rechazado_contabilidad")
+          )
+        )
+        .returning();
+      if (!updated) {
+        throw new TreasuryRuleError(
+          "El lote cambió de estado. Actualice e intente nuevamente."
+        );
+      }
+      const correctedFields = [
+        ...(correction.bankReference ? ["bankReference"] : []),
+        ...(stored ? ["attachment"] : []),
+      ];
+      await insertEvent(tx, {
+        batchId: input.batchId,
+        action: "corregir_pago_contabilidad",
+        previousStatus: batch.status,
+        newStatus: "pendiente_contabilizacion",
+        actor: input.actor,
+        comment: input.comment,
+        metadata: {
+          rejectionEventId: rejection.id,
+          reasonCode: rejectionReason,
+          correctedFields,
+          previousBankReferences: Array.from(
+            new Set(currentBankReferences.filter(Boolean))
+          ),
+          bankReference: correction.bankReference,
+          previousAttachmentId: previousPaymentAttachments[0]?.id ?? null,
+          previousAttachmentFileName:
+            previousPaymentAttachments[0]?.fileName ?? null,
+          attachmentId: stored?.attachmentId ?? null,
+          attachmentFileName: preparedAttachment?.fileName ?? null,
+        },
+      });
+      return updated;
+    });
+    await notifyRole("contable", {
+      title: "Pago corregido",
+      message: `El pago ${result.batchNumber} fue corregido y volvió a quedar pendiente de contabilización.`,
+      batchId: input.batchId,
+    });
+    return result;
+  } catch (error) {
+    if (stored) {
+      await db
+        .delete(attachments)
+        .where(eq(attachments.id, stored.attachmentId))
+        .catch(() => undefined);
+      await storageDelete(stored.key).catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
 export async function reopenClosedTreasuryBatch(input: {
   batchId: number;
   actor: TreasuryActor;
@@ -4081,6 +4411,23 @@ async function notifyRole(
   input: { title: string; message: string; batchId: number }
 ) {
   const recipients = await getUsersByBuildreqRole(role);
+  await notifyUsers(
+    recipients.map(user => user.id),
+    input
+  );
+}
+
+async function notifySystemAdministrators(input: {
+  title: string;
+  message: string;
+  batchId: number;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const recipients = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.role, "admin"), eq(users.isActive, true)));
   await notifyUsers(
     recipients.map(user => user.id),
     input

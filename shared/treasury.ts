@@ -25,6 +25,7 @@ export const TREASURY_BATCH_STATUS_CODES = [
   "enviado_banco",
   "conciliacion",
   "pendiente_contabilizacion",
+  "rechazado_contabilidad",
   "cerrado",
   "devuelto",
   "rechazado",
@@ -44,6 +45,7 @@ export const TREASURY_BATCH_STATUS_LABELS: Readonly<
   enviado_banco: "Enviado al banco",
   conciliacion: "Conciliación con diferencias",
   pendiente_contabilizacion: "Pendiente de contabilización",
+  rechazado_contabilidad: "Rechazado por Contabilidad",
   cerrado: "Cerrado",
   devuelto: "Devuelto",
   rechazado: "Rechazado",
@@ -58,6 +60,24 @@ export function getTreasuryBatchStatusLabel(
   if (status === "aprobado" && approvalBypassed) return "Listo para banco";
   return TREASURY_BATCH_STATUS_LABELS[status];
 }
+
+export const TREASURY_ACCOUNTING_REJECTION_REASON_CODES = [
+  "referencia_incorrecta",
+  "soporte_incorrecto",
+  "referencia_y_soporte_incorrectos",
+] as const;
+
+export type TreasuryAccountingRejectionReason =
+  (typeof TREASURY_ACCOUNTING_REJECTION_REASON_CODES)[number];
+
+export const TREASURY_ACCOUNTING_REJECTION_REASON_LABELS: Readonly<
+  Record<TreasuryAccountingRejectionReason, string>
+> = {
+  referencia_incorrecta: "Referencia bancaria incorrecta",
+  soporte_incorrecto: "Documento soporte incorrecto",
+  referencia_y_soporte_incorrectos:
+    "Referencia bancaria y documento soporte incorrectos",
+};
 
 function normalizeTreasurySearchText(value: unknown) {
   return String(value ?? "")

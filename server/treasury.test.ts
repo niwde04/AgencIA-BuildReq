@@ -12,7 +12,9 @@ import {
   assertTreasuryBatchCanBeCancelled,
   assertTreasuryBatchCanReturnToDraft,
   assertTreasuryBatchesCanBeConsolidated,
+  assertTreasuryPaymentCanBeRejectedForCorrection,
   buildTreasuryFullPaymentRows,
+  getTreasuryAccountingCorrectionRequirements,
   getTreasuryApprovalRouting,
   getTreasuryBatchPaymentRegistrationDate,
   getTreasuryBusinessDate,
@@ -24,6 +26,7 @@ import {
   resolveTreasuryPaymentSignatures,
   resolveTreasurySettingsUpdate,
   TreasuryRuleError,
+  validateTreasuryAccountingCorrection,
 } from "./treasury";
 
 describe("treasury batch payment registration date", () => {
@@ -148,6 +151,64 @@ describe("treasury batch cancellation", () => {
         },
       ])
     ).toThrow("ya tiene una respuesta o pago bancario registrado");
+  });
+});
+
+describe("treasury accounting payment corrections", () => {
+  it("allows Contabilidad to reject a fully unaccounted bank payment", () => {
+    expect(() =>
+      assertTreasuryPaymentCanBeRejectedForCorrection(
+        "pendiente_contabilizacion",
+        ["pagada", "rechazada_banco", "excluida"]
+      )
+    ).not.toThrow();
+  });
+
+  it("blocks a whole-batch rejection after partial accounting", () => {
+    expect(() =>
+      assertTreasuryPaymentCanBeRejectedForCorrection(
+        "pendiente_contabilizacion",
+        ["pagada", "contabilizada"]
+      )
+    ).toThrow("ya tiene abonos contabilizados");
+  });
+
+  it("requires the fields identified by Contabilidad", () => {
+    expect(
+      getTreasuryAccountingCorrectionRequirements(
+        "referencia_y_soporte_incorrectos"
+      )
+    ).toEqual({ reference: true, attachment: true });
+    expect(() =>
+      validateTreasuryAccountingCorrection({
+        reason: "referencia_y_soporte_incorrectos",
+        currentBankReferences: ["REF-ANTERIOR"],
+        bankReference: "REF-NUEVA",
+        hasAttachment: false,
+      })
+    ).toThrow("documento soporte corregido");
+    expect(() =>
+      validateTreasuryAccountingCorrection({
+        reason: "referencia_incorrecta",
+        currentBankReferences: ["REF-ANTERIOR"],
+        bankReference: "REF-ANTERIOR",
+        hasAttachment: false,
+      })
+    ).toThrow("debe ser diferente");
+  });
+
+  it("accepts a corrected reference and support together", () => {
+    expect(
+      validateTreasuryAccountingCorrection({
+        reason: "referencia_y_soporte_incorrectos",
+        currentBankReferences: ["REF-ANTERIOR"],
+        bankReference: " REF-NUEVA ",
+        hasAttachment: true,
+      })
+    ).toMatchObject({
+      bankReference: "REF-NUEVA",
+      requirements: { reference: true, attachment: true },
+    });
   });
 });
 
@@ -446,10 +507,7 @@ describe("treasury consolidation routing", () => {
   it("keeps the approval flow when approvals are enabled", () => {
     expect(getTreasuryConsolidationRouting(true)).toEqual({
       approvalBypassed: false,
-      consolidatableStatuses: [
-        "enviado_depuracion",
-        "pendiente_aprobacion",
-      ],
+      consolidatableStatuses: ["enviado_depuracion", "pendiente_aprobacion"],
       consolidatedStatus: "pendiente_aprobacion",
       consolidatedItemStatus: "incluida",
     });

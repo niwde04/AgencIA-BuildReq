@@ -8,6 +8,7 @@ function createTreasuryContext(
   buildreqRole:
     | "administracion_central"
     | "administrador_proyecto"
+    | "contable"
     | "financiero"
 ) {
   const isProjectManager = buildreqRole === "administrador_proyecto";
@@ -36,6 +37,19 @@ function createTreasuryContext(
     req: { protocol: "https", headers: {} },
     res: { clearCookie: vi.fn() },
   } as unknown as TrpcContext;
+}
+
+function createSystemAdminContext() {
+  const context = createTreasuryContext(
+    "administracion_central"
+  ) as unknown as {
+    user: { role: string; name: string; openId: string; email: string };
+  };
+  context.user.role = "admin";
+  context.user.name = "Administrador Test";
+  context.user.openId = "test-admin";
+  context.user.email = "admin@example.com";
+  return context as unknown as TrpcContext;
 }
 
 function mockDisabledApprovalSettings() {
@@ -246,6 +260,78 @@ describe("treasury draft permissions", () => {
       expect.objectContaining({
         projectId: 1,
         currency: "HNL",
+      })
+    );
+  });
+});
+
+describe("treasury accounting correction permissions", () => {
+  it("allows Contabilidad to reject a bank payment for correction", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "getTreasuryBatchById").mockResolvedValue({
+      batch: { id: 80, projectId: 1 },
+      projectIds: [1],
+    } as any);
+    const rejectSpy = vi
+      .spyOn(treasury, "rejectTreasuryPaymentForCorrection")
+      .mockResolvedValue({
+        id: 80,
+        status: "rechazado_contabilidad",
+      } as any);
+    const caller = appRouter.createCaller(createTreasuryContext("contable"));
+
+    await caller.treasury.rejectPaymentForCorrection({
+      id: 80,
+      reason: "referencia_y_soporte_incorrectos",
+      comment: "La referencia y el comprobante no corresponden.",
+    });
+
+    expect(rejectSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: 80,
+        reason: "referencia_y_soporte_incorrectos",
+        actor: expect.objectContaining({ buildreqRole: "contable" }),
+      })
+    );
+  });
+
+  it("keeps payment correction exclusive to the system Administrator role", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "getTreasuryBatchById").mockResolvedValue({
+      batch: { id: 80, projectId: 1 },
+      projectIds: [1],
+    } as any);
+    const correctSpy = vi
+      .spyOn(treasury, "correctTreasuryPayment")
+      .mockResolvedValue({
+        id: 80,
+        status: "pendiente_contabilizacion",
+      } as any);
+    const centralCaller = appRouter.createCaller(
+      createTreasuryContext("administracion_central")
+    );
+
+    await expect(
+      centralCaller.treasury.correctRejectedPayment({
+        id: 80,
+        bankReference: "REF-CORREGIDA",
+        comment: "Referencia bancaria actualizada.",
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(correctSpy).not.toHaveBeenCalled();
+
+    const adminCaller = appRouter.createCaller(createSystemAdminContext());
+    await adminCaller.treasury.correctRejectedPayment({
+      id: 80,
+      bankReference: "REF-CORREGIDA",
+      comment: "Referencia bancaria actualizada.",
+    });
+
+    expect(correctSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: 80,
+        bankReference: "REF-CORREGIDA",
+        actor: expect.objectContaining({ role: "admin" }),
       })
     );
   });
