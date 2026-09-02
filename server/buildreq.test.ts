@@ -1852,7 +1852,7 @@ describe("BuildReq - Suppliers catalog", () => {
     createSupplierSpy.mockRestore();
   });
 
-  it("Authorized catalog users can update supplier email and fiscal profile", async () => {
+  it("Administracion Central can update supplier name, email and fiscal profile", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const hasValidCertificateSpy = vi
@@ -1860,6 +1860,7 @@ describe("BuildReq - Suppliers catalog", () => {
       .mockResolvedValue(false);
     const updateSupplierSpy = vi.spyOn(db, "updateSupplier").mockResolvedValue({
       id: 5,
+      name: "Proveedor Corregido",
       email: "compras@proveedor.com",
       rtn: "08019999999999",
       address: "Tegucigalpa",
@@ -1870,6 +1871,7 @@ describe("BuildReq - Suppliers catalog", () => {
     await expect(
       caller.suppliers.update({
         id: 5,
+        name: "  Proveedor Corregido  ",
         email: "Compras@Proveedor.com",
         rtn: "08019999999999",
         address: "Tegucigalpa",
@@ -1878,6 +1880,7 @@ describe("BuildReq - Suppliers catalog", () => {
       })
     ).resolves.toEqual(
       expect.objectContaining({
+        name: "Proveedor Corregido",
         email: "compras@proveedor.com",
         rtn: "08019999999999",
         allowsTaxWithholding: false,
@@ -1886,6 +1889,7 @@ describe("BuildReq - Suppliers catalog", () => {
     );
 
     expect(updateSupplierSpy).toHaveBeenCalledWith(5, {
+      name: "Proveedor Corregido",
       email: "compras@proveedor.com",
       rtn: "08019999999999",
       address: "Tegucigalpa",
@@ -1895,6 +1899,51 @@ describe("BuildReq - Suppliers catalog", () => {
     });
 
     hasValidCertificateSpy.mockRestore();
+    updateSupplierSpy.mockRestore();
+  });
+
+  it("Super Admin can update supplier name", async () => {
+    const { ctx } = createUserContext();
+    const hasValidCertificateSpy = vi
+      .spyOn(db, "hasValidSupplierAccountPaymentCertificate")
+      .mockResolvedValue(false);
+    const updateSupplierSpy = vi.spyOn(db, "updateSupplier").mockResolvedValue({
+      id: 5,
+      name: "Proveedor Corregido",
+    } as any);
+
+    await expect(
+      appRouter.createCaller(ctx).suppliers.update({
+        id: 5,
+        name: "Proveedor Corregido",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({ name: "Proveedor Corregido" })
+    );
+    expect(updateSupplierSpy).toHaveBeenCalledWith(5, {
+      name: "Proveedor Corregido",
+      updatedById: 1,
+    });
+
+    hasValidCertificateSpy.mockRestore();
+    updateSupplierSpy.mockRestore();
+  });
+
+  it("Only Super Admin and Administracion Central can update supplier name", async () => {
+    const updateSupplierSpy = vi.spyOn(db, "updateSupplier");
+
+    for (const { ctx } of [createProjectAdminContext(), createBodegaContext()]) {
+      await expect(
+        appRouter.createCaller(ctx).suppliers.update({
+          id: 5,
+          name: "Proveedor Corregido",
+        })
+      ).rejects.toThrow(
+        "No tiene permisos para modificar el nombre del proveedor"
+      );
+    }
+
+    expect(updateSupplierSpy).not.toHaveBeenCalled();
     updateSupplierSpy.mockRestore();
   });
 

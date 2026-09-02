@@ -271,6 +271,7 @@ export default function Proveedores() {
   const buildreqRole = (user as any)?.buildreqRole || "";
   const canCreateSupplier =
     user?.role === "admin" || buildreqRole === "administracion_central";
+  const canEditSupplierName = canCreateSupplier;
   const canManageSupplierCatalog =
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||
@@ -555,13 +556,13 @@ export default function Proveedores() {
       toast.error("Ingrese un correo válido");
       return;
     }
+    if ((isCreatingSupplier || canEditSupplierName) && !name) {
+      toast.error("Ingrese el nombre del proveedor");
+      return;
+    }
     if (isCreatingSupplier) {
       if (!supplierCode) {
         toast.error("Ingrese el código del proveedor");
-        return;
-      }
-      if (!name) {
-        toast.error("Ingrese el nombre del proveedor");
         return;
       }
       createMutation.mutate({
@@ -580,6 +581,7 @@ export default function Proveedores() {
     if (!selectedSupplier) return;
     updateMutation.mutate({
       id: selectedSupplier.id,
+      ...(canEditSupplierName ? { name } : {}),
       ...(canEditSupplierEmail ? { email } : {}),
       ...(canEditSupplierRtn ? { rtn: editRtn.trim() } : {}),
       address: editAddress.trim(),
@@ -1074,7 +1076,7 @@ export default function Proveedores() {
                 <Label className="text-xs">Proveedor</Label>
                 <Input
                   value={supplierDraft.name}
-                  readOnly={!isCreatingSupplier}
+                  readOnly={!isCreatingSupplier && !canEditSupplierName}
                   onChange={(event) =>
                     setSupplierDraft((current) => ({
                       ...current,

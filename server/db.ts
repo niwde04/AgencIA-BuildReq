@@ -24494,6 +24494,7 @@ export async function createSupplier(data: InsertSupplier) {
 export async function updateSupplier(
   id: number,
   data: {
+    name?: string;
     email?: string | null;
     rtn?: string | null;
     address?: string | null;
