@@ -19,6 +19,7 @@ import {
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
   getPurchaseOrderTaxSelectionError,
+  isPurchaseOrderContractDocumentDateWithinTerm,
   summarizePurchaseOrderLines,
 } from "../shared/purchase-orders";
 import {
@@ -508,6 +509,21 @@ describe("BuildReq - Purchase order contract helpers", () => {
     expect(summary.expiresSoon).toBe(true);
     expect(summary.isExpired).toBe(false);
     expect(summary.statusLabel).toBe("Pendiente 1 de 12");
+  });
+
+  it("accepts the contract end date as a valid invoice document date", () => {
+    expect(
+      isPurchaseOrderContractDocumentDateWithinTerm({
+        documentDate: "2026-08-30",
+        contractEndDate: "2026-08-30",
+      })
+    ).toBe(true);
+    expect(
+      isPurchaseOrderContractDocumentDateWithinTerm({
+        documentDate: "2026-08-31",
+        contractEndDate: "2026-08-30",
+      })
+    ).toBe(false);
   });
 });
 
@@ -1932,7 +1948,10 @@ describe("BuildReq - Suppliers catalog", () => {
   it("Only Super Admin and Administracion Central can update supplier name", async () => {
     const updateSupplierSpy = vi.spyOn(db, "updateSupplier");
 
-    for (const { ctx } of [createProjectAdminContext(), createBodegaContext()]) {
+    for (const { ctx } of [
+      createProjectAdminContext(),
+      createBodegaContext(),
+    ]) {
       await expect(
         appRouter.createCaller(ctx).suppliers.update({
           id: 5,
@@ -16362,7 +16381,103 @@ describe("BuildReq - Receipts", () => {
     registerReceiptSpy.mockRestore();
   });
 
-  it("blocks registering contract receipts after the contract end date", async () => {
+  it("allows registering an expired contract invoice dated on its end date", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "recibida",
+          appliesContract: true,
+          contractPaymentFrequency: "mensual",
+          contractFirstPaymentDate: new Date("2026-01-01T12:00:00"),
+          contractEndDate: new Date("2026-01-31T12:00:00"),
+          currency: "HNL",
+          exchangeRate: null,
+          exchangeRateDate: null,
+          pricesIncludeTax: false,
+        },
+        contractSummary: {
+          expectedInvoiceCount: 1,
+          registeredInvoiceCount: 0,
+          remainingInvoiceCount: 1,
+          isExpired: true,
+          isFullyInvoiced: false,
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "SERVICIO MENSUAL",
+            quantity: "1.00",
+            receivedQuantity: "1.00",
+            receiptClosed: false,
+            currentSapItemCode: "100000005",
+            unitPrice: "1230.00",
+            catalogItem: {
+              itemCode: "100000005",
+              description: "SERVICIO MENSUAL",
+              tipoArticulo: 2,
+            },
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 8,
+        receiptNumber: "RC-2026-0008",
+        status: "completa",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-01-31",
+        documentDueDate: "2026-02-28",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "SERVICIO MENSUAL",
+            quantityExpected: "1.00",
+            quantityReceived: "1.00",
+            unitPrice: "1230.00",
+            unit: "mes",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 8,
+      receiptNumber: "RC-2026-0008",
+      status: "completa",
+    });
+
+    expect(registerReceiptSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        documentDate: new Date("2026-01-31T12:00:00"),
+      }),
+      expect.any(Array)
+    );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("blocks contract invoices dated after the contract end date", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const getPurchaseOrderByIdSpy = vi
@@ -16422,7 +16537,8 @@ describe("BuildReq - Receipts", () => {
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
-      message: "El contrato está vencido y ya no permite agregar facturas",
+      message:
+        "La fecha del documento fiscal es posterior al vencimiento del contrato",
     });
 
     expect(registerReceiptSpy).not.toHaveBeenCalled();

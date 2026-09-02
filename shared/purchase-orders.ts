@@ -917,6 +917,20 @@ export function calculateContractPaymentDates(params: {
   return dates;
 }
 
+export function isPurchaseOrderContractDocumentDateWithinTerm(params: {
+  documentDate?: string | Date | null;
+  contractEndDate?: string | Date | null;
+}) {
+  const documentDate = toContractDate(params.documentDate);
+  const contractEndDate = toContractDate(params.contractEndDate);
+
+  return Boolean(
+    documentDate &&
+      contractEndDate &&
+      documentDate.getTime() <= contractEndDate.getTime()
+  );
+}
+
 export function getPurchaseOrderContractSummary(params: {
   appliesContract?: boolean | null;
   contractPaymentFrequency?: string | null;

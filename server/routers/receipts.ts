@@ -18,6 +18,7 @@ import {
   normalizeFixedAssetDetails,
 } from "@shared/fixed-assets";
 import {
+  isPurchaseOrderContractDocumentDateWithinTerm,
   parsePurchaseOrderAdditionalTaxCodes,
   parsePurchaseOrderTaxBreakdown,
   type PurchaseCurrency,
@@ -80,16 +81,60 @@ function canReceivePurchaseOrder(purchaseOrder: any, contractSummary?: any) {
     return false;
   }
 
-  return Boolean(
-    contractSummary &&
-      contractSummary.expectedInvoiceCount > 0
-  );
+  return Boolean(contractSummary && contractSummary.expectedInvoiceCount > 0);
 }
 
-function canReadReceipts(user: {
-  role: string;
-  buildreqRole?: string | null;
+function assertContractReceiptIsAllowed(params: {
+  purchaseOrder: any;
+  contractSummary: any;
+  documentDate?: string;
 }) {
+  const { purchaseOrder, contractSummary, documentDate } = params;
+  if (!purchaseOrder.appliesContract) return;
+
+  if (
+    !purchaseOrder.contractPaymentFrequency ||
+    !purchaseOrder.contractFirstPaymentDate ||
+    !purchaseOrder.contractEndDate ||
+    contractSummary.expectedInvoiceCount <= 0
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "La OC de contrato no tiene una programación de pagos válida",
+    });
+  }
+
+  if (contractSummary.isFullyInvoiced) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "La OC de contrato ya alcanzó el total de facturas programadas",
+    });
+  }
+
+  if (contractSummary.isExpired && !documentDate) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "El contrato está vencido; ingrese la fecha del documento fiscal para validar su vigencia",
+    });
+  }
+
+  if (
+    documentDate &&
+    !isPurchaseOrderContractDocumentDateWithinTerm({
+      documentDate,
+      contractEndDate: purchaseOrder.contractEndDate,
+    })
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "La fecha del documento fiscal es posterior al vencimiento del contrato",
+    });
+  }
+}
+
+function canReadReceipts(user: { role: string; buildreqRole?: string | null }) {
   return canAccessReceipts(user) || user.buildreqRole === "contable";
 }
 
@@ -421,9 +466,14 @@ const receiptItemSchema = z
     subtotal: z
       .string()
       .trim()
-      .refine(value => value === "" || (Number.isFinite(Number(value)) && Number(value) >= 0), {
-        message: "El subtotal debe ser un número válido",
-      })
+      .refine(
+        value =>
+          value === "" ||
+          (Number.isFinite(Number(value)) && Number(value) >= 0),
+        {
+          message: "El subtotal debe ser un número válido",
+        }
+      )
       .optional(),
     taxCode: z.string().trim().min(1).optional(),
     additionalTaxCodes: z.array(z.string().trim().min(1)).optional(),
@@ -546,8 +596,8 @@ async function assertReceiptWarehouses(
     : !projectId
       ? await db.listWarehouses({ isActive: true })
       : await db.listProjectWarehouses(projectId, {
-        isActive: true,
-      });
+          isActive: true,
+        });
   const activeWarehouseIds = new Set(
     activeWarehouses.map(warehouse => warehouse.id)
   );
@@ -557,9 +607,10 @@ async function assertReceiptWarehouses(
     if (!item.warehouseId || !activeWarehouseIds.has(item.warehouseId)) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: options?.allowAnyActiveWarehouse || !projectId
-          ? `Seleccione un almacén activo para ${item.itemName}`
-          : `Seleccione un almacén activo del proyecto para ${item.itemName}`,
+        message:
+          options?.allowAnyActiveWarehouse || !projectId
+            ? `Seleccione un almacén activo para ${item.itemName}`
+            : `Seleccione un almacén activo del proyecto para ${item.itemName}`,
       });
     }
   }
@@ -662,7 +713,10 @@ export const receiptsRouter = router({
     )
     .query(async ({ ctx, input }) => {
       if (!canReadReceipts(ctx.user)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a recepciones" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a recepciones",
+        });
       }
       return listReceiptsPage(applyProjectScope(input, ctx.user));
     }),
@@ -773,10 +827,10 @@ export const receiptsRouter = router({
         documentRangeEnd: z.string().trim().max(100).optional(),
         documentDate: z.string().optional(),
         documentDueDate: z.string().optional(),
-          postingDate: z.string().optional(),
-          receiptDate: z.string().optional(),
-          emissionDeadline: z.string().optional(),
-          notes: z.string().optional(),
+        postingDate: z.string().optional(),
+        receiptDate: z.string().optional(),
+        emissionDeadline: z.string().optional(),
+        notes: z.string().optional(),
         items: z.array(receiptItemSchema).min(1),
         otherCharges: z.array(receiptOtherChargeSchema).optional(),
       })
@@ -797,24 +851,19 @@ export const receiptsRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
-      if (!canReceivePurchaseOrder(detail.purchaseOrder, detail.contractSummary)) {
+      if (
+        !canReceivePurchaseOrder(detail.purchaseOrder, detail.contractSummary)
+      ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "La orden no está disponible para recepción",
         });
       }
-      if (
-        detail.purchaseOrder.appliesContract &&
-        (detail.contractSummary?.isExpired ||
-          detail.contractSummary?.isFullyInvoiced)
-      ) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: detail.contractSummary?.isExpired
-            ? "El contrato está vencido y ya no permite agregar facturas"
-            : "La OC de contrato ya alcanzó el total de facturas programadas",
-        });
-      }
+      assertContractReceiptIsAllowed({
+        purchaseOrder: detail.purchaseOrder,
+        contractSummary: detail.contractSummary,
+        documentDate: input.documentDate,
+      });
       if (input.projectId !== detail.purchaseOrder.projectId) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -856,7 +905,9 @@ export const receiptsRouter = router({
         const sourceItem = item.sourceItemId
           ? itemsById.get(item.sourceItemId)
           : undefined;
-        if (isPurchaseOrderNonInventoryLine({ item, sourceItem, catalogItem })) {
+        if (
+          isPurchaseOrderNonInventoryLine({ item, sourceItem, catalogItem })
+        ) {
           nonInventoryReceiptLineIndexes.add(itemIndex);
         }
       }
@@ -916,8 +967,7 @@ export const receiptsRouter = router({
           const sourceItem = item.sourceItemId
             ? itemsById.get(item.sourceItemId)
             : undefined;
-          const isNonInventoryLine =
-            nonInventoryReceiptLineIndexes.has(index);
+          const isNonInventoryLine = nonInventoryReceiptLineIndexes.has(index);
           const targetFields = await resolveReceiptLineTarget({
             item,
             sourceItem,
@@ -1148,7 +1198,8 @@ export const receiptsRouter = router({
         if (input.projectId !== detail.purchaseOrder.projectId) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "El proyecto de la recepción no coincide con la orden de compra",
+            message:
+              "El proyecto de la recepción no coincide con la orden de compra",
           });
         }
 
@@ -1162,35 +1213,11 @@ export const receiptsRouter = router({
           });
         }
 
-        if (detail.purchaseOrder.appliesContract) {
-          const contractSummary = detail.contractSummary;
-          if (
-            !detail.purchaseOrder.contractPaymentFrequency ||
-            !detail.purchaseOrder.contractFirstPaymentDate ||
-            !detail.purchaseOrder.contractEndDate ||
-            contractSummary.expectedInvoiceCount <= 0
-          ) {
-            throw new TRPCError({
-              code: "BAD_REQUEST",
-              message:
-                "La OC de contrato no tiene una programación de pagos válida",
-            });
-          }
-          if (contractSummary.isExpired) {
-            throw new TRPCError({
-              code: "BAD_REQUEST",
-              message:
-                "El contrato está vencido y ya no permite agregar facturas",
-            });
-          }
-          if (contractSummary.isFullyInvoiced) {
-            throw new TRPCError({
-              code: "BAD_REQUEST",
-              message:
-                "La OC de contrato ya alcanzó el total de facturas programadas",
-            });
-          }
-        }
+        assertContractReceiptIsAllowed({
+          purchaseOrder: detail.purchaseOrder,
+          contractSummary: detail.contractSummary,
+          documentDate: input.documentDate,
+        });
 
         const itemsById = new Map(
           (detail.items ?? []).map((item: any) => [item.id, item])
@@ -1200,9 +1227,8 @@ export const receiptsRouter = router({
           (item: any) => getFixedAssetResolutionProgress(item).pending > 0
         );
         if (unresolvedFixedAsset) {
-          const progress = getFixedAssetResolutionProgress(
-            unresolvedFixedAsset
-          );
+          const progress =
+            getFixedAssetResolutionProgress(unresolvedFixedAsset);
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: `Contabilidad debe resolver ${progress.pending} activo(s) fijo(s) de ${unresolvedFixedAsset.itemName}`,
@@ -1354,7 +1380,7 @@ export const receiptsRouter = router({
         const destinationProjectId =
           detail.transferRequest?.destinationType === "proyecto"
             ? detail.transferRequest.destinationProjectId
-            : detail.transferRequest?.projectId ?? input.projectId;
+            : (detail.transferRequest?.projectId ?? input.projectId);
         allowAnyActiveReceiptWarehouse = false;
         assertProjectScopedAccess(ctx.user, input.projectId);
         if (
@@ -1363,8 +1389,7 @@ export const receiptsRouter = router({
         ) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message:
-              "El proyecto de la recepción no coincide con el traslado",
+            message: "El proyecto de la recepción no coincide con el traslado",
           });
         }
 
@@ -1415,14 +1440,13 @@ export const receiptsRouter = router({
             requestedQuantity > 0 &&
             sourceItem.sourceWarehouseId &&
             item.warehouseId === Number(sourceItem.sourceWarehouseId) &&
-            (!(sourceItem.sourceProjectId ??
-              detail.transferRequest?.projectId) ||
+            (!(
+              sourceItem.sourceProjectId ?? detail.transferRequest?.projectId
+            ) ||
               !destinationProjectId ||
               Number(
-                sourceItem.sourceProjectId ??
-                  detail.transferRequest?.projectId
-              ) ===
-                Number(destinationProjectId))
+                sourceItem.sourceProjectId ?? detail.transferRequest?.projectId
+              ) === Number(destinationProjectId))
           ) {
             throw new TRPCError({
               code: "BAD_REQUEST",
@@ -1688,42 +1712,44 @@ export const receiptsRouter = router({
               });
             }
 
-            return articlesToReceive.map((article: any, articleIndex: number) => {
-              const unitInput = {
-                ...item,
-                quantityExpected: "1.00",
-                quantityReceived: "1",
-              };
-              const unitFinancialData =
-                preparePurchaseOrderReceiptItemFinancialData({
-                  item: unitInput,
-                  sourceItem,
-                  taxes: activeSalesTaxes,
-                  pricesIncludeTax,
-                });
-              const articleCode = String(article.itemCode ?? "").trim();
-              const temporaryCode = String(
-                article.temporaryItemCode ?? ""
-              ).trim();
-              const articleDetail = getFixedAssetDetailFromArticle(article);
+            return articlesToReceive.map(
+              (article: any, articleIndex: number) => {
+                const unitInput = {
+                  ...item,
+                  quantityExpected: "1.00",
+                  quantityReceived: "1",
+                };
+                const unitFinancialData =
+                  preparePurchaseOrderReceiptItemFinancialData({
+                    item: unitInput,
+                    sourceItem,
+                    taxes: activeSalesTaxes,
+                    pricesIncludeTax,
+                  });
+                const articleCode = String(article.itemCode ?? "").trim();
+                const temporaryCode = String(
+                  article.temporaryItemCode ?? ""
+                ).trim();
+                const articleDetail = getFixedAssetDetailFromArticle(article);
 
-              return {
-                ...baseReceiptItem,
-                sapItemCode: articleCode || temporaryCode,
-                itemName: article.description || item.itemName,
-                quantityExpected: "1.00",
-                quantityReceived: "1",
-                ...unitFinancialData,
-                targetType: "activo_fijo" as const,
-                subProjectId: null,
-                fixedAssetSapItemCode: articleCode || temporaryCode,
-                fixedAssetName: article.description || item.itemName,
-                assetDetails: [articleDetail],
-                notes:
-                  baseReceiptItem.notes ??
-                  `Activo fijo unidad ${alreadyReceived + articleIndex + 1}`,
-              };
-            });
+                return {
+                  ...baseReceiptItem,
+                  sapItemCode: articleCode || temporaryCode,
+                  itemName: article.description || item.itemName,
+                  quantityExpected: "1.00",
+                  quantityReceived: "1",
+                  ...unitFinancialData,
+                  targetType: "activo_fijo" as const,
+                  subProjectId: null,
+                  fixedAssetSapItemCode: articleCode || temporaryCode,
+                  fixedAssetName: article.description || item.itemName,
+                  assetDetails: [articleDetail],
+                  notes:
+                    baseReceiptItem.notes ??
+                    `Activo fijo unidad ${alreadyReceived + articleIndex + 1}`,
+                };
+              }
+            );
           }
 
           return [baseReceiptItem];

@@ -106,6 +106,7 @@ import {
   getPurchaseCurrencyLabel,
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
+  isPurchaseOrderContractDocumentDateWithinTerm,
   normalizePurchaseOrderAdditionalTaxCodes,
   normalizePurchaseOrderTaxCode,
   summarizePurchaseOrderLines,
@@ -465,18 +466,20 @@ const RECEIVABLE_TRANSFER_STATUSES = new Set([
 function canReceivePurchaseOrderRow(row: any) {
   const purchaseOrder = row?.purchaseOrder;
   if (!purchaseOrder) return false;
-  if (RECEIVABLE_PURCHASE_ORDER_STATUSES.has(purchaseOrder.status)) {
-    return true;
+  if (!purchaseOrder.appliesContract) {
+    return RECEIVABLE_PURCHASE_ORDER_STATUSES.has(purchaseOrder.status);
   }
-
-  if (!purchaseOrder.appliesContract) return false;
-  if (purchaseOrder.status === "anulada") return false;
+  if (
+    !RECEIVABLE_PURCHASE_ORDER_STATUSES.has(purchaseOrder.status) &&
+    purchaseOrder.status !== "recibida"
+  ) {
+    return false;
+  }
 
   const contractSummary = row.contractSummary;
   return Boolean(
     contractSummary &&
       contractSummary.expectedInvoiceCount > 0 &&
-      !contractSummary.isExpired &&
       !contractSummary.isFullyInvoiced
   );
 }
@@ -494,7 +497,11 @@ function toLocalDateInputValue(date: Date) {
 
 function formatDateLabel(value: string | Date | null | undefined) {
   if (!value) return "—";
-  return new Date(value).toLocaleDateString("es-HN");
+  const date =
+    typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? new Date(value + "T12:00:00")
+      : new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("es-HN");
 }
 
 function formatDateTimeLabel(value: string | Date | null | undefined) {
@@ -1358,15 +1365,30 @@ export default function Recepciones() {
   const isContractPurchaseOrder =
     sourceType === "purchase_order" &&
     purchaseOrderDetail?.purchaseOrder.appliesContract === true;
+  const contractDocumentDateWithinTerm =
+    isContractPurchaseOrder && documentDate
+      ? isPurchaseOrderContractDocumentDateWithinTerm({
+          documentDate,
+          contractEndDate: purchaseOrderDetail?.purchaseOrder.contractEndDate,
+        })
+      : false;
   const contractReceiptBlockReason = isContractPurchaseOrder
-    ? purchaseOrderContractSummary.isExpired
-      ? "El contrato está vencido y ya no permite agregar facturas."
+    ? purchaseOrderContractSummary.expectedInvoiceCount <= 0
+      ? "La OC de contrato no tiene una programación de pagos válida."
       : purchaseOrderContractSummary.isFullyInvoiced
         ? "La OC de contrato ya alcanzó el total de facturas programadas."
-        : purchaseOrderContractSummary.expectedInvoiceCount <= 0
-          ? "La OC de contrato no tiene una programación de pagos válida."
-          : ""
+        : documentDate && !contractDocumentDateWithinTerm
+          ? "La fecha del documento fiscal es posterior al vencimiento del contrato."
+          : purchaseOrderContractSummary.isExpired && !documentDate
+            ? "El contrato ya venció. Ingrese la fecha del documento fiscal para validar si fue emitido dentro de la vigencia."
+            : ""
     : "";
+  const contractReceiptStatusMessage =
+    isContractPurchaseOrder &&
+    purchaseOrderContractSummary.isExpired &&
+    contractDocumentDateWithinTerm
+      ? "Documento fiscal dentro de vigencia: su fecha es igual o anterior al vencimiento del contrato."
+      : "OC con contrato: " + purchaseOrderContractSummary.statusLabel + ".";
 
   const {
     data: receiptPurchaseOrderDetail,
@@ -5444,7 +5466,7 @@ export default function Recepciones() {
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>
                       {contractReceiptBlockReason ||
-                        `OC con contrato: ${purchaseOrderContractSummary.statusLabel}.`}
+                        contractReceiptStatusMessage}
                     </span>
                   </div>
                 ) : null}
