@@ -295,7 +295,7 @@ describe("treasury accounting correction permissions", () => {
     );
   });
 
-  it("keeps payment correction exclusive to the system Administrator role", async () => {
+  it("allows Administración Central and the system Administrator to correct payments", async () => {
     mockDisabledApprovalSettings();
     vi.spyOn(treasury, "getTreasuryBatchById").mockResolvedValue({
       batch: { id: 80, projectId: 1 },
@@ -311,14 +311,20 @@ describe("treasury accounting correction permissions", () => {
       createTreasuryContext("administracion_central")
     );
 
-    await expect(
-      centralCaller.treasury.correctRejectedPayment({
-        id: 80,
+    await centralCaller.treasury.correctRejectedPayment({
+      id: 80,
+      bankReference: "REF-CORREGIDA",
+      comment: "Referencia bancaria actualizada.",
+    });
+    expect(correctSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: 80,
         bankReference: "REF-CORREGIDA",
-        comment: "Referencia bancaria actualizada.",
+        actor: expect.objectContaining({
+          buildreqRole: "administracion_central",
+        }),
       })
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(correctSpy).not.toHaveBeenCalled();
+    );
 
     const adminCaller = appRouter.createCaller(createSystemAdminContext());
     await adminCaller.treasury.correctRejectedPayment({
@@ -334,6 +340,27 @@ describe("treasury accounting correction permissions", () => {
         actor: expect.objectContaining({ role: "admin" }),
       })
     );
+  });
+
+  it("blocks payment correction for roles outside Administración Central", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "getTreasuryBatchById").mockResolvedValue({
+      batch: { id: 80, projectId: 1 },
+      projectIds: [1],
+    } as any);
+    const correctSpy = vi.spyOn(treasury, "correctTreasuryPayment");
+    const accountantCaller = appRouter.createCaller(
+      createTreasuryContext("contable")
+    );
+
+    await expect(
+      accountantCaller.treasury.correctRejectedPayment({
+        id: 80,
+        bankReference: "REF-CORREGIDA",
+        comment: "Intento de corrección sin permiso.",
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(correctSpy).not.toHaveBeenCalled();
   });
 });
 

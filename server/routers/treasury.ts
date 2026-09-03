@@ -1111,11 +1111,11 @@ export const treasuryRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (ctx.user.role !== "admin") {
+      if (!isCentral(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el rol Administrador puede corregir pagos rechazados por Contabilidad.",
+            "Solo Administrador o Administración Central pueden corregir pagos rechazados por Contabilidad.",
         });
       }
       try {

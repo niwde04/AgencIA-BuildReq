@@ -1920,7 +1920,6 @@ function BatchDetailDialog({
     );
   const canReopenRejectedBatch =
     status === "rechazado" && (isCentral || (approvalsEnabled && isApprover));
-  const isAdministrator = user?.role === "admin";
   const accountingRejectionEvent = (detail?.events ?? []).find(
     (event: any) => event.action === "rechazar_pago_contabilidad"
   );
@@ -1952,7 +1951,7 @@ function BatchDetailDialog({
     (detail?.items ?? []).some((item: any) => item.status === "pagada") &&
     !(detail?.items ?? []).some((item: any) => item.status === "contabilizada");
   const canCorrectRejectedPayment =
-    status === "rechazado_contabilidad" && isAdministrator;
+    status === "rechazado_contabilidad" && isCentral;
   const visibleDetailItems = useMemo(
     () =>
       (detail?.items ?? []).filter((item: any) =>
@@ -2354,10 +2353,11 @@ function BatchDetailDialog({
                   {accountingRejectionEvent?.comment && (
                     <div>{accountingRejectionEvent.comment}</div>
                   )}
-                  {!isAdministrator && (
+                  {!isCentral && (
                     <div>
-                      El rol Administrador debe realizar la corrección antes de
-                      continuar con la contabilización.
+                      El rol Administrador o Administración Central debe
+                      realizar la corrección antes de continuar con la
+                      contabilización.
                     </div>
                   )}
                 </AlertDescription>
