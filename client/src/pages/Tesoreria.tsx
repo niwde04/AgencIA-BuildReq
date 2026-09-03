@@ -2057,8 +2057,11 @@ function BatchDetailDialog({
 
   function submitAccountingCorrection() {
     if (!detail) return;
-    if (correctionRequiresReference && !correctedBankReference.trim()) {
-      toast.error("Ingrese la referencia bancaria corregida.");
+    const normalizedBankReference = correctedBankReference.trim();
+    const bankReferenceChanged =
+      normalizedBankReference !== String(currentBankReference).trim();
+    if (!normalizedBankReference) {
+      toast.error("Ingrese la referencia bancaria actual.");
       return;
     }
     if (correctionRequiresAttachment && !correctionAttachment) {
@@ -2071,9 +2074,10 @@ function BatchDetailDialog({
     }
     correctRejectedPaymentMutation.mutate({
       id: detail.batch.id,
-      bankReference: correctionRequiresReference
-        ? correctedBankReference.trim()
-        : undefined,
+      bankReference:
+        correctionRequiresReference || bankReferenceChanged
+          ? normalizedBankReference
+          : undefined,
       attachment:
         correctionRequiresAttachment && correctionAttachment
           ? {
@@ -3362,27 +3366,32 @@ function BatchDetailDialog({
                 </AlertDescription>
               )}
             </Alert>
-            {correctionRequiresReference && (
-              <div className="space-y-2">
-                <Label htmlFor="corrected-bank-reference">
-                  Referencia bancaria corregida
-                </Label>
-                <Input
-                  id="corrected-bank-reference"
-                  maxLength={255}
-                  value={correctedBankReference}
-                  onChange={event =>
-                    setCorrectedBankReference(event.target.value)
-                  }
-                  disabled={correctRejectedPaymentMutation.isPending}
-                />
-                {currentBankReference && (
-                  <p className="text-xs text-muted-foreground">
-                    Referencia rechazada: {currentBankReference}
-                  </p>
-                )}
-              </div>
-            )}
+            <div className="space-y-2">
+              <Label htmlFor="corrected-bank-reference">
+                {correctionRequiresReference
+                  ? "Referencia bancaria corregida"
+                  : "Referencia bancaria actual"}
+              </Label>
+              <Input
+                id="corrected-bank-reference"
+                maxLength={255}
+                value={correctedBankReference}
+                onChange={event =>
+                  setCorrectedBankReference(event.target.value)
+                }
+                disabled={correctRejectedPaymentMutation.isPending}
+              />
+              {correctionRequiresReference && currentBankReference ? (
+                <p className="text-xs text-muted-foreground">
+                  Referencia rechazada: {currentBankReference}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Verifique que coincida con el documento soporte corregido y
+                  actualícela si la referencia cambió.
+                </p>
+              )}
+            </div>
             {correctionRequiresAttachment && (
               <div className="space-y-2">
                 <Label htmlFor="corrected-payment-attachment">
@@ -3465,8 +3474,7 @@ function BatchDetailDialog({
                 correctRejectedPaymentMutation.isPending ||
                 preparingCorrectionAttachment ||
                 correctionComment.trim().length < 5 ||
-                (correctionRequiresReference &&
-                  !correctedBankReference.trim()) ||
+                !correctedBankReference.trim() ||
                 (correctionRequiresAttachment && !correctionAttachment)
               }
               onClick={submitAccountingCorrection}

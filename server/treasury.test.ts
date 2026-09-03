@@ -210,6 +210,20 @@ describe("treasury accounting payment corrections", () => {
       requirements: { reference: true, attachment: true },
     });
   });
+
+  it("accepts an updated reference while replacing an incorrect support", () => {
+    expect(
+      validateTreasuryAccountingCorrection({
+        reason: "soporte_incorrecto",
+        currentBankReferences: ["REF-ANTERIOR"],
+        bankReference: " REF-ACTUAL ",
+        hasAttachment: true,
+      })
+    ).toMatchObject({
+      bankReference: "REF-ACTUAL",
+      requirements: { reference: false, attachment: true },
+    });
+  });
 });
 
 describe("return treasury batch to draft", () => {
