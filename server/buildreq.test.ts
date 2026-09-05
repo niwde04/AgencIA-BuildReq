@@ -5446,7 +5446,7 @@ describe("BuildReq - Role-based Access Control", () => {
     updateRequestItemSpy.mockRestore();
   });
 
-  it("Rejects warehouse dispatch assignment when selected warehouse lacks stock", async () => {
+  it("Rejects warehouse dispatch assignment when selected warehouse has no stock", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
     const getRequestItemByIdSpy = vi
@@ -5484,11 +5484,11 @@ describe("BuildReq - Role-based Access Control", () => {
       .mockResolvedValue([
         {
           itemId: 41,
-          quantity: "1.00",
+          quantity: "0.00",
           warehouses: [
             {
               warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
-              quantity: "1.00",
+              quantity: "0.00",
             },
           ],
         },
@@ -5501,7 +5501,7 @@ describe("BuildReq - Role-based Access Control", () => {
         flowType: "despacho_bodega",
         warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
       })
-    ).rejects.toThrow("Stock insuficiente en la bodega seleccionada");
+    ).rejects.toThrow("La bodega seleccionada no tiene existencia disponible");
     expect(updateRequestItemSpy).not.toHaveBeenCalled();
 
     getRequestItemByIdSpy.mockRestore();
@@ -5512,7 +5512,7 @@ describe("BuildReq - Role-based Access Control", () => {
     updateRequestItemSpy.mockRestore();
   });
 
-  it("Saves warehouseId when assigning warehouse dispatch from visible physical stock", async () => {
+  it("Allows warehouse dispatch assignment from partial physical stock", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
     const getRequestItemByIdSpy = vi
@@ -5550,14 +5550,14 @@ describe("BuildReq - Role-based Access Control", () => {
       .mockResolvedValue([
         {
           itemId: 41,
-          quantity: "10.00",
+          quantity: "3.00",
           warehouses: [
             {
               warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
               projectId: 22,
               projectCode: "ORIG",
               projectName: "Origen con stock",
-              quantity: "10.00",
+              quantity: "3.00",
             },
           ],
         },

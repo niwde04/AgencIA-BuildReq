@@ -1310,13 +1310,8 @@ export default function SolicitudDetalle() {
       }
       const pendingQuantity = getWarehouseDispatchPendingQuantity(item);
       const availableQuantity = getItemWarehouseStock(item, warehouseId);
-      if (
-        pendingQuantity > 0 &&
-        pendingQuantity - availableQuantity > 0.000001
-      ) {
-        return `Stock insuficiente en bodega (${formatQuantityValue(
-          availableQuantity
-        )} disponible)`;
+      if (pendingQuantity > 0 && availableQuantity <= 0.000001) {
+        return "La bodega seleccionada no tiene existencia disponible";
       }
     }
     if (
@@ -1460,9 +1455,10 @@ export default function SolicitudDetalle() {
                       item,
                       warehouseId
                     );
-                    const hasEnoughStock =
-                      pendingQuantity <= 0 ||
-                      stockQuantity - pendingQuantity >= -0.000001;
+                    const hasAvailableStock = stockQuantity > 0.000001;
+                    const hasPartialStock =
+                      hasAvailableStock &&
+                      pendingQuantity - stockQuantity > 0.000001;
                     const isSelected = selectedWarehouseId === warehouseId;
                     const label = getWarehouseOptionLabel(warehouse);
 
@@ -1478,9 +1474,9 @@ export default function SolicitudDetalle() {
                           warehouse.name,
                           warehouse.displayName,
                         ].filter(Boolean)}
-                        disabled={!hasEnoughStock}
+                        disabled={!hasAvailableStock}
                         onSelect={() => {
-                          if (!hasEnoughStock) return;
+                          if (!hasAvailableStock) return;
                           setSelectedWarehouseByItemId(current => ({
                             ...current,
                             [item.id]: String(warehouse.id),
@@ -1500,15 +1496,19 @@ export default function SolicitudDetalle() {
                           </p>
                           <p
                             className={`text-[10px] ${
-                              hasEnoughStock
-                                ? "text-muted-foreground"
-                                : "text-destructive"
+                              !hasAvailableStock
+                                ? "text-destructive"
+                                : hasPartialStock
+                                  ? "text-amber-700"
+                                  : "text-muted-foreground"
                             }`}
                           >
                             Existencia: {formatQuantityValue(stockQuantity)}
-                            {!hasEnoughStock
-                              ? ` | Pendiente: ${formatQuantityValue(pendingQuantity)}`
-                              : ""}
+                            {hasPartialStock
+                              ? ` | Despacho parcial; pendiente: ${formatQuantityValue(pendingQuantity)}`
+                              : !hasAvailableStock
+                                ? " | Sin existencia"
+                                : ""}
                           </p>
                         </div>
                       </CommandItem>

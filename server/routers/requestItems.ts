@@ -142,10 +142,6 @@ function parseQuantityValue(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function formatQuantityValue(value: unknown) {
-  return parseQuantityValue(value).toFixed(2);
-}
-
 function getWarehouseDispatchPendingQuantity(item: {
   quantity?: string | number | null;
   dispatchedQuantity?: string | number | null;
@@ -202,12 +198,10 @@ async function validateDispatchWarehouseForItem(params: {
       (total: number, entry: any) => total + parseQuantityValue(entry.quantity),
       0
     );
-  if (pendingQuantity > 0 && pendingQuantity - availableQuantity > 0.000001) {
+  if (pendingQuantity > 0 && availableQuantity <= 0.000001) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: `Stock insuficiente en la bodega seleccionada. Disponible: ${formatQuantityValue(
-        availableQuantity
-      )}, pendiente: ${formatQuantityValue(pendingQuantity)}`,
+      message: "La bodega seleccionada no tiene existencia disponible",
     });
   }
 
