@@ -27,7 +27,10 @@ import {
   isInvoiceNumberWithinFiscalRange,
   normalizeFiscalRtn,
 } from "../shared/invoices";
-import { CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL } from "../shared/confirmed-transfer-cancellation";
+import {
+  CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL,
+  CONFIRMED_TRANSFER_CANCELLATION_CENTRAL_ADMIN_EMAIL,
+} from "../shared/confirmed-transfer-cancellation";
 import { ConfirmedTransferCancellationError } from "./confirmedTransferCancellation";
 import { getDefaultTransferPreparedByName } from "../client/src/lib/transfer-print";
 import {
@@ -5214,6 +5217,7 @@ describe("BuildReq - Role-based Access Control", () => {
       actor: {
         id: ctx.user.id,
         role: "admin",
+        buildreqRole: ctx.user.buildreqRole,
         email: CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL,
       },
       reason: "Mismo proyecto y almacén de origen y destino",
@@ -5222,7 +5226,44 @@ describe("BuildReq - Role-based Access Control", () => {
     cancelConfirmedTransferSpy.mockRestore();
   });
 
-  it("blocks other admins and non-admin users from cancelling confirmed transfers", async () => {
+  it("allows only the designated central admin account to cancel a confirmed transfer", async () => {
+    const cancelConfirmedTransferSpy = vi
+      .spyOn(db, "cancelConfirmedTransfer")
+      .mockResolvedValue({
+        success: true,
+        transferId: 18,
+        transferRequestId: 22,
+        releasedItemCount: 1,
+      });
+    const { ctx } = createUserContext({
+      role: "user",
+      buildreqRole: "administracion_central",
+      email: CONFIRMED_TRANSFER_CANCELLATION_CENTRAL_ADMIN_EMAIL,
+    });
+
+    await expect(
+      appRouter.createCaller(ctx).transfers.cancelConfirmed({
+        id: 18,
+        reason: "Traslado inválido sin movimiento físico",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({ success: true, releasedItemCount: 1 })
+    );
+    expect(cancelConfirmedTransferSpy).toHaveBeenCalledWith({
+      id: 18,
+      actor: {
+        id: ctx.user.id,
+        role: "user",
+        buildreqRole: "administracion_central",
+        email: CONFIRMED_TRANSFER_CANCELLATION_CENTRAL_ADMIN_EMAIL,
+      },
+      reason: "Traslado inválido sin movimiento físico",
+    });
+
+    cancelConfirmedTransferSpy.mockRestore();
+  });
+
+  it("blocks other accounts and role mismatches from cancelling confirmed transfers", async () => {
     const cancelConfirmedTransferSpy = vi.spyOn(db, "cancelConfirmedTransfer");
     const otherAdmin = createUserContext({
       role: "admin",
@@ -5231,6 +5272,21 @@ describe("BuildReq - Role-based Access Control", () => {
     const designatedNonAdmin = createUserContext({
       role: "user",
       email: CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL,
+    });
+    const otherCentralAdmin = createUserContext({
+      role: "user",
+      buildreqRole: "administracion_central",
+      email: "asistente01@hehhonduras.com",
+    });
+    const cesarWithoutCentralAdminRole = createUserContext({
+      role: "user",
+      buildreqRole: "jefe_bodega_central",
+      email: CONFIRMED_TRANSFER_CANCELLATION_CENTRAL_ADMIN_EMAIL,
+    });
+    const legacyCesarAccount = createUserContext({
+      role: "user",
+      buildreqRole: "administracion_central",
+      email: "cramon@heh.com.ec",
     });
 
     await expect(
@@ -5241,6 +5297,26 @@ describe("BuildReq - Role-based Access Control", () => {
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(
       appRouter.createCaller(designatedNonAdmin.ctx).transfers.cancelConfirmed({
+        id: 18,
+        reason: "Traslado inválido",
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      appRouter.createCaller(otherCentralAdmin.ctx).transfers.cancelConfirmed({
+        id: 18,
+        reason: "Traslado inválido",
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      appRouter
+        .createCaller(cesarWithoutCentralAdminRole.ctx)
+        .transfers.cancelConfirmed({
+          id: 18,
+          reason: "Traslado inválido",
+        })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      appRouter.createCaller(legacyCesarAccount.ctx).transfers.cancelConfirmed({
         id: 18,
         reason: "Traslado inválido",
       })

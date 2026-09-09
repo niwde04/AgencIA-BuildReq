@@ -191,6 +191,7 @@ export const transfersRouter = router({
           actor: {
             id: ctx.user.id,
             role: ctx.user.role,
+            buildreqRole: ctx.user.buildreqRole,
             email: ctx.user.email,
           },
           reason: input.reason,

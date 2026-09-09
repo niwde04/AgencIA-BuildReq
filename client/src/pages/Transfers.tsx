@@ -40,10 +40,7 @@ import { toast } from "sonner";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 import { getDefaultTransferPreparedByName } from "@/lib/transfer-print";
-import {
-  canCancelConfirmedTransfer,
-  CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL,
-} from "@shared/confirmed-transfer-cancellation";
+import { canCancelConfirmedTransfer } from "@shared/confirmed-transfer-cancellation";
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
@@ -1039,8 +1036,7 @@ export default function Transfers() {
                 disabled={cancelConfirmedMutation.isPending}
               />
               <p className="text-xs text-muted-foreground">
-                Mínimo 5 caracteres. La acción quedará registrada para{" "}
-                {CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL}.
+                Mínimo 5 caracteres. La acción quedará registrada con tu cuenta.
               </p>
             </div>
             <AlertDialogFooter className="gap-3 sm:justify-end">

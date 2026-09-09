@@ -11529,6 +11529,7 @@ export async function cancelConfirmedTransfer(params: {
   actor: {
     id: number;
     role: string;
+    buildreqRole?: string | null;
     email?: string | null;
   };
   reason: string;
