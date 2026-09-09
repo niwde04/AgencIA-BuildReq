@@ -621,6 +621,10 @@ export default function SalidasBodega() {
   const emittingAfterDraftSaveRef = useRef(false);
 
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
+  const debouncedDeliveryRequestSearch = useDebouncedValue(
+    deliveryRequestSearch,
+    250
+  );
   const debouncedDeliveryPreviewRequestId = useDebouncedValue(
     deliveryPreviewRequestId,
     180
@@ -645,9 +649,23 @@ export default function SalidasBodega() {
   const canCreateReturns =
     user?.role === "admin" ||
     (user as any)?.buildreqRole === "jefe_bodega_central";
-  const { data: materialRequests } = trpc.materialRequests.list.useQuery({
-    requestType: "bienes",
-  });
+  const {
+    data: deliveryRequestOptions,
+    isLoading: deliveryRequestOptionsLoading,
+    isFetching: deliveryRequestOptionsFetching,
+    error: deliveryRequestOptionsError,
+    refetch: refetchDeliveryRequestOptions,
+  } = trpc.warehouseExits.requestOptions.useQuery(
+    {
+      search: debouncedDeliveryRequestSearch.trim() || undefined,
+      limit: 80,
+    },
+    {
+      enabled: deliveryDialogOpen,
+      placeholderData: previousData => previousData,
+      staleTime: 30_000,
+    }
+  );
   const { data: deliveryDestinationProjects } = trpc.projects.list.useQuery(
     { status: "activo" },
     { enabled: deliveryDialogOpen }
@@ -1091,35 +1109,61 @@ export default function SalidasBodega() {
     setDeliveryTargetByItemId(nextTargets);
   }, [deliveryRequestDetail?.request.id]);
 
-  const eligibleMaterialRequests = useMemo(
-    () =>
-      (materialRequests ?? []).filter((row: any) => {
-        return (
-          row.request.requestType === "bienes" &&
-          ["flujo_completado", "parcialmente_atendida"].includes(
-            row.request.status
-          )
-        );
-      }),
-    [materialRequests]
-  );
-  const selectedDeliveryRequest = useMemo(
-    () =>
-      eligibleMaterialRequests.find(
-        (row: any) => row.request.id === Number(deliveryRequestId || 0)
-      ) ?? null,
-    [deliveryRequestId, eligibleMaterialRequests]
-  );
+  const eligibleMaterialRequests = deliveryRequestOptions?.items ?? [];
+  const selectedDeliveryRequest = useMemo(() => {
+    const selectedRequestId = Number(deliveryRequestId || 0);
+    const visibleOption = eligibleMaterialRequests.find(
+      (row: any) => row.request.id === Number(deliveryRequestId || 0)
+    );
+    if (visibleOption) return visibleOption;
+    if (
+      selectedRequestId > 0 &&
+      deliveryRequestDetail?.request.id === selectedRequestId
+    ) {
+      return {
+        request: deliveryRequestDetail.request,
+        project: deliveryRequestDetail.project,
+        requestedBy: deliveryRequestDetail.requestedBy,
+      };
+    }
+    return null;
+  }, [deliveryRequestDetail, deliveryRequestId, eligibleMaterialRequests]);
   const previewDeliveryRequest = useMemo(() => {
     const previewId =
       deliveryPreviewRequestId ?? Number(deliveryRequestId || 0);
     if (!previewId) return null;
-    return (
-      eligibleMaterialRequests.find(
-        (row: any) => row.request.id === previewId
-      ) ?? null
+    const visibleOption = eligibleMaterialRequests.find(
+      (row: any) => row.request.id === previewId
     );
-  }, [deliveryPreviewRequestId, deliveryRequestId, eligibleMaterialRequests]);
+    if (visibleOption) return visibleOption;
+    if (deliveryRequestDetail?.request.id === previewId) {
+      return {
+        request: deliveryRequestDetail.request,
+        project: deliveryRequestDetail.project,
+        requestedBy: deliveryRequestDetail.requestedBy,
+      };
+    }
+    return null;
+  }, [
+    deliveryPreviewRequestId,
+    deliveryRequestDetail,
+    deliveryRequestId,
+    eligibleMaterialRequests,
+  ]);
+
+  useEffect(() => {
+    if (
+      deliveryRequestPopoverOpen &&
+      !deliveryPreviewRequestId &&
+      eligibleMaterialRequests[0]?.request.id
+    ) {
+      setDeliveryPreviewRequestId(eligibleMaterialRequests[0].request.id);
+    }
+  }, [
+    deliveryPreviewRequestId,
+    deliveryRequestPopoverOpen,
+    eligibleMaterialRequests,
+  ]);
   const previewDeliveryItems = useMemo(() => {
     const previewId = previewDeliveryRequest?.request.id;
     if (!previewId) return [];
@@ -3445,6 +3489,7 @@ export default function SalidasBodega() {
                     align="start"
                   >
                     <Command
+                      shouldFilter={false}
                       value={
                         deliveryPreviewRequestId
                           ? String(deliveryPreviewRequestId)
@@ -3463,61 +3508,96 @@ export default function SalidasBodega() {
                         onValueChange={setDeliveryRequestSearch}
                       />
                       <CommandList className="max-h-[min(50vh,22rem)]">
-                        <CommandEmpty>
-                          No se encontraron requisiciones.
-                        </CommandEmpty>
-                        <CommandGroup
-                          heading={`${eligibleMaterialRequests.length} requisiciones disponibles`}
-                        >
-                          {eligibleMaterialRequests.map((row: any) => {
-                            const requestId = Number(row.request.id);
-                            const selected =
-                              requestId === Number(deliveryRequestId || 0);
+                        {deliveryRequestOptionsLoading ? (
+                          <div className="p-4 text-center text-sm text-muted-foreground">
+                            Cargando requisiciones...
+                          </div>
+                        ) : deliveryRequestOptionsError ? (
+                          <div className="space-y-3 p-4 text-center">
+                            <p className="text-sm text-destructive">
+                              No se pudieron cargar las requisiciones.
+                            </p>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                void refetchDeliveryRequestOptions()
+                              }
+                            >
+                              Reintentar
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <CommandEmpty>
+                              No se encontraron requisiciones.
+                            </CommandEmpty>
+                            <CommandGroup
+                              heading={
+                                deliveryRequestOptionsFetching
+                                  ? "Buscando requisiciones..."
+                                  : `${eligibleMaterialRequests.length} requisiciones disponibles`
+                              }
+                            >
+                              {eligibleMaterialRequests.map((row: any) => {
+                                const requestId = Number(row.request.id);
+                                const selected =
+                                  requestId === Number(deliveryRequestId || 0);
 
-                            return (
-                              <CommandItem
-                                key={requestId}
-                                value={String(requestId)}
-                                keywords={[
-                                  row.request.requestNumber ?? "",
-                                  row.project?.code ?? "",
-                                  row.project?.name ?? "",
-                                  row.requestedBy?.name ?? "",
-                                ]}
-                                onMouseEnter={() =>
-                                  setDeliveryPreviewRequestId(requestId)
-                                }
-                                onSelect={() => {
-                                  setDeliveryRequestId(String(requestId));
-                                  setDeliveryPreviewRequestId(requestId);
-                                  setDeliveryRequestPopoverOpen(false);
-                                  setDeliveryRequestSearch("");
-                                }}
-                                className="py-2.5"
-                              >
-                                <Check
-                                  className={`mt-0.5 h-4 w-4 ${
-                                    selected ? "opacity-100" : "opacity-0"
-                                  }`}
-                                />
-                                <div className="min-w-0 flex-1">
-                                  <p className="truncate font-medium">
-                                    {row.request.requestNumber}
-                                  </p>
-                                  <p className="truncate text-xs text-muted-foreground">
-                                    {[row.project?.code, row.project?.name]
-                                      .filter(Boolean)
-                                      .join(" - ") ||
-                                      "Proyecto sin identificar"}
-                                    {row.requestedBy?.name
-                                      ? ` · ${row.requestedBy.name}`
-                                      : ""}
-                                  </p>
-                                </div>
-                              </CommandItem>
-                            );
-                          })}
-                        </CommandGroup>
+                                return (
+                                  <CommandItem
+                                    key={requestId}
+                                    value={String(requestId)}
+                                    keywords={[
+                                      row.request.requestNumber ?? "",
+                                      row.project?.code ?? "",
+                                      row.project?.name ?? "",
+                                      row.requestedBy?.name ?? "",
+                                    ]}
+                                    onMouseEnter={() =>
+                                      setDeliveryPreviewRequestId(requestId)
+                                    }
+                                    onSelect={() => {
+                                      setDeliveryRequestId(String(requestId));
+                                      setDeliveryPreviewRequestId(requestId);
+                                      setDeliveryRequestPopoverOpen(false);
+                                      setDeliveryRequestSearch("");
+                                    }}
+                                    className="py-2.5"
+                                  >
+                                    <Check
+                                      className={`mt-0.5 h-4 w-4 ${
+                                        selected ? "opacity-100" : "opacity-0"
+                                      }`}
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <p className="truncate font-medium">
+                                        {row.request.requestNumber}
+                                      </p>
+                                      <p className="truncate text-xs text-muted-foreground">
+                                        {[row.project?.code, row.project?.name]
+                                          .filter(Boolean)
+                                          .join(" - ") ||
+                                          "Proyecto sin identificar"}
+                                        {row.requestedBy?.name
+                                          ? ` · ${row.requestedBy.name}`
+                                          : ""}
+                                      </p>
+                                    </div>
+                                  </CommandItem>
+                                );
+                              })}
+                            </CommandGroup>
+                            {deliveryRequestOptions?.hasMore ? (
+                              <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+                                Hay más resultados. Escriba el número, proyecto,
+                                solicitante, artículo o código SAP para
+                                encontrarlos.
+                              </p>
+                            ) : null}
+                          </>
+                        )}
                       </CommandList>
                     </Command>
                   </PopoverContent>
@@ -3528,12 +3608,12 @@ export default function SalidasBodega() {
                 </p>
               </div>
               <div
-                className="min-h-40 rounded-xl border bg-muted/20 p-4 text-sm"
+                className="h-52 overflow-hidden rounded-xl border bg-muted/20 p-4 text-sm sm:h-56"
                 aria-live="polite"
               >
                 {previewDeliveryRequest ? (
-                  <div className="space-y-3">
-                    <div>
+                  <div className="flex h-full min-h-0 flex-col gap-3">
+                    <div className="shrink-0">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="font-semibold">
                           {previewDeliveryRequest.request.requestNumber}
@@ -3560,11 +3640,13 @@ export default function SalidasBodega() {
                     </div>
 
                     {isDeliveryRequestPreviewLoading ? (
-                      <p className="rounded-lg border border-dashed bg-background/70 p-3 text-xs text-muted-foreground">
-                        Cargando artículos...
-                      </p>
+                      <div className="flex min-h-0 flex-1 items-center rounded-lg border border-dashed bg-background/70 p-3">
+                        <p className="text-xs text-muted-foreground">
+                          Cargando artículos...
+                        </p>
+                      </div>
                     ) : previewDeliveryItems.length > 0 ? (
-                      <div className="space-y-1.5">
+                      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
                         {previewDeliveryItems.slice(0, 5).map((item: any) => (
                           <div
                             key={item.id}
@@ -3592,13 +3674,15 @@ export default function SalidasBodega() {
                         ) : null}
                       </div>
                     ) : (
-                      <p className="text-xs text-muted-foreground">
-                        No hay artículos para mostrar.
-                      </p>
+                      <div className="flex min-h-0 flex-1 items-center">
+                        <p className="text-xs text-muted-foreground">
+                          No hay artículos para mostrar.
+                        </p>
+                      </div>
                     )}
                   </div>
                 ) : (
-                  <div className="flex min-h-32 flex-col justify-center">
+                  <div className="flex h-full flex-col justify-center">
                     <p className="font-semibold">Vista previa de requisición</p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       Abra el buscador y señale una requisición para revisar sus

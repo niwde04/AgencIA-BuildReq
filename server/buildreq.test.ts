@@ -4164,6 +4164,9 @@ describe("BuildReq - Role-based Access Control", () => {
     await expect(
       caller.warehouseExits.listPage({ page: 1, pageSize: 50 })
     ).rejects.toThrow("No tiene acceso a salidas de bodega");
+    await expect(caller.warehouseExits.requestOptions()).rejects.toThrow(
+      "No tiene acceso a salidas de bodega"
+    );
   });
 
   it("Bodega users can query inventory with pagination and sorting", async () => {
@@ -5122,6 +5125,29 @@ describe("BuildReq - Role-based Access Control", () => {
     });
 
     listWarehouseExitsSpy.mockRestore();
+  });
+
+  it("Bodeguero de Proyecto gets bounded request options for their assigned project", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const listOptionsSpy = vi
+      .spyOn(db, "listWarehouseExitRequestOptions")
+      .mockResolvedValue({ items: [], hasMore: false } as any);
+
+    await expect(
+      caller.warehouseExits.requestOptions({
+        search: "cemento",
+        limit: 80,
+      })
+    ).resolves.toEqual({ items: [], hasMore: false });
+
+    expect(listOptionsSpy).toHaveBeenCalledWith({
+      search: "cemento",
+      limit: 80,
+      projectIds: [1],
+    });
+
+    listOptionsSpy.mockRestore();
   });
 
   it("Bodeguero de Proyecto can consult receivable transfers for their destination project", async () => {

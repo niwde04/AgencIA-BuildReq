@@ -2719,6 +2719,92 @@ export async function listMaterialRequests(filters?: {
   }));
 }
 
+export async function listWarehouseExitRequestOptions(filters?: {
+  projectId?: number;
+  projectIds?: number[];
+  search?: string;
+  limit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return { items: [], hasMore: false };
+
+  const conditions = [
+    eq(materialRequests.requestType, "bienes"),
+    inArray(materialRequests.status, [
+      "flujo_completado",
+      "parcialmente_atendida",
+    ]),
+  ];
+  if (filters?.projectId) {
+    conditions.push(eq(materialRequests.projectId, filters.projectId));
+  }
+  if (filters?.projectIds) {
+    applyProjectScope(
+      conditions,
+      materialRequests.projectId,
+      filters.projectIds
+    );
+  }
+
+  const search = filters?.search?.trim();
+  if (search) {
+    const pattern = `%${search}%`;
+    const matchingItemRequestIds = db
+      .select({ requestId: requestItems.requestId })
+      .from(requestItems)
+      .where(
+        or(
+          ilike(requestItems.itemName, pattern),
+          ilike(requestItems.sapItemCode, pattern),
+          ilike(requestItems.sapItemDescription, pattern),
+          ilike(requestItems.fixedAssetSapItemCode, pattern)
+        )
+      );
+
+    conditions.push(
+      or(
+        ilike(materialRequests.requestNumber, pattern),
+        ilike(projects.code, pattern),
+        ilike(projects.name, pattern),
+        ilike(users.name, pattern),
+        inArray(materialRequests.id, matchingItemRequestIds)
+      )!
+    );
+  }
+
+  const limit = Math.min(Math.max(filters?.limit ?? 80, 10), 100);
+  const rows = await db
+    .select({
+      request: {
+        id: materialRequests.id,
+        requestNumber: materialRequests.requestNumber,
+        projectId: materialRequests.projectId,
+        status: materialRequests.status,
+        createdAt: materialRequests.createdAt,
+      },
+      project: {
+        id: projects.id,
+        code: projects.code,
+        name: projects.name,
+      },
+      requestedBy: {
+        id: users.id,
+        name: users.name,
+      },
+    })
+    .from(materialRequests)
+    .leftJoin(projects, eq(materialRequests.projectId, projects.id))
+    .leftJoin(users, eq(materialRequests.requestedById, users.id))
+    .where(and(...conditions))
+    .orderBy(desc(materialRequests.createdAt), desc(materialRequests.id))
+    .limit(limit + 1);
+
+  return {
+    items: rows.slice(0, limit),
+    hasMore: rows.length > limit,
+  };
+}
+
 async function getCommittedQuantityForItem(
   requestId: number,
   item: { sapItemCode?: string | null; itemName: string }

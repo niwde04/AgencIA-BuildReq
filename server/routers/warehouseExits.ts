@@ -101,6 +101,29 @@ export const warehouseExitsRouter = router({
       return listWarehouseExitsPage(applyProjectScope(input, ctx.user));
     }),
 
+  requestOptions: protectedProcedure
+    .input(
+      z
+        .object({
+          projectId: z.number().int().positive().optional(),
+          search: z.string().trim().max(100).optional(),
+          limit: z.number().int().min(10).max(100).optional(),
+        })
+        .optional()
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canManageWarehouseExits(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a salidas de bodega",
+        });
+      }
+
+      return db.listWarehouseExitRequestOptions(
+        applyProjectScope(input ?? {}, ctx.user)
+      );
+    }),
+
   getById: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .query(async ({ ctx, input }) => {
