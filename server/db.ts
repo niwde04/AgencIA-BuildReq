@@ -21,6 +21,10 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { alias } from "drizzle-orm/pg-core";
 import { Pool } from "pg";
 import {
+  assertValidTransferConversionDestination,
+  TransferConversionValidationError,
+} from "./transferConversionValidation";
+import {
   InsertUser,
   User,
   users,
@@ -11059,7 +11063,6 @@ export async function getTransferRequestById(id: number) {
     destinationWarehouse:
       reverseLogisticDestinationWarehouse ??
       selectedDestinationWarehouse ??
-      destinationProject?.warehouse ??
       null,
     items: enrichedItems,
   };
@@ -11176,6 +11179,35 @@ export async function createTransferFromRequest(
   const detail = await getTransferRequestById(transferRequestId);
   if (!detail) throw new Error("Solicitud de traslado no encontrada");
 
+  assertValidTransferConversionDestination({
+    destinationType: detail.transferRequest.destinationType,
+    destinationProjectId: detail.transferRequest.destinationProjectId,
+    destinationWarehouseId: detail.transferRequest.destinationWarehouseId,
+    fallbackSourceProjectId: detail.transferRequest.projectId,
+    items: [],
+  });
+
+  if (
+    detail.transferRequest.destinationType === "proyecto" &&
+    detail.transferRequest.destinationProjectId &&
+    detail.transferRequest.destinationWarehouseId
+  ) {
+    const destinationWarehouses = await listProjectWarehouses(
+      detail.transferRequest.destinationProjectId,
+      { isActive: true }
+    );
+    const destinationWarehouseIsAssigned = destinationWarehouses.some(
+      warehouse =>
+        Number(warehouse.id) ===
+        Number(detail.transferRequest.destinationWarehouseId)
+    );
+    if (!destinationWarehouseIsAssigned) {
+      throw new TransferConversionValidationError(
+        "El almacén destino seleccionado ya no está activo o asignado al proyecto destino"
+      );
+    }
+  }
+
   const quantityByItemId = new Map<number, number>();
   const sourceByItemId = new Map<
     number,
@@ -11232,6 +11264,20 @@ export async function createTransferFromRequest(
       if (transferQuantity > 0 && !sourceWarehouseId) {
         throw new Error(`Seleccione almacén origen para ${item.itemName}`);
       }
+      assertValidTransferConversionDestination({
+        destinationType: detail.transferRequest.destinationType,
+        destinationProjectId: detail.transferRequest.destinationProjectId,
+        destinationWarehouseId: detail.transferRequest.destinationWarehouseId,
+        fallbackSourceProjectId: detail.transferRequest.projectId,
+        items: [
+          {
+            itemName: item.itemName,
+            quantity: transferQuantity,
+            sourceProjectId,
+            sourceWarehouseId,
+          },
+        ],
+      });
       if (transferQuantity > 0) {
         const availableQuantity = parseDecimal(
           await getStockByItem({
@@ -11820,7 +11866,6 @@ export async function getTransferById(id: number) {
     destinationWarehouse:
       reverseLogisticDestinationWarehouse ??
       selectedDestinationWarehouse ??
-      destinationProject?.warehouse ??
       null,
     createdBy: rows[0].createdBy
       ? {

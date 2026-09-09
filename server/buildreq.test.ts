@@ -20073,6 +20073,109 @@ describe("BuildReq - Transfer stock aggregation", () => {
 });
 
 describe("BuildReq - Transfer Requests", () => {
+  it("convertToTransfer rejects a project transfer without an explicit destination warehouse", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 5,
+          requestNumber: "ST-2026-0000",
+          projectId: 1,
+          destinationType: "proyecto",
+          destinationProjectId: 2,
+          destinationWarehouseId: null,
+          status: "pendiente",
+        },
+        destinationWarehouse: DEFAULT_PROJECT_WAREHOUSE,
+        items: [
+          {
+            id: 30,
+            itemName: "LLANTA 11.00R22.5",
+            quantity: "1.00",
+          },
+        ],
+      } as any);
+    const createTransferFromRequestSpy = vi.spyOn(
+      db,
+      "createTransferFromRequest"
+    );
+
+    await expect(
+      caller.transferRequests.convertToTransfer({
+        id: 5,
+        items: [
+          {
+            transferRequestItemId: 30,
+            quantity: "1.00",
+            sourceProjectId: 1,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "Seleccione un proyecto y almacén destino antes de convertir la solicitud",
+    });
+
+    expect(createTransferFromRequestSpy).not.toHaveBeenCalled();
+    getTransferRequestByIdSpy.mockRestore();
+    createTransferFromRequestSpy.mockRestore();
+  });
+
+  it("convertToTransfer rejects the same origin and destination project warehouse", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 6,
+          requestNumber: "ST-2026-0001",
+          projectId: 1,
+          destinationType: "proyecto",
+          destinationProjectId: 1,
+          destinationWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          status: "pendiente",
+        },
+        items: [
+          {
+            id: 31,
+            itemName: "LLANTA 11.00R22.5",
+            quantity: "1.00",
+          },
+        ],
+      } as any);
+    const createTransferFromRequestSpy = vi.spyOn(
+      db,
+      "createTransferFromRequest"
+    );
+
+    await expect(
+      caller.transferRequests.convertToTransfer({
+        id: 6,
+        items: [
+          {
+            transferRequestItemId: 31,
+            quantity: "1.00",
+            sourceProjectId: 1,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "LLANTA 11.00R22.5: el proyecto y almacén destino no pueden ser los mismos del origen",
+    });
+
+    expect(createTransferFromRequestSpy).not.toHaveBeenCalled();
+    getTransferRequestByIdSpy.mockRestore();
+    createTransferFromRequestSpy.mockRestore();
+  });
+
   it("Bodeguero de Proyecto can convert transfer requests for their project", async () => {
     const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });
     const caller = appRouter.createCaller(ctx);

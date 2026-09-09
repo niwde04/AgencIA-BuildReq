@@ -8,8 +8,15 @@ import {
   canAccessProject,
   isProjectAssignableRole,
 } from "../projectAccess";
+import {
+  assertValidTransferConversionDestination,
+  TransferConversionValidationError,
+} from "../transferConversionValidation";
 
-function canAccessTransfers(user: { role: string; buildreqRole?: string | null }) {
+function canAccessTransfers(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -92,7 +99,8 @@ async function releaseTransferRequestItems(
     if (!materialRequestItemId) continue;
 
     const requestItem = await db.getRequestItemById(materialRequestItemId);
-    if (!requestItem || requestItem.assignedFlow !== "traslado_proyecto") continue;
+    if (!requestItem || requestItem.assignedFlow !== "traslado_proyecto")
+      continue;
 
     affectedRequestIds.add(requestItem.requestId);
     await db.updateRequestItem(requestItem.id, {
@@ -123,7 +131,9 @@ async function releaseTransferRequestItems(
       }
 
       const requestItems = await db.getRequestItemsByRequestId(requestId);
-      const someAssigned = requestItems.some((item) => item.assignedFlow !== null);
+      const someAssigned = requestItems.some(
+        item => item.assignedFlow !== null
+      );
       await db.updateMaterialRequestStatus(
         requestId,
         someAssigned ? "en_proceso" : "en_espera",
@@ -160,9 +170,7 @@ export const transferRequestsRouter = router({
           message: "No tiene acceso a solicitudes de traslado",
         });
       }
-      return listTransferRequestsPage(
-        applyProjectScope(input, ctx.user)
-      );
+      return listTransferRequestsPage(applyProjectScope(input, ctx.user));
     }),
 
   list: protectedProcedure
@@ -240,7 +248,7 @@ export const transferRequestsRouter = router({
           notes: input.notes,
           rejectionReason: null,
         },
-        input.items.map((item) => ({
+        input.items.map(item => ({
           materialRequestItemId: item.materialRequestItemId ?? null,
           sourceProjectId: null,
           sourceWarehouseId: null,
@@ -356,10 +364,7 @@ export const transferRequestsRouter = router({
       }
       if (
         detail.transferRequest.destinationType !== "proyecto" ||
-        !(
-          input.projectId ||
-          detail.transferRequest.destinationProjectId
-        )
+        !(input.projectId || detail.transferRequest.destinationProjectId)
       ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -448,9 +453,19 @@ export const transferRequestsRouter = router({
             z.object({
               transferRequestItemId: z.number(),
               quantity: z.string().min(1),
-              sourceProjectId: z.number().int().positive().nullable().optional(),
+              sourceProjectId: z
+                .number()
+                .int()
+                .positive()
+                .nullable()
+                .optional(),
               sourceWarehouseId: z.number().int().positive().optional(),
-              sourceStorageLocation: z.string().trim().max(255).nullable().optional(),
+              sourceStorageLocation: z
+                .string()
+                .trim()
+                .max(255)
+                .nullable()
+                .optional(),
             })
           )
           .optional(),
@@ -477,17 +492,80 @@ export const transferRequestsRouter = router({
       if (detail.transferRequest.status !== "pendiente") {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Solo se puede convertir una solicitud de traslado pendiente",
+          message:
+            "Solo se puede convertir una solicitud de traslado pendiente",
         });
       }
 
       try {
+        const requestedItemById = new Map(
+          (detail.items ?? []).map(item => [Number(item.id), item])
+        );
+        const validationItems = input.items
+          ? input.items.map(item => {
+              const requestedItem = requestedItemById.get(
+                item.transferRequestItemId
+              );
+              return {
+                itemName: requestedItem?.itemName,
+                quantity: item.quantity,
+                sourceProjectId: item.sourceProjectId ?? null,
+                sourceWarehouseId:
+                  item.sourceWarehouseId ??
+                  requestedItem?.sourceWarehouseId ??
+                  null,
+              };
+            })
+          : (detail.items ?? []).map(item => ({
+              itemName: item.itemName,
+              quantity: item.quantity,
+              sourceProjectId: item.sourceWarehouseId
+                ? (item.sourceProjectId ?? null)
+                : detail.transferRequest.projectId,
+              sourceWarehouseId: item.sourceWarehouseId ?? null,
+            }));
+
+        assertValidTransferConversionDestination({
+          destinationType: detail.transferRequest.destinationType,
+          destinationProjectId: detail.transferRequest.destinationProjectId,
+          destinationWarehouseId: detail.transferRequest.destinationWarehouseId,
+          fallbackSourceProjectId: detail.transferRequest.projectId,
+          items: validationItems,
+        });
+
+        if (
+          detail.transferRequest.destinationType === "proyecto" &&
+          detail.transferRequest.destinationProjectId &&
+          detail.transferRequest.destinationWarehouseId
+        ) {
+          const destinationWarehouses = await db.listProjectWarehouses(
+            detail.transferRequest.destinationProjectId,
+            { isActive: true }
+          );
+          const destinationWarehouseIsAssigned = destinationWarehouses.some(
+            warehouse =>
+              Number(warehouse.id) ===
+              Number(detail.transferRequest.destinationWarehouseId)
+          );
+          if (!destinationWarehouseIsAssigned) {
+            throw new TransferConversionValidationError(
+              "El almacén destino seleccionado ya no está activo o asignado al proyecto destino"
+            );
+          }
+        }
+
         return await db.createTransferFromRequest(
           input.id,
           ctx.user.id,
           input.items
         );
       } catch (error) {
+        if (error instanceof TransferConversionValidationError) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error.message,
+          });
+        }
         if (
           shouldHideTransferOriginQuantities(ctx.user) &&
           error instanceof Error &&
