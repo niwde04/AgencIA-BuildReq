@@ -27,6 +27,8 @@ import {
   isInvoiceNumberWithinFiscalRange,
   normalizeFiscalRtn,
 } from "../shared/invoices";
+import { CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL } from "../shared/confirmed-transfer-cancellation";
+import { ConfirmedTransferCancellationError } from "./confirmedTransferCancellation";
 import { getDefaultTransferPreparedByName } from "../client/src/lib/transfer-print";
 import {
   getRuntimeProcurementApprovalSettings,
@@ -5183,6 +5185,97 @@ describe("BuildReq - Role-based Access Control", () => {
     );
 
     getTransferByIdSpy.mockRestore();
+  });
+
+  it("allows only the designated system admin to cancel a confirmed transfer", async () => {
+    const cancelConfirmedTransferSpy = vi
+      .spyOn(db, "cancelConfirmedTransfer")
+      .mockResolvedValue({
+        success: true,
+        transferId: 18,
+        transferRequestId: 22,
+        releasedItemCount: 1,
+      });
+    const { ctx } = createUserContext({
+      role: "admin",
+      email: CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL,
+    });
+
+    await expect(
+      appRouter.createCaller(ctx).transfers.cancelConfirmed({
+        id: 18,
+        reason: "  Mismo proyecto y almacén de origen y destino  ",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({ success: true, releasedItemCount: 1 })
+    );
+    expect(cancelConfirmedTransferSpy).toHaveBeenCalledWith({
+      id: 18,
+      actor: {
+        id: ctx.user.id,
+        role: "admin",
+        email: CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL,
+      },
+      reason: "Mismo proyecto y almacén de origen y destino",
+    });
+
+    cancelConfirmedTransferSpy.mockRestore();
+  });
+
+  it("blocks other admins and non-admin users from cancelling confirmed transfers", async () => {
+    const cancelConfirmedTransferSpy = vi.spyOn(db, "cancelConfirmedTransfer");
+    const otherAdmin = createUserContext({
+      role: "admin",
+      email: "otro-admin@buildreq.com",
+    });
+    const designatedNonAdmin = createUserContext({
+      role: "user",
+      email: CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL,
+    });
+
+    await expect(
+      appRouter.createCaller(otherAdmin.ctx).transfers.cancelConfirmed({
+        id: 18,
+        reason: "Traslado inválido",
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      appRouter.createCaller(designatedNonAdmin.ctx).transfers.cancelConfirmed({
+        id: 18,
+        reason: "Traslado inválido",
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(cancelConfirmedTransferSpy).not.toHaveBeenCalled();
+
+    cancelConfirmedTransferSpy.mockRestore();
+  });
+
+  it("reports why a confirmed transfer cannot be cancelled", async () => {
+    const cancelConfirmedTransferSpy = vi
+      .spyOn(db, "cancelConfirmedTransfer")
+      .mockRejectedValue(
+        new ConfirmedTransferCancellationError(
+          "INVALID_STATE",
+          "No se puede anular porque ya existe una recepción guardada para este traslado"
+        )
+      );
+    const { ctx } = createUserContext({
+      role: "admin",
+      email: CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL,
+    });
+
+    await expect(
+      appRouter.createCaller(ctx).transfers.cancelConfirmed({
+        id: 18,
+        reason: "Traslado inválido",
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "No se puede anular porque ya existe una recepción guardada para este traslado",
+    });
+
+    cancelConfirmedTransferSpy.mockRestore();
   });
 
   it("Contable can read transfer detail for receipt views but cannot list or update transfers", async () => {

@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { DataPagination } from "@/components/DataPagination";
 import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
@@ -7,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -20,7 +22,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Eye, Printer, Search } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Ban, Eye, Printer, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 const PAGE_SIZE = 50;
@@ -28,6 +40,10 @@ import { toast } from "sonner";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 import { getDefaultTransferPreparedByName } from "@/lib/transfer-print";
+import {
+  canCancelConfirmedTransfer,
+  CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL,
+} from "@shared/confirmed-transfer-cancellation";
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
@@ -160,6 +176,7 @@ function getTransferItemTargetLabel(item: any) {
 }
 
 export default function Transfers() {
+  const { user } = useAuth();
   const utils = trpc.useUtils();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -169,6 +186,8 @@ export default function Transfers() {
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
   const [preparedByName, setPreparedByName] = useState("");
   const [deliveredToName, setDeliveredToName] = useState("");
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
   const {
     data: transfersPage,
     isLoading,
@@ -209,6 +228,24 @@ export default function Transfers() {
       },
       onError: error => toast.error(error.message),
     });
+  const cancelConfirmedMutation = trpc.transfers.cancelConfirmed.useMutation({
+    onSuccess: result => {
+      toast.success("Traslado anulado y requisición liberada");
+      setCancelDialogOpen(false);
+      setCancelReason("");
+      void Promise.all([
+        utils.transfers.invalidate(),
+        utils.transferRequests.invalidate(),
+        utils.materialRequests.invalidate(),
+        utils.supplyFlows.invalidate(),
+        utils.transfers.getById.invalidate({ id: result.transferId }),
+      ]);
+    },
+    onError: error => toast.error(error.message),
+  });
+  const canCancelSelectedTransfer =
+    canCancelConfirmedTransfer(user ?? {}) &&
+    detail?.transfer.status === "confirmado";
 
   useEffect(() => {
     if (!detail?.transfer?.id) return;
@@ -915,11 +952,34 @@ export default function Transfers() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap justify-end gap-3">
+              {detail.transfer.status === "anulado" &&
+              detail.transferRequest?.rejectionReason ? (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-destructive">
+                    Motivo de anulación
+                  </p>
+                  <p className="mt-1 text-sm text-foreground">
+                    {detail.transferRequest.rejectionReason}
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap justify-between gap-3">
+                {canCancelSelectedTransfer ? (
+                  <Button
+                    variant="destructive"
+                    size="lg"
+                    className="h-10 min-w-[190px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                    onClick={() => setCancelDialogOpen(true)}
+                  >
+                    <Ban className="mr-2 h-4 w-4" />
+                    Anular traslado
+                  </Button>
+                ) : null}
                 <Button
                   variant="outline"
                   size="lg"
-                  className="h-10 min-w-[210px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                  className="ml-auto h-10 min-w-[210px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
                   onClick={handlePrintTransferExit}
                   disabled={
                     (detail.items || []).length === 0 ||
@@ -935,6 +995,85 @@ export default function Transfers() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={cancelDialogOpen}
+        onOpenChange={open => {
+          if (!cancelConfirmedMutation.isPending) {
+            setCancelDialogOpen(open);
+            if (!open) setCancelReason("");
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-[560px] overflow-hidden rounded-2xl border-border/70 p-0 shadow-2xl">
+          <div className="bg-destructive/5 p-6">
+            <AlertDialogHeader className="gap-2 text-left">
+              <AlertDialogTitle className="flex items-center gap-3 text-xl font-semibold tracking-tight">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                  <Ban className="h-5 w-5" />
+                </span>
+                Anular traslado confirmado
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-sm leading-6 text-muted-foreground">
+                Se anulará{" "}
+                <span className="font-medium text-foreground">
+                  {detail?.transfer.transferNumber ?? "el traslado"}
+                </span>
+                , se cancelará su flujo y los ítems volverán a quedar
+                disponibles en la requisición. No se modificará el inventario.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+          </div>
+          <div className="space-y-4 px-6 pb-6">
+            <div className="space-y-2">
+              <Label htmlFor="confirmed-transfer-cancel-reason">
+                Motivo de anulación *
+              </Label>
+              <Textarea
+                id="confirmed-transfer-cancel-reason"
+                value={cancelReason}
+                onChange={event => setCancelReason(event.target.value)}
+                placeholder="Ej.: traslado generado con el mismo proyecto y almacén de origen y destino"
+                maxLength={500}
+                rows={4}
+                disabled={cancelConfirmedMutation.isPending}
+              />
+              <p className="text-xs text-muted-foreground">
+                Mínimo 5 caracteres. La acción quedará registrada para{" "}
+                {CONFIRMED_TRANSFER_CANCELLATION_ADMIN_EMAIL}.
+              </p>
+            </div>
+            <AlertDialogFooter className="gap-3 sm:justify-end">
+              <AlertDialogCancel
+                className="mt-0"
+                disabled={cancelConfirmedMutation.isPending}
+              >
+                Volver
+              </AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={event => {
+                  event.preventDefault();
+                  if (!detail?.transfer.id || cancelReason.trim().length < 5)
+                    return;
+                  cancelConfirmedMutation.mutate({
+                    id: detail.transfer.id,
+                    reason: cancelReason.trim(),
+                  });
+                }}
+                disabled={
+                  cancelConfirmedMutation.isPending ||
+                  cancelReason.trim().length < 5
+                }
+              >
+                {cancelConfirmedMutation.isPending
+                  ? "Anulando..."
+                  : "Confirmar anulación"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

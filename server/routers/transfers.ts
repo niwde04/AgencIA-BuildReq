@@ -4,8 +4,13 @@ import * as db from "../db";
 import { listTransfersPage } from "../paginatedLists";
 import { protectedProcedure, router } from "../_core/trpc";
 import { canAccessProject, getProjectScopeIds } from "../projectAccess";
+import { canCancelConfirmedTransfer } from "../../shared/confirmed-transfer-cancellation";
+import { ConfirmedTransferCancellationError } from "../confirmedTransferCancellation";
 
-function canAccessTransfers(user: { role: string; buildreqRole?: string | null }) {
+function canAccessTransfers(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -15,7 +20,10 @@ function canAccessTransfers(user: { role: string; buildreqRole?: string | null }
   );
 }
 
-function canReadTransferDetails(user: { role: string; buildreqRole?: string | null }) {
+function canReadTransferDetails(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
   return canAccessTransfers(user) || user.buildreqRole === "contable";
 }
 
@@ -26,7 +34,10 @@ function assertProjectScopedAccess(
     assignedProjectId?: number | null;
     assignedProjectIds?: number[] | null;
   },
-  transferRequest: { projectId: number; destinationProjectId?: number | null } | null,
+  transferRequest: {
+    projectId: number;
+    destinationProjectId?: number | null;
+  } | null,
   items?: Array<{ sourceProjectId?: number | null }>
 ) {
   if (user.role === "admin") return;
@@ -40,9 +51,7 @@ function assertProjectScopedAccess(
     !transferRequest ||
     (!canAccessProject(user, transferRequest.projectId) &&
       !canAccessProject(user, transferRequest.destinationProjectId) &&
-      !(items ?? []).some(item =>
-        canAccessProject(user, item.sourceProjectId)
-      ))
+      !(items ?? []).some(item => canAccessProject(user, item.sourceProjectId)))
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -66,7 +75,10 @@ export const transfersRouter = router({
     )
     .query(async ({ ctx, input }) => {
       if (!canAccessTransfers(ctx.user)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a traslados" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a traslados",
+        });
       }
       const scopedProjectIds = getProjectScopeIds(ctx.user);
       return listTransfersPage({
@@ -100,7 +112,9 @@ export const transfersRouter = router({
 
       return db.listTransfers({
         ...(input ?? {}),
-        ...(scopedProjectIds !== undefined ? { projectIds: scopedProjectIds } : {}),
+        ...(scopedProjectIds !== undefined
+          ? { projectIds: scopedProjectIds }
+          : {}),
       });
     }),
 
@@ -121,11 +135,7 @@ export const transfersRouter = router({
           message: "Traslado no encontrado",
         });
       }
-      assertProjectScopedAccess(
-        ctx.user,
-        detail.transferRequest,
-        detail.items
-      );
+      assertProjectScopedAccess(ctx.user, detail.transferRequest, detail.items);
       return detail;
     }),
 
@@ -152,15 +162,52 @@ export const transfersRouter = router({
           message: "Traslado no encontrado",
         });
       }
-      assertProjectScopedAccess(
-        ctx.user,
-        detail.transferRequest,
-        detail.items
-      );
+      assertProjectScopedAccess(ctx.user, detail.transferRequest, detail.items);
 
       return db.updateTransferPrintFields(input.id, {
         preparedByName: input.preparedByName,
         deliveredToName: input.deliveredToName,
       });
+    }),
+
+  cancelConfirmed: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        reason: z.string().trim().min(5).max(500),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canCancelConfirmedTransfer(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para anular traslados confirmados",
+        });
+      }
+
+      try {
+        return await db.cancelConfirmedTransfer({
+          id: input.id,
+          actor: {
+            id: ctx.user.id,
+            role: ctx.user.role,
+            email: ctx.user.email,
+          },
+          reason: input.reason,
+        });
+      } catch (error) {
+        if (error instanceof ConfirmedTransferCancellationError) {
+          throw new TRPCError({
+            code:
+              error.code === "FORBIDDEN"
+                ? "FORBIDDEN"
+                : error.code === "NOT_FOUND"
+                  ? "NOT_FOUND"
+                  : "BAD_REQUEST",
+            message: error.message,
+          });
+        }
+        throw error;
+      }
     }),
 });

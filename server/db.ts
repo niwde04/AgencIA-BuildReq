@@ -25,6 +25,11 @@ import {
   TransferConversionValidationError,
 } from "./transferConversionValidation";
 import {
+  assertConfirmedTransferCanBeCancelled,
+  ConfirmedTransferCancellationError,
+} from "./confirmedTransferCancellation";
+import { canCancelConfirmedTransfer } from "../shared/confirmed-transfer-cancellation";
+import {
   InsertUser,
   User,
   users,
@@ -11519,6 +11524,195 @@ export async function createTransferFromRequest(
   return { id: transfer.id, transferNumber, guideNumber, sapCorrelative };
 }
 
+export async function cancelConfirmedTransfer(params: {
+  id: number;
+  actor: {
+    id: number;
+    role: string;
+    email?: string | null;
+  };
+  reason: string;
+}) {
+  if (!canCancelConfirmedTransfer(params.actor)) {
+    throw new ConfirmedTransferCancellationError(
+      "FORBIDDEN",
+      "No tiene permisos para anular traslados confirmados"
+    );
+  }
+
+  const reason = params.reason.trim();
+  if (reason.length < 5) {
+    throw new ConfirmedTransferCancellationError(
+      "INVALID_STATE",
+      "Ingrese un motivo de anulación de al menos 5 caracteres"
+    );
+  }
+
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [transfer] = await tx
+      .select()
+      .from(transfers)
+      .where(eq(transfers.id, params.id))
+      .for("update");
+    if (!transfer) {
+      throw new ConfirmedTransferCancellationError(
+        "NOT_FOUND",
+        "Traslado no encontrado"
+      );
+    }
+
+    const [transferRequest] = await tx
+      .select()
+      .from(transferRequests)
+      .where(eq(transferRequests.id, transfer.transferRequestId))
+      .for("update");
+    if (!transferRequest) {
+      throw new ConfirmedTransferCancellationError(
+        "INVALID_STATE",
+        "El traslado no tiene una solicitud vinculada válida"
+      );
+    }
+
+    const items = await tx
+      .select()
+      .from(transferRequestItems)
+      .where(eq(transferRequestItems.transferRequestId, transferRequest.id))
+      .orderBy(asc(transferRequestItems.id))
+      .for("update");
+    const activeReceipts = await tx
+      .select({ id: receipts.id })
+      .from(receipts)
+      .where(
+        and(
+          eq(receipts.sourceType, "transfer"),
+          eq(receipts.sourceId, transfer.id),
+          sql`${receipts.status} <> 'anulada'`
+        )
+      )
+      .orderBy(asc(receipts.id))
+      .for("update");
+
+    const materialRequestItemIds = Array.from(
+      new Set(
+        items
+          .map(item => item.materialRequestItemId)
+          .filter((id): id is number => typeof id === "number")
+      )
+    ).sort((left, right) => left - right);
+    const linkedRequestItems = materialRequestItemIds.length
+      ? await tx
+          .select()
+          .from(requestItems)
+          .where(inArray(requestItems.id, materialRequestItemIds))
+          .orderBy(asc(requestItems.id))
+          .for("update")
+      : [];
+
+    if (linkedRequestItems.length !== materialRequestItemIds.length) {
+      throw new ConfirmedTransferCancellationError(
+        "INVALID_STATE",
+        "Uno o más ítems vinculados ya no existen en la requisición"
+      );
+    }
+
+    assertConfirmedTransferCanBeCancelled({
+      transferStatus: transfer.status,
+      transferRequestStatus: transferRequest.status,
+      reverseLogisticId: transferRequest.reverseLogisticId,
+      activeReceiptCount: activeReceipts.length,
+      items,
+      requestItems: linkedRequestItems,
+    });
+
+    const now = new Date();
+    const actorEmail = params.actor.email!.trim().toLowerCase();
+    const auditNote = `Anulación administrativa por ${actorEmail}: ${reason}`;
+
+    const [cancelledTransfer] = await tx
+      .update(transfers)
+      .set({ status: "anulado", updatedAt: now })
+      .where(
+        and(eq(transfers.id, transfer.id), eq(transfers.status, "confirmado"))
+      )
+      .returning({ id: transfers.id });
+    if (!cancelledTransfer) {
+      throw new ConfirmedTransferCancellationError(
+        "INVALID_STATE",
+        "El traslado cambió mientras se intentaba anular"
+      );
+    }
+
+    const [cancelledRequest] = await tx
+      .update(transferRequests)
+      .set({
+        status: "anulada",
+        rejectionReason: auditNote,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(transferRequests.id, transferRequest.id),
+          eq(transferRequests.status, "convertida")
+        )
+      )
+      .returning({ id: transferRequests.id });
+    if (!cancelledRequest) {
+      throw new ConfirmedTransferCancellationError(
+        "INVALID_STATE",
+        "La solicitud cambió mientras se intentaba anular"
+      );
+    }
+
+    if (materialRequestItemIds.length > 0) {
+      await tx
+        .update(requestItems)
+        .set({
+          assignedFlow: null,
+          status: "pendiente",
+          updatedAt: now,
+        })
+        .where(inArray(requestItems.id, materialRequestItemIds));
+
+      await tx
+        .update(supplyFlowRecords)
+        .set({
+          status: "cancelado",
+          processedById: params.actor.id,
+          notes: auditNote,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            inArray(supplyFlowRecords.requestItemId, materialRequestItemIds),
+            eq(supplyFlowRecords.flowType, "traslado_proyecto"),
+            sql`${supplyFlowRecords.status} <> 'cancelado'`
+          )
+        );
+    }
+
+    const affectedRequestIds = Array.from(
+      new Set(linkedRequestItems.map(item => item.requestId))
+    ).sort((left, right) => left - right);
+    for (const requestId of affectedRequestIds) {
+      await syncMaterialRequestFulfillmentStatusWithDatabase(
+        tx,
+        requestId,
+        params.actor.id
+      );
+    }
+
+    return {
+      success: true,
+      transferId: transfer.id,
+      transferRequestId: transferRequest.id,
+      releasedItemCount: linkedRequestItems.length,
+    };
+  });
+}
+
 export async function listTransfers(filters?: {
   ids?: number[];
   status?: string;
@@ -12718,6 +12912,27 @@ async function resolvePurchaseOrderReceiptArticles(params: {
   );
 }
 
+async function lockTransferForReceipt(database: any, transferId: number) {
+  const [transfer] = await database
+    .select({ id: transfers.id, status: transfers.status })
+    .from(transfers)
+    .where(eq(transfers.id, transferId))
+    .for("update");
+  if (!transfer) {
+    throw new Error("Traslado no encontrado");
+  }
+  if (
+    !["confirmado", "en_transito", "parcialmente_recibido"].includes(
+      transfer.status
+    )
+  ) {
+    throw new Error(
+      "Solo se pueden recibir traslados confirmados o con saldo pendiente"
+    );
+  }
+  return transfer;
+}
+
 export async function registerReceipt(
   data: Omit<InsertReceipt, "receiptNumber"> & {
     emissionDeadline?: Date | null;
@@ -12815,6 +13030,8 @@ export async function registerReceipt(
       items,
     });
   } else if (data.sourceType === "transfer") {
+    await lockTransferForReceipt(db, data.sourceId);
+
     for (const item of items) {
       if (parseDecimal(item.quantityReceived) <= 0) continue;
       if (!item.warehouseId) {
@@ -13392,9 +13609,27 @@ export async function saveReceiptDraft(
   data: Omit<InsertReceipt, "receiptNumber" | "status">,
   items: Array<Omit<InsertReceiptItem, "receiptId">>,
   otherCharges?: ReceiptOtherChargeInput[]
-) {
+): Promise<{
+  id: number;
+  receiptNumber: string;
+  status: (typeof receipts.$inferSelect)["status"];
+  updated: boolean;
+}> {
+  if (data.sourceType === "transfer" && !receiptRegistrationDb.getStore()) {
+    const rootDb = await getDb();
+    if (!rootDb) throw new Error("DB not available");
+    return rootDb.transaction(transactionDb =>
+      receiptRegistrationDb.run(transactionDb as any, () =>
+        saveReceiptDraft(data, items, otherCharges)
+      )
+    );
+  }
+
   const db = await getDb();
   if (!db) throw new Error("DB not available");
+  if (data.sourceType === "transfer") {
+    await lockTransferForReceipt(db, data.sourceId);
+  }
 
   const [existingDraft] = await db
     .select({ id: receipts.id, receiptNumber: receipts.receiptNumber })
