@@ -576,6 +576,12 @@ export default function SalidasBodega() {
   const [page, setPage] = useState(1);
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
   const [deliveryRequestId, setDeliveryRequestId] = useState("");
+  const [deliveryRequestPopoverOpen, setDeliveryRequestPopoverOpen] =
+    useState(false);
+  const [deliveryRequestSearch, setDeliveryRequestSearch] = useState("");
+  const [deliveryPreviewRequestId, setDeliveryPreviewRequestId] = useState<
+    number | null
+  >(null);
   const [deliveryNotes, setDeliveryNotes] = useState("");
   const [deliveryQuantityByItemId, setDeliveryQuantityByItemId] = useState<
     Record<number, string>
@@ -615,6 +621,10 @@ export default function SalidasBodega() {
   const emittingAfterDraftSaveRef = useRef(false);
 
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
+  const debouncedDeliveryPreviewRequestId = useDebouncedValue(
+    deliveryPreviewRequestId,
+    180
+  );
   const {
     data: exitsPage,
     isLoading,
@@ -642,11 +652,26 @@ export default function SalidasBodega() {
     { status: "activo" },
     { enabled: deliveryDialogOpen }
   );
-  const { data: deliveryRequestDetail } =
-    trpc.materialRequests.getById.useQuery(
-      { id: Number(deliveryRequestId || 0) },
-      { enabled: deliveryDialogOpen && Boolean(deliveryRequestId) }
-    );
+  const {
+    data: deliveryRequestDetail,
+    isFetching: deliveryRequestDetailLoading,
+  } = trpc.materialRequests.getById.useQuery(
+    { id: Number(deliveryRequestId || 0) },
+    { enabled: deliveryDialogOpen && Boolean(deliveryRequestId) }
+  );
+  const {
+    data: deliveryRequestItemsPreview,
+    isFetching: deliveryRequestItemsPreviewLoading,
+  } = trpc.materialRequests.itemsPreview.useQuery(
+    { id: debouncedDeliveryPreviewRequestId ?? 0 },
+    {
+      enabled:
+        deliveryDialogOpen &&
+        deliveryRequestPopoverOpen &&
+        Boolean(debouncedDeliveryPreviewRequestId),
+      staleTime: 60_000,
+    }
+  );
   const {
     data: deliveryTargetOptions,
     isLoading: deliveryTargetOptionsLoading,
@@ -1078,6 +1103,57 @@ export default function SalidasBodega() {
       }),
     [materialRequests]
   );
+  const selectedDeliveryRequest = useMemo(
+    () =>
+      eligibleMaterialRequests.find(
+        (row: any) => row.request.id === Number(deliveryRequestId || 0)
+      ) ?? null,
+    [deliveryRequestId, eligibleMaterialRequests]
+  );
+  const previewDeliveryRequest = useMemo(() => {
+    const previewId =
+      deliveryPreviewRequestId ?? Number(deliveryRequestId || 0);
+    if (!previewId) return null;
+    return (
+      eligibleMaterialRequests.find(
+        (row: any) => row.request.id === previewId
+      ) ?? null
+    );
+  }, [deliveryPreviewRequestId, deliveryRequestId, eligibleMaterialRequests]);
+  const previewDeliveryItems = useMemo(() => {
+    const previewId = previewDeliveryRequest?.request.id;
+    if (!previewId) return [];
+    if (
+      deliveryRequestDetail?.request.id === previewId &&
+      !deliveryRequestPopoverOpen
+    ) {
+      return deliveryRequestDetail.items ?? [];
+    }
+    if (
+      deliveryRequestItemsPreview?.request.id === previewId &&
+      debouncedDeliveryPreviewRequestId === previewId
+    ) {
+      return deliveryRequestItemsPreview.items ?? [];
+    }
+    return [];
+  }, [
+    debouncedDeliveryPreviewRequestId,
+    deliveryRequestDetail,
+    deliveryRequestItemsPreview,
+    deliveryRequestPopoverOpen,
+    previewDeliveryRequest?.request.id,
+  ]);
+  const isPreviewingDeliveryRequest =
+    deliveryRequestPopoverOpen && Boolean(previewDeliveryRequest);
+  const isDeliveryRequestPreviewLoading =
+    (isPreviewingDeliveryRequest &&
+      (deliveryPreviewRequestId !== debouncedDeliveryPreviewRequestId ||
+        (deliveryRequestItemsPreviewLoading &&
+          previewDeliveryItems.length === 0))) ||
+    (!deliveryRequestPopoverOpen &&
+      Boolean(previewDeliveryRequest) &&
+      deliveryRequestDetailLoading &&
+      previewDeliveryItems.length === 0);
 
   const deliveryItems = useMemo(
     () =>
@@ -3293,6 +3369,9 @@ export default function SalidasBodega() {
           setDeliveryDialogOpen(open);
           if (!open) {
             setDeliveryRequestId("");
+            setDeliveryRequestPopoverOpen(false);
+            setDeliveryRequestSearch("");
+            setDeliveryPreviewRequestId(null);
             setDeliveryNotes("");
             setDeliveryQuantityByItemId({});
             setDeliveryWarehouseByItemId({});
@@ -3317,38 +3396,216 @@ export default function SalidasBodega() {
           <div className="space-y-5 pt-2">
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(260px,360px)]">
               <div className="space-y-2">
-                <Label>Requisición *</Label>
-                <Select
-                  value={deliveryRequestId}
-                  onValueChange={setDeliveryRequestId}
+                <Label htmlFor="warehouse-exit-request-selector">
+                  Requisición *
+                </Label>
+                <Popover
+                  open={deliveryRequestPopoverOpen}
+                  onOpenChange={open => {
+                    setDeliveryRequestPopoverOpen(open);
+                    if (open) {
+                      setDeliveryPreviewRequestId(
+                        Number(deliveryRequestId || 0) ||
+                          eligibleMaterialRequests[0]?.request.id ||
+                          null
+                      );
+                    } else {
+                      setDeliveryRequestSearch("");
+                      setDeliveryPreviewRequestId(
+                        Number(deliveryRequestId || 0) || null
+                      );
+                    }
+                  }}
                 >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Seleccione requisición" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {eligibleMaterialRequests.map((row: any) => (
-                      <SelectItem
-                        key={row.request.id}
-                        value={String(row.request.id)}
+                  <PopoverTrigger asChild>
+                    <Button
+                      id="warehouse-exit-request-selector"
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={deliveryRequestPopoverOpen}
+                      className="w-full justify-between font-normal"
+                    >
+                      <span
+                        className={
+                          selectedDeliveryRequest
+                            ? "truncate"
+                            : "truncate text-muted-foreground"
+                        }
                       >
-                        {row.request.requestNumber} - {row.project?.code}{" "}
-                        {row.project?.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                        {selectedDeliveryRequest
+                          ? `${selectedDeliveryRequest.request.requestNumber} - ${selectedDeliveryRequest.project?.code ?? ""} ${selectedDeliveryRequest.project?.name ?? ""}`
+                          : "Buscar y seleccionar requisición"}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-[min(760px,calc(100vw-2rem))] p-0"
+                    align="start"
+                  >
+                    <Command
+                      value={
+                        deliveryPreviewRequestId
+                          ? String(deliveryPreviewRequestId)
+                          : undefined
+                      }
+                      onValueChange={value => {
+                        const requestId = Number(value);
+                        if (Number.isInteger(requestId) && requestId > 0) {
+                          setDeliveryPreviewRequestId(requestId);
+                        }
+                      }}
+                    >
+                      <CommandInput
+                        placeholder="Buscar por número, proyecto o solicitante..."
+                        value={deliveryRequestSearch}
+                        onValueChange={setDeliveryRequestSearch}
+                      />
+                      <CommandList className="max-h-[min(50vh,22rem)]">
+                        <CommandEmpty>
+                          No se encontraron requisiciones.
+                        </CommandEmpty>
+                        <CommandGroup
+                          heading={`${eligibleMaterialRequests.length} requisiciones disponibles`}
+                        >
+                          {eligibleMaterialRequests.map((row: any) => {
+                            const requestId = Number(row.request.id);
+                            const selected =
+                              requestId === Number(deliveryRequestId || 0);
+
+                            return (
+                              <CommandItem
+                                key={requestId}
+                                value={String(requestId)}
+                                keywords={[
+                                  row.request.requestNumber ?? "",
+                                  row.project?.code ?? "",
+                                  row.project?.name ?? "",
+                                  row.requestedBy?.name ?? "",
+                                ]}
+                                onMouseEnter={() =>
+                                  setDeliveryPreviewRequestId(requestId)
+                                }
+                                onSelect={() => {
+                                  setDeliveryRequestId(String(requestId));
+                                  setDeliveryPreviewRequestId(requestId);
+                                  setDeliveryRequestPopoverOpen(false);
+                                  setDeliveryRequestSearch("");
+                                }}
+                                className="py-2.5"
+                              >
+                                <Check
+                                  className={`mt-0.5 h-4 w-4 ${
+                                    selected ? "opacity-100" : "opacity-0"
+                                  }`}
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-medium">
+                                    {row.request.requestNumber}
+                                  </p>
+                                  <p className="truncate text-xs text-muted-foreground">
+                                    {[row.project?.code, row.project?.name]
+                                      .filter(Boolean)
+                                      .join(" - ") ||
+                                      "Proyecto sin identificar"}
+                                    {row.requestedBy?.name
+                                      ? ` · ${row.requestedBy.name}`
+                                      : ""}
+                                  </p>
+                                </div>
+                              </CommandItem>
+                            );
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                <p className="text-xs text-muted-foreground">
+                  Pase el mouse o use las flechas para ver los artículos antes
+                  de seleccionar.
+                </p>
               </div>
-              <div className="rounded-xl border bg-muted/20 p-4 text-sm">
-                <p className="font-semibold">
-                  {deliveryRequestDetail?.project
-                    ? `${deliveryRequestDetail.project.code} - ${deliveryRequestDetail.project.name}`
-                    : "Proyecto pendiente"}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Se muestran requisiciones con flujo completado o parcialmente
-                  atendidas. La salida solo incluye renglones ya recibidos o
-                  disponibles en bodega.
-                </p>
+              <div
+                className="min-h-40 rounded-xl border bg-muted/20 p-4 text-sm"
+                aria-live="polite"
+              >
+                {previewDeliveryRequest ? (
+                  <div className="space-y-3">
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-semibold">
+                          {previewDeliveryRequest.request.requestNumber}
+                        </p>
+                        <Badge variant="outline" className="bg-background">
+                          Vista previa
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {[
+                          previewDeliveryRequest.project?.code,
+                          previewDeliveryRequest.project?.name,
+                        ]
+                          .filter(Boolean)
+                          .join(" - ") || "Proyecto sin identificar"}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Solicitó:{" "}
+                        {previewDeliveryRequest.requestedBy?.name || "-"}
+                        {previewDeliveryRequest.request.createdAt
+                          ? ` · ${formatDate(previewDeliveryRequest.request.createdAt)}`
+                          : ""}
+                      </p>
+                    </div>
+
+                    {isDeliveryRequestPreviewLoading ? (
+                      <p className="rounded-lg border border-dashed bg-background/70 p-3 text-xs text-muted-foreground">
+                        Cargando artículos...
+                      </p>
+                    ) : previewDeliveryItems.length > 0 ? (
+                      <div className="space-y-1.5">
+                        {previewDeliveryItems.slice(0, 5).map((item: any) => (
+                          <div
+                            key={item.id}
+                            className="flex min-w-0 items-start justify-between gap-3 rounded-lg bg-background/80 px-3 py-2"
+                          >
+                            <div className="min-w-0">
+                              <p className="line-clamp-2 text-xs font-medium">
+                                {item.itemName}
+                              </p>
+                              {item.sapItemCode ? (
+                                <p className="font-mono text-[10px] text-muted-foreground">
+                                  SAP {item.sapItemCode}
+                                </p>
+                              ) : null}
+                            </div>
+                            <span className="shrink-0 font-mono text-xs font-semibold">
+                              {formatQuantity(item.quantity)} {item.unit || ""}
+                            </span>
+                          </div>
+                        ))}
+                        {previewDeliveryItems.length > 5 ? (
+                          <p className="text-center text-xs text-muted-foreground">
+                            +{previewDeliveryItems.length - 5} artículos más
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        No hay artículos para mostrar.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex min-h-32 flex-col justify-center">
+                    <p className="font-semibold">Vista previa de requisición</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Abra el buscador y señale una requisición para revisar sus
+                      artículos y cantidades sin seleccionarla.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 
