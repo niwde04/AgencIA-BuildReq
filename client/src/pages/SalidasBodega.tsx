@@ -3614,10 +3614,15 @@ export default function SalidasBodega() {
                 {previewDeliveryRequest ? (
                   <div className="flex h-full min-h-0 flex-col gap-3">
                     <div className="shrink-0">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="font-semibold">
-                          {previewDeliveryRequest.request.requestNumber}
-                        </p>
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                            N.º de requisición
+                          </p>
+                          <p className="truncate font-mono text-sm font-semibold">
+                            {previewDeliveryRequest.request.requestNumber}
+                          </p>
+                        </div>
                         <Badge variant="outline" className="bg-background">
                           Vista previa
                         </Badge>
