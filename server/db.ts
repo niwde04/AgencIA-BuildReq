@@ -23652,6 +23652,8 @@ export async function listArticles(filters?: ArticleListFilters) {
     .select({
       article: sapCatalog,
       financialGroupDescription: financialGroups.financialGroupDescription,
+      projectCode: projects.code,
+      projectName: projects.name,
       createdBy: articleCreatedByUsers,
       updatedBy: articleUpdatedByUsers,
     })
@@ -23660,6 +23662,7 @@ export async function listArticles(filters?: ArticleListFilters) {
       financialGroups,
       eq(sapCatalog.financialGroupCode, financialGroups.financialGroupCode)
     )
+    .leftJoin(projects, eq(sapCatalog.projectId, projects.id))
     .leftJoin(
       articleCreatedByUsers,
       eq(sapCatalog.createdById, articleCreatedByUsers.id)
@@ -23675,6 +23678,8 @@ export async function listArticles(filters?: ArticleListFilters) {
   const items = rows.map(row => ({
     ...row.article,
     financialGroupDescription: row.financialGroupDescription,
+    projectCode: row.projectCode,
+    projectName: row.projectName,
     createdBy: toAuditUser(row.createdBy),
     updatedBy: toAuditUser(row.updatedBy),
   }));

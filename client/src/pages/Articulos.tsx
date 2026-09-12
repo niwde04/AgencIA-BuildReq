@@ -6,6 +6,10 @@ import {
   normalizeArticleDescription,
   uppercaseArticleDescription,
 } from "@shared/article-descriptions";
+import {
+  formatProjectLabel,
+  getArticleProjectLabel,
+} from "@shared/article-project-label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -78,6 +82,8 @@ type ArticleRecord = {
   partNumber?: string | null;
   tipoArticulo: number;
   projectId?: number | null;
+  projectCode?: string | null;
+  projectName?: string | null;
   temporaryItemCode?: string | null;
   fixedAssetStatus?: string | null;
   fixedAssetSerialNumber?: string | null;
@@ -209,24 +215,6 @@ function formatAuditDateTime(value?: string | Date | null) {
     dateStyle: "short",
     timeStyle: "short",
   });
-}
-
-function getProjectLabel(project: ProjectOption) {
-  const code = project.code?.trim();
-  const name = project.name?.trim();
-  const label = [code, name].filter(Boolean).join(" - ");
-  return label || `Proyecto ${project.id}`;
-}
-
-function getArticleProjectLabel(
-  article: ArticleRecord,
-  projectById: Map<number, ProjectOption>
-) {
-  if (article.tipoArticulo !== 3) return "-";
-  if (!article.projectId) return "Sin proyecto";
-
-  const project = projectById.get(article.projectId);
-  return project ? getProjectLabel(project) : `Proyecto ${article.projectId}`;
 }
 
 function getFixedAssetStatusLabel(status: string | null | undefined) {
@@ -1361,7 +1349,7 @@ export default function Articulos() {
                     <SelectItem value="none">Sin proyecto asignado</SelectItem>
                     {projectOptions.map((project) => (
                       <SelectItem key={project.id} value={String(project.id)}>
-                        {getProjectLabel(project)}
+                        {formatProjectLabel(project)}
                         {project.status && project.status !== "activo"
                           ? " (inactivo)"
                           : ""}
@@ -1610,7 +1598,7 @@ export default function Articulos() {
                       <SelectItem value="none">Sin proyecto asignado</SelectItem>
                       {projectOptions.map((project) => (
                         <SelectItem key={project.id} value={String(project.id)}>
-                          {getProjectLabel(project)}
+                          {formatProjectLabel(project)}
                           {project.status && project.status !== "activo"
                             ? " (inactivo)"
                             : ""}
