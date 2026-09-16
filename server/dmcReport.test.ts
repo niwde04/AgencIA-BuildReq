@@ -25,6 +25,7 @@ import {
 import * as XLSX from "xlsx";
 import { appRouter } from "./routers";
 import * as db from "./db";
+import * as treasury from "./treasury";
 import type { TrpcContext } from "./_core/context";
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
@@ -914,7 +915,25 @@ describe("internal BuildReq workbook", () => {
           quoteReference: "55",
           status: "emitida",
         },
-      ]
+      ],
+      {},
+      new Map([
+        [
+          100,
+          [
+            {
+              batchNumber: "TES-2026-000010",
+              bankReference: "REF-BANCO-010",
+              paidDate: new Date("2026-07-15T12:00:00.000"),
+            },
+            {
+              batchNumber: "TES-2026-000011",
+              bankReference: "REF-BANCO-011",
+              paidDate: new Date("2026-07-20T12:00:00.000"),
+            },
+          ],
+        ],
+      ])
     );
     expect(payload.invoices).toHaveLength(2);
     expect(
@@ -948,6 +967,24 @@ describe("internal BuildReq workbook", () => {
     ).toEqual([
       { quality: 5, promptPayment: 2 },
       { quality: 0, promptPayment: 0 },
+    ]);
+    expect(
+      payload.invoices.map(row => ({
+        batch: row["Lote de pago"],
+        bankReference: row["Referencia bancaria"],
+        paidDate: row["Fecha de pago"],
+      }))
+    ).toEqual([
+      {
+        batch: "TES-2026-000010, TES-2026-000011",
+        bankReference: "REF-BANCO-010, REF-BANCO-011",
+        paidDate: new Date("2026-07-20T12:00:00.000"),
+      },
+      {
+        batch: "TES-2026-000010, TES-2026-000011",
+        bankReference: "REF-BANCO-010, REF-BANCO-011",
+        paidDate: new Date("2026-07-20T12:00:00.000"),
+      },
     ]);
 
     const workbook = buildSystemWorkbook(XLSX, payload);
@@ -995,6 +1032,9 @@ describe("internal BuildReq workbook", () => {
     const header = rows[1];
     const financialCodeColumn = header.indexOf("Cod_Finanzas");
     const invoiceDescriptionColumn = header.indexOf("Descripcion_Fac.");
+    const paymentBatchColumn = header.indexOf("Lote de pago");
+    const bankReferenceColumn = header.indexOf("Referencia bancaria");
+    const paymentDateColumn = header.indexOf("Fecha de pago");
     expect(
       rows
         .slice(2, 4)
@@ -1002,6 +1042,26 @@ describe("internal BuildReq workbook", () => {
     ).toEqual([
       ["02010101", "ARTÍCULO DE CATÁLOGO A"],
       ["02020202", "ARTÍCULO DE CATÁLOGO B"],
+    ]);
+    expect(
+      rows
+        .slice(2, 4)
+        .map(row => [
+          row[paymentBatchColumn],
+          row[bankReferenceColumn],
+          row[paymentDateColumn],
+        ])
+    ).toEqual([
+      [
+        "TES-2026-000010, TES-2026-000011",
+        "REF-BANCO-010, REF-BANCO-011",
+        new Date("2026-07-20T12:00:00.000"),
+      ],
+      [
+        "TES-2026-000010, TES-2026-000011",
+        "REF-BANCO-010, REF-BANCO-011",
+        new Date("2026-07-20T12:00:00.000"),
+      ],
     ]);
     expect(rows.flat()).not.toContain("Data");
     expect(rows.flat()).not.toContain("Campos");
@@ -1218,6 +1278,9 @@ describe("DMC report authorization", () => {
     const orderSpy = vi
       .spyOn(db, "listSystemReportPurchaseOrderLines")
       .mockResolvedValue([]);
+    const treasuryPaymentsSpy = vi
+      .spyOn(treasury, "getTreasuryInvoiceReportPayments")
+      .mockResolvedValue(new Map());
     const caller = appRouter.createCaller(createUserContext());
 
     const orderPayload = await caller.reports.systemPurchaseOrders({
@@ -1253,6 +1316,7 @@ describe("DMC report authorization", () => {
         excludeStatus: "anulada",
       })
     );
+    expect(treasuryPaymentsSpy).toHaveBeenCalledWith([]);
   });
 
   it.each([
@@ -1299,6 +1363,9 @@ describe("DMC report authorization", () => {
     const orderSpy = vi
       .spyOn(db, "listSystemReportPurchaseOrderLines")
       .mockResolvedValue([]);
+    vi.spyOn(treasury, "getTreasuryInvoiceReportPayments").mockResolvedValue(
+      new Map()
+    );
     const caller = appRouter.createCaller(
       createUserContext({
         role: "user",

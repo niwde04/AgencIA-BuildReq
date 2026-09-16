@@ -8,6 +8,7 @@ import {
 import { buildSystemWorkbookPayload } from "@shared/system-workbook-report";
 import { z } from "zod";
 import * as db from "../db";
+import * as treasury from "../treasury";
 import { protectedProcedure, router } from "../_core/trpc";
 import { applyProjectScope } from "../projectAccess";
 
@@ -98,12 +99,21 @@ export const reportsRouter = router({
           applyProjectScope(purchaseOrderFilters, ctx.user)
         ),
       ]);
-      return buildSystemWorkbookPayload(sourceInvoices, purchaseOrderLines, {
-        generatedAt: new Date(),
-        dateFrom,
-        dateTo,
-        statusMode: input.statusMode,
-      });
+      const treasuryPaymentsByInvoice =
+        await treasury.getTreasuryInvoiceReportPayments(
+          sourceInvoices.map(invoice => invoice.invoiceId)
+        );
+      return buildSystemWorkbookPayload(
+        sourceInvoices,
+        purchaseOrderLines,
+        {
+          generatedAt: new Date(),
+          dateFrom,
+          dateTo,
+          statusMode: input.statusMode,
+        },
+        treasuryPaymentsByInvoice
+      );
     }),
   systemPurchaseOrders: protectedProcedure
     .input(
@@ -190,17 +200,26 @@ export const reportsRouter = router({
       const sourceInvoices = await db.listDmcReportSourceInvoices(
         applyProjectScope(invoiceFilters, ctx.user)
       );
-      return buildSystemWorkbookPayload(sourceInvoices, [], {
-        generatedAt: new Date(),
-        dateFrom,
-        dateTo,
-        statusMode:
-          input.status === "registrada"
-            ? "registered_only"
-            : input.status
-              ? "all"
-              : "non_void",
-      });
+      const treasuryPaymentsByInvoice =
+        await treasury.getTreasuryInvoiceReportPayments(
+          sourceInvoices.map(invoice => invoice.invoiceId)
+        );
+      return buildSystemWorkbookPayload(
+        sourceInvoices,
+        [],
+        {
+          generatedAt: new Date(),
+          dateFrom,
+          dateTo,
+          statusMode:
+            input.status === "registrada"
+              ? "registered_only"
+              : input.status
+                ? "all"
+                : "non_void",
+        },
+        treasuryPaymentsByInvoice
+      );
     }),
   dmcPurchases: protectedProcedure
     .input(

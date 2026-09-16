@@ -40,6 +40,9 @@ export const SYSTEM_INVOICE_HEADERS = [
   "Tipo_De_Comprobante",
   "Fecha Factura",
   "Nro. Factura",
+  "Lote de pago",
+  "Referencia bancaria",
+  "Fecha de pago",
   "Cai Factura",
   "Descripcion_Fac.",
   "Base_Isv_15%",
@@ -164,6 +167,12 @@ export type SystemWorkbookPayload = {
   };
 };
 
+export type SystemInvoiceTreasuryPayment = {
+  batchNumber: string;
+  bankReference?: string | null;
+  paidDate?: Date | string | null;
+};
+
 export type TreasuryInvoiceSummaryRow = Record<
   (typeof TREASURY_INVOICE_SUMMARY_HEADERS)[number],
   string | number | Date | null
@@ -286,7 +295,11 @@ export function buildSystemWorkbookPayload(
     dateFrom?: Date | string | null;
     dateTo?: Date | string | null;
     statusMode?: DmcStatusMode;
-  } = {}
+  } = {},
+  treasuryPaymentsByInvoice: ReadonlyMap<
+    number,
+    readonly SystemInvoiceTreasuryPayment[]
+  > = new Map()
 ): SystemWorkbookPayload {
   let registration = 0;
   const invoiceRows = invoices.flatMap(invoice => {
@@ -305,6 +318,26 @@ export function buildSystemWorkbookPayload(
       "prompt_payment_discount"
     );
     const tc = getInvoiceDocumentAdjustment(adjustments, "tc_discount");
+    const treasuryPayments =
+      treasuryPaymentsByInvoice.get(invoice.invoiceId) ?? [];
+    const treasuryBatchNumbers = Array.from(
+      new Set(
+        treasuryPayments
+          .map(payment => payment.batchNumber.trim())
+          .filter(Boolean)
+      )
+    ).join(", ");
+    const treasuryBankReferences = Array.from(
+      new Set(
+        treasuryPayments
+          .map(payment => payment.bankReference?.trim())
+          .filter((reference): reference is string => Boolean(reference))
+      )
+    ).join(", ");
+    const treasuryPaymentDates = treasuryPayments
+      .map(payment => dateValue(payment.paidDate))
+      .filter((date): date is Date => Boolean(date));
+    const latestTreasuryPaymentDate = treasuryPaymentDates.at(-1) ?? null;
     return rows.map((row, itemIndex) => {
       const invoiceItem = invoice.items[itemIndex];
       registration += 1;
@@ -319,6 +352,9 @@ export function buildSystemWorkbookPayload(
         Tipo_De_Comprobante: String(row.tipoDeComprobante ?? ""),
         "Fecha Factura": dateValue(row.fechaFactura as Date | string | null),
         "Nro. Factura": invoice.invoiceNumber || invoice.invoiceDocumentNumber,
+        "Lote de pago": treasuryBatchNumbers,
+        "Referencia bancaria": treasuryBankReferences,
+        "Fecha de pago": latestTreasuryPaymentDate,
         "Cai Factura": String(row.cai ?? ""),
         "Descripcion_Fac.": String(
           invoiceItem?.articleDescription ||
