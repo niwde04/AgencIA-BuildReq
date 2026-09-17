@@ -90,7 +90,6 @@ import {
 
 const PAGE_SIZE = 50;
 const EMPTY_PURCHASE_REQUESTS: any[] = [];
-const SHOW_PURCHASE_REQUEST_ATTACHMENTS = false;
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Borrador",
@@ -793,19 +792,6 @@ export default function PurchaseRequests() {
       },
       onError: error => toast.error(error.message),
     });
-
-  const attachQuoteMutation = trpc.purchaseRequests.attachQuote.useMutation({
-    onSuccess: () => {
-      toast.success("Cotización aprobada adjuntada");
-      void Promise.all([
-        utils.purchaseRequests.invalidate(),
-        selectedId
-          ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
-          : Promise.resolve(),
-      ]);
-    },
-    onError: error => toast.error(error.message),
-  });
 
   const selectedItems = useMemo(() => {
     return detail?.items ?? [];
@@ -2999,6 +2985,18 @@ export default function PurchaseRequests() {
                   ) : null
                 }
                 notes={detail.purchaseRequest.notes}
+                documentsDescription="Consulta los documentos adjuntos antes de finalizar la revisión."
+                documentsContent={
+                  <DocumentAttachmentsPanel
+                    entityType="purchase_request"
+                    entityId={detail.purchaseRequest.id}
+                    category="otro"
+                    title="Archivos disponibles"
+                    canManage={false}
+                    canDelete={false}
+                    className="rounded-none border-0"
+                  />
+                }
                 history={[...approvalHistory]
                   .sort(
                     (left, right) =>
@@ -3236,23 +3234,13 @@ export default function PurchaseRequests() {
                 </div>
               )}
 
-              {SHOW_PURCHASE_REQUEST_ATTACHMENTS ? (
-                <DocumentAttachmentsPanel
-                  entityType="purchase_request"
-                  entityId={selectedId}
-                  category="documento_proveedor"
-                  title="Adjuntos y cotizaciones"
-                  canManage={canManagePurchaseRequestAttachments}
-                  disabled={attachQuoteMutation.isPending}
-                  onUploadSuccess={result => {
-                    if (!selectedId) return;
-                    attachQuoteMutation.mutate({
-                      id: selectedId,
-                      attachmentId: result.id,
-                    });
-                  }}
-                />
-              ) : null}
+              <DocumentAttachmentsPanel
+                entityType="purchase_request"
+                entityId={detail.purchaseRequest.id}
+                category="otro"
+                title="Documentos adjuntos"
+                canManage={canManagePurchaseRequestAttachments}
+              />
 
               <div className="min-w-0 rounded-2xl border border-border/70 bg-card">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4">

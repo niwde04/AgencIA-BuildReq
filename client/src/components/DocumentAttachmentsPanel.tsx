@@ -82,7 +82,8 @@ export function DocumentAttachmentsPanel({
     entityType,
     entityId: resolvedEntityId,
   };
-  const { data, isLoading } = trpc.attachments.getByEntity.useQuery(
+  const { data, isLoading, error, refetch } =
+    trpc.attachments.getByEntity.useQuery(
     queryInput,
     { enabled }
   );
@@ -194,6 +195,12 @@ export function DocumentAttachmentsPanel({
         ) : null}
       </div>
 
+      {canManage ? (
+        <p className="text-xs text-muted-foreground">
+          PDF hasta 10 MB o imágenes JPG, PNG y WebP.
+        </p>
+      ) : null}
+
       {replacesInvoiceAttachments ? (
         <p className="text-xs text-muted-foreground">
           Al cargar otro archivo, se eliminarán todos los adjuntos actuales.
@@ -203,6 +210,19 @@ export function DocumentAttachmentsPanel({
       {isLoading ? (
         <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
           Cargando adjuntos...
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-dashed border-destructive/50 p-4 text-sm">
+          <p>No se pudieron cargar los documentos adjuntos.</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => void refetch()}
+          >
+            Reintentar
+          </Button>
         </div>
       ) : attachments.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
