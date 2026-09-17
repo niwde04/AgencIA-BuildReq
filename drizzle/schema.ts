@@ -2445,6 +2445,10 @@ export const openingBalanceItems = pgTable(
   {
     id: serial("id").primaryKey(),
     openingBalanceId: integer("openingBalanceId").notNull(),
+    projectId: integer("projectId").references(() => projects.id, {
+      onDelete: "restrict",
+    }),
+    storageLocation: varchar("storageLocation", { length: 255 }),
     sapItemCode: varchar("sapItemCode", { length: 50 }).notNull(),
     itemName: varchar("itemName", { length: 500 }).notNull(),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),

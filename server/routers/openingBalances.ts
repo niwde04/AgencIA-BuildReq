@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { openingBalanceItemSchema } from "../../shared/opening-balances";
 
 function canManageOpeningBalances(user: {
   role: string;
@@ -14,15 +15,24 @@ function canManageOpeningBalances(user: {
   );
 }
 
-const openingBalanceItemSchema = z.object({
-  sapItemCode: z.string().trim().min(1).max(50),
-  itemName: z.string().trim().min(1).max(500),
-  quantity: z.string().trim().min(1),
-  unit: z.string().trim().max(50).optional(),
-  notes: z.string().trim().max(1000).optional(),
-});
-
 export const openingBalancesRouter = router({
+  storageLocations: protectedProcedure
+    .input(
+      z.object({
+        warehouseId: z.number().int().positive(),
+        projectId: z.number().int().positive(),
+        search: z.string().trim().max(255).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canManageOpeningBalances(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a saldos iniciales",
+        });
+      }
+      return db.listOpeningBalanceStorageLocations(input);
+    }),
   list: protectedProcedure
     .input(
       z
@@ -86,13 +96,17 @@ export const openingBalancesRouter = router({
           projectId: input.projectId,
           warehouseId: input.warehouseId,
           createdById: ctx.user.id,
-          openingDate: input.openingDate ? new Date(input.openingDate) : new Date(),
+          openingDate: input.openingDate
+            ? new Date(input.openingDate)
+            : new Date(),
           notes: input.notes,
         },
-        input.items.map((item) => ({
+        input.items.map(item => ({
           sapItemCode: item.sapItemCode,
           itemName: item.itemName,
           quantity: item.quantity,
+          projectId: item.projectId,
+          storageLocation: item.storageLocation,
           unit: item.unit,
           notes: item.notes,
         }))
@@ -116,10 +130,12 @@ export const openingBalancesRouter = router({
 
       return db.addOpeningBalanceItems(
         input.id,
-        input.items.map((item) => ({
+        input.items.map(item => ({
           sapItemCode: item.sapItemCode,
           itemName: item.itemName,
           quantity: item.quantity,
+          projectId: item.projectId,
+          storageLocation: item.storageLocation,
           unit: item.unit,
           notes: item.notes,
         }))

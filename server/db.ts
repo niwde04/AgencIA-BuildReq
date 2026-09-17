@@ -21,6 +21,10 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { alias } from "drizzle-orm/pg-core";
 import { Pool } from "pg";
 import {
+  normalizeOpeningBalanceItems,
+  type OpeningBalanceItemInput,
+} from "../shared/opening-balances";
+import {
   assertValidTransferConversionDestination,
   TransferConversionValidationError,
 } from "./transferConversionValidation";
@@ -119,7 +123,6 @@ import type {
   InsertWarehouseExit,
   InsertWarehouseExitItem,
   InsertOpeningBalance,
-  InsertOpeningBalanceItem,
   InsertReverseLogistic,
   InsertReverseLogisticItem,
   InsertAttachment,
@@ -317,7 +320,7 @@ function selectWarehouseExitColumns(includePrintedDocumentContent = true): any {
 const DEFAULT_DATABASE_POOL_MAX = 4;
 let _pool: Pool | null = null;
 let _db: ReturnType<typeof drizzle> | null = null;
-const receiptRegistrationDb = new AsyncLocalStorage<
+const databaseTransactionScope = new AsyncLocalStorage<
   ReturnType<typeof drizzle>
 >();
 
@@ -384,7 +387,7 @@ function instrumentDatabasePool(pool: Pool) {
 }
 
 export async function getDb(): Promise<ReturnType<typeof drizzle> | null> {
-  const scopedDb = receiptRegistrationDb.getStore();
+  const scopedDb = databaseTransactionScope.getStore();
   if (scopedDb) return scopedDb;
 
   if (!_db && process.env.DATABASE_URL) {
@@ -13043,11 +13046,11 @@ export async function registerReceipt(
   invoiceId?: number;
   invoiceDocumentNumber?: string;
 }> {
-  if (!receiptRegistrationDb.getStore()) {
+  if (!databaseTransactionScope.getStore()) {
     const rootDb = await getDb();
     if (!rootDb) throw new Error("DB not available");
     return rootDb.transaction(transactionDb =>
-      receiptRegistrationDb.run(transactionDb as any, () =>
+      databaseTransactionScope.run(transactionDb as any, () =>
         registerReceipt(data, items, otherCharges)
       )
     );
@@ -13702,11 +13705,11 @@ export async function saveReceiptDraft(
   status: (typeof receipts.$inferSelect)["status"];
   updated: boolean;
 }> {
-  if (data.sourceType === "transfer" && !receiptRegistrationDb.getStore()) {
+  if (data.sourceType === "transfer" && !databaseTransactionScope.getStore()) {
     const rootDb = await getDb();
     if (!rootDb) throw new Error("DB not available");
     return rootDb.transaction(transactionDb =>
-      receiptRegistrationDb.run(transactionDb as any, () =>
+      databaseTransactionScope.run(transactionDb as any, () =>
         saveReceiptDraft(data, items, otherCharges)
       )
     );
@@ -18052,15 +18055,12 @@ export async function listOpeningBalances(filters?: {
   if (!db) return [];
 
   const conditions = [];
+  const itemProjectId = sql<number>`coalesce(${openingBalanceItems.projectId}, ${openingBalances.projectId})`;
   if (filters?.projectId) {
-    conditions.push(eq(openingBalances.projectId, filters.projectId));
+    conditions.push(eq(itemProjectId, filters.projectId));
   }
   if (filters?.projectIds) {
-    applyProjectScope(
-      conditions,
-      openingBalances.projectId,
-      filters.projectIds
-    );
+    applyProjectScope(conditions, itemProjectId, filters.projectIds);
   }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -18175,8 +18175,18 @@ export async function getOpeningBalanceById(id: number) {
   if (!rows[0]) return undefined;
 
   const items = await db
-    .select()
+    .select({
+      ...getTableColumns(openingBalanceItems),
+      project: { id: projects.id, code: projects.code, name: projects.name },
+    })
     .from(openingBalanceItems)
+    .leftJoin(
+      projects,
+      eq(
+        projects.id,
+        sql<number>`coalesce(${openingBalanceItems.projectId}, ${rows[0].openingBalance.projectId})`
+      )
+    )
     .where(eq(openingBalanceItems.openingBalanceId, id))
     .orderBy(asc(openingBalanceItems.id));
 
@@ -18234,48 +18244,113 @@ async function getOpeningBalanceProjectForWarehouse(warehouseId: number) {
   return legacyRows[0] ?? null;
 }
 
+async function validateOpeningBalanceProjects(
+  projectIds: number[],
+  warehouseId: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const distinctIds = Array.from(new Set(projectIds));
+  const activeProjects = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(
+      and(inArray(projects.id, distinctIds), eq(projects.status, "activo"))
+    );
+  if (activeProjects.length !== distinctIds.length) {
+    throw new Error(
+      "Seleccione un proyecto activo para cada ítem del saldo inicial"
+    );
+  }
+  for (const projectId of distinctIds) {
+    await resolveProjectAssignment(projectId, warehouseId);
+  }
+}
+
+export async function listOpeningBalanceStorageLocations(params: {
+  warehouseId: number;
+  projectId: number;
+  search?: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await validateOpeningBalanceProjects([params.projectId], params.warehouseId);
+  const location = sql<string>`nullif(btrim(${inventoryItems.storageLocation}), '')`;
+  const conditions = [
+    eq(inventoryItems.warehouseId, params.warehouseId),
+    eq(inventoryItems.projectId, params.projectId),
+    eq(inventoryItems.isActive, true),
+    sql`${location} IS NOT NULL`,
+  ];
+  if (params.search?.trim())
+    conditions.push(ilike(location, `%${params.search.trim()}%`));
+  const rows = await db
+    .selectDistinct({ storageLocation: location })
+    .from(inventoryItems)
+    .where(and(...conditions))
+    .orderBy(location)
+    .limit(50);
+  return rows.map(row => row.storageLocation);
+}
+
 export async function createOpeningBalance(
   data: Omit<InsertOpeningBalance, "balanceNumber" | "projectId"> & {
     projectId?: number | null;
   },
-  items: Omit<InsertOpeningBalanceItem, "openingBalanceId">[]
-) {
+  items: OpeningBalanceItemInput[]
+): Promise<{ id: number; balanceNumber: string; warehouseId: number }> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  if (items.length === 0) {
-    throw new Error("Debe registrar al menos un ítem");
-  }
-
-  const project = data.projectId
-    ? await getProjectById(data.projectId)
-    : await getOpeningBalanceProjectForWarehouse(data.warehouseId);
-  if (!project) {
-    throw new Error(
-      data.projectId
-        ? "El proyecto seleccionado no existe"
-        : "El almacén seleccionado no tiene proyecto activo asignado"
+  if (!databaseTransactionScope.getStore()) {
+    return db.transaction(tx =>
+      databaseTransactionScope.run(tx as any, () =>
+        createOpeningBalance(data, items)
+      )
     );
   }
 
-  const assignment = await resolveProjectAssignment(
-    project.id,
-    data.warehouseId
-  );
-  if (!assignment) {
-    throw new Error("Debe seleccionar un almacén del proyecto");
-  }
-  const warehouse = assignment.warehouse;
-  const existingBalance = await db
+  const [warehouse] = await db
     .select()
+    .from(warehouses)
+    .where(
+      and(eq(warehouses.id, data.warehouseId), eq(warehouses.isActive, true))
+    )
+    .limit(1)
+    .for("update");
+  if (!warehouse)
+    throw new Error(
+      "Seleccione un almacén activo para registrar el saldo inicial"
+    );
+
+  const project = data.projectId
+    ? (
+        await db
+          .select()
+          .from(projects)
+          .where(eq(projects.id, data.projectId))
+          .limit(1)
+      )[0]
+    : await getOpeningBalanceProjectForWarehouse(warehouse.id);
+  if (!project || project.status !== "activo") {
+    throw new Error(
+      "El almacén seleccionado debe tener un proyecto activo asignado"
+    );
+  }
+  const normalized = normalizeOpeningBalanceItems(items, project.id);
+  await validateOpeningBalanceProjects(
+    [project.id, ...normalized.map(item => item.projectId)],
+    warehouse.id
+  );
+
+  const [existingBalance] = await db
+    .select({ id: openingBalances.id })
     .from(openingBalances)
     .where(eq(openingBalances.warehouseId, warehouse.id))
     .limit(1);
-
-  if (existingBalance[0]) {
+  if (existingBalance)
     throw new Error(
       `La bodega ${warehouse.displayName} ya tiene un saldo inicial registrado.`
     );
-  }
 
   const balanceNumber = await generateOpeningBalanceNumber(project.id);
   const [created] = await db
@@ -18288,99 +18363,83 @@ export async function createOpeningBalance(
       openingDate: data.openingDate ?? new Date(),
     })
     .returning({ id: openingBalances.id });
-
-  const normalizedItems = items.map(item => ({
+  const normalizedItems = normalized.map(item => ({
+    ...item,
     openingBalanceId: created.id,
-    sapItemCode: item.sapItemCode.trim(),
-    itemName: item.itemName.trim(),
-    quantity: toDecimalString(item.quantity),
-    unit: item.unit?.trim() || null,
-    notes: item.notes?.trim() || null,
   }));
-
   await db.insert(openingBalanceItems).values(normalizedItems);
-
   for (const item of normalizedItems) {
     await addInventoryStock({
       sapItemCode: item.sapItemCode,
       itemName: item.itemName,
       unit: item.unit,
-      projectId: project.id,
+      projectId: item.projectId,
       quantity: item.quantity,
       warehouseId: warehouse.id,
       warehouseLocation: warehouse.displayName,
+      storageLocation: item.storageLocation,
     });
   }
-
-  return {
-    id: created.id,
-    balanceNumber,
-    warehouseId: warehouse.id,
-  };
+  return { id: created.id, balanceNumber, warehouseId: warehouse.id };
 }
 
 export async function addOpeningBalanceItems(
   openingBalanceId: number,
-  items: Omit<InsertOpeningBalanceItem, "openingBalanceId">[]
-) {
+  items: OpeningBalanceItemInput[]
+): Promise<{ success: boolean; addedItems: number }> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  if (items.length === 0) {
-    throw new Error("Debe agregar al menos un ítem");
+  if (!databaseTransactionScope.getStore()) {
+    return db.transaction(tx =>
+      databaseTransactionScope.run(tx as any, () =>
+        addOpeningBalanceItems(openingBalanceId, items)
+      )
+    );
   }
+  const [balance] = await db
+    .select()
+    .from(openingBalances)
+    .where(eq(openingBalances.id, openingBalanceId))
+    .limit(1);
+  if (!balance) throw new Error("Saldo inicial no encontrado");
+  const [warehouse] = await db
+    .select()
+    .from(warehouses)
+    .where(
+      and(eq(warehouses.id, balance.warehouseId), eq(warehouses.isActive, true))
+    )
+    .limit(1)
+    .for("update");
+  if (!warehouse)
+    throw new Error("El saldo inicial no tiene una bodega activa asignada");
 
-  const detail = await getOpeningBalanceById(openingBalanceId);
-  if (!detail) {
-    throw new Error("Saldo inicial no encontrado");
-  }
-  if (!detail.project) {
-    throw new Error("El saldo inicial no tiene proyecto asociado");
-  }
-
-  const warehouse = detail.warehouse;
-  if (!warehouse) {
-    throw new Error("El saldo inicial no tiene bodega asignada");
-  }
-
-  const normalizedItems = items.map(item => {
-    const quantity = parseDecimal(item.quantity);
-    if (quantity <= 0) {
-      throw new Error("Todas las cantidades deben ser mayores que cero");
-    }
-
-    return {
-      openingBalanceId,
-      sapItemCode: item.sapItemCode.trim(),
-      itemName: item.itemName.trim(),
-      quantity: toDecimalString(quantity),
-      unit: item.unit?.trim() || null,
-      notes: item.notes?.trim() || null,
-    };
-  });
-
+  const normalized = normalizeOpeningBalanceItems(items, balance.projectId);
+  await validateOpeningBalanceProjects(
+    normalized.map(item => item.projectId),
+    warehouse.id
+  );
+  const normalizedItems = normalized.map(item => ({
+    ...item,
+    openingBalanceId,
+  }));
   await db.insert(openingBalanceItems).values(normalizedItems);
-
   for (const item of normalizedItems) {
     await addInventoryStock({
       sapItemCode: item.sapItemCode,
       itemName: item.itemName,
       unit: item.unit,
-      projectId: detail.project.id,
+      projectId: item.projectId,
       quantity: item.quantity,
       warehouseId: warehouse.id,
       warehouseLocation: warehouse.displayName,
+      storageLocation: item.storageLocation,
     });
   }
-
   await db
     .update(openingBalances)
     .set({ updatedAt: new Date() })
     .where(eq(openingBalances.id, openingBalanceId));
-
-  return {
-    success: true,
-    addedItems: normalizedItems.length,
-  };
+  return { success: true, addedItems: normalizedItems.length };
 }
 
 // ============================================================
@@ -20052,7 +20111,6 @@ async function addInventoryStock(params: {
     const existingStorageLocation =
       normalizeInventoryStorageLocation(existingRow.storageLocation) ??
       normalizedStorageLocation;
-    const nextStock = parseDecimal(existingRow.currentStock) + quantityToAdd;
     await db
       .update(inventoryItems)
       .set({
@@ -20067,7 +20125,7 @@ async function addInventoryStock(params: {
         ...(hasStorageLocationFilter
           ? { storageLocation: existingStorageLocation }
           : {}),
-        currentStock: toDecimalString(nextStock),
+        currentStock: sql`${inventoryItems.currentStock} + ${toDecimalString(quantityToAdd)}::numeric`,
         isActive: true,
         updatedAt: new Date(),
       })
@@ -21961,10 +22019,11 @@ export async function getInventoryKardex(params: {
     balanceConditions.push(eq(inventoryItems.warehouseId, params.warehouseId));
   }
 
+  const openingItemProjectId = sql<number>`coalesce(${openingBalanceItems.projectId}, ${openingBalances.projectId})`;
   const openingConditions = [eq(openingBalanceItems.sapItemCode, sapItemCode)];
   applyProjectScope(
     openingConditions,
-    openingBalances.projectId,
+    openingItemProjectId,
     scopeProjectIds
   );
   if (params.warehouseId) {
@@ -22071,7 +22130,7 @@ export async function getInventoryKardex(params: {
         openingBalances,
         eq(openingBalanceItems.openingBalanceId, openingBalances.id)
       )
-      .leftJoin(projects, eq(openingBalances.projectId, projects.id))
+      .leftJoin(projects, eq(openingItemProjectId, projects.id))
       .leftJoin(warehouses, eq(openingBalances.warehouseId, warehouses.id))
       .where(and(...openingConditions))
       .orderBy(desc(openingBalances.openingDate), desc(openingBalanceItems.id))

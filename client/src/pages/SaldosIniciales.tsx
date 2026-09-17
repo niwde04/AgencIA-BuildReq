@@ -25,12 +25,23 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Check, ChevronsUpDown, Eye, Package, Plus, Search, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+  Check,
+  ChevronsUpDown,
+  Eye,
+  Package,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { UNITS } from "@shared/units";
+import { openingBalanceItemSchema } from "@shared/opening-balances";
 
 type OpeningBalanceItemRow = {
+  projectId: string;
+  storageLocation: string;
   sapItemCode: string;
   itemName: string;
   quantity: string;
@@ -39,6 +50,8 @@ type OpeningBalanceItemRow = {
 };
 
 const EMPTY_ROW: OpeningBalanceItemRow = {
+  projectId: "",
+  storageLocation: "",
   sapItemCode: "",
   itemName: "",
   quantity: "",
@@ -55,7 +68,12 @@ function formatWarehouseLabel(warehouse: any | null | undefined) {
   if (!warehouse) return "Seleccione almacén";
   const localCode = warehouse.localCode || warehouse.code;
   if (localCode && warehouse.name) return `${localCode} - ${warehouse.name}`;
-  return warehouse.displayName || warehouse.name || warehouse.code || "Seleccione almacén";
+  return (
+    warehouse.displayName ||
+    warehouse.name ||
+    warehouse.code ||
+    "Seleccione almacén"
+  );
 }
 
 function SapItemSearchInput({
@@ -76,10 +94,11 @@ function SapItemSearchInput({
   const [search, setSearch] = useState(value);
   const [open, setOpen] = useState(false);
   const trimmedSearch = search.trim();
-  const { data: results, isFetching } = trpc.requestItems.searchSapCatalog.useQuery(
-    { search: trimmedSearch },
-    { enabled: trimmedSearch.length >= 2 }
-  );
+  const { data: results, isFetching } =
+    trpc.requestItems.searchSapCatalog.useQuery(
+      { search: trimmedSearch },
+      { enabled: trimmedSearch.length >= 2 }
+    );
 
   useEffect(() => {
     setSearch(value);
@@ -95,7 +114,7 @@ function SapItemSearchInput({
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
-            onChange={(event) => {
+            onChange={event => {
               const nextValue = event.target.value;
               setSearch(nextValue);
               onChange(nextValue);
@@ -106,14 +125,16 @@ function SapItemSearchInput({
               window.setTimeout(() => setOpen(false), 120);
               if (trimmedSearch && !hasResults && !isFetching) onResolve();
             }}
-            onKeyDown={(event) => {
+            onKeyDown={event => {
               if (event.key === "Enter") {
                 event.preventDefault();
                 onResolve();
                 setOpen(false);
               }
             }}
-            placeholder={resolving ? "Buscando..." : "Buscar código o descripción"}
+            placeholder={
+              resolving ? "Buscando..." : "Buscar código o descripción"
+            }
             className="pl-9"
             disabled={disabled || resolving}
           />
@@ -122,7 +143,7 @@ function SapItemSearchInput({
       <PopoverContent
         align="start"
         className="max-h-[280px] w-[var(--radix-popover-trigger-width)] overflow-y-auto p-0"
-        onOpenAutoFocus={(event) => event.preventDefault()}
+        onOpenAutoFocus={event => event.preventDefault()}
       >
         {isFetching ? (
           <div className="p-3 text-sm text-muted-foreground">Buscando...</div>
@@ -133,7 +154,7 @@ function SapItemSearchInput({
                 key={item.id}
                 type="button"
                 className="flex w-full items-start gap-3 border-b border-border px-3 py-2 text-left transition-colors last:border-0 hover:bg-muted/60"
-                onMouseDown={(event) => event.preventDefault()}
+                onMouseDown={event => event.preventDefault()}
                 onClick={() => {
                   onSelect(item.itemCode, item.description);
                   setSearch(item.itemCode);
@@ -167,7 +188,7 @@ function UnitCombobox({
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const selectedUnit = UNITS.find((unit) => unit.value === value);
+  const selectedUnit = UNITS.find(unit => unit.value === value);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -191,7 +212,7 @@ function UnitCombobox({
           <CommandList>
             <CommandEmpty>No se encontraron unidades.</CommandEmpty>
             <CommandGroup>
-              {UNITS.map((unit) => {
+              {UNITS.map(unit => {
                 const selected = value === unit.value;
 
                 return (
@@ -220,18 +241,189 @@ function UnitCombobox({
   );
 }
 
+type ProjectOption = { id: number; code: string; name: string };
+
+function OpeningBalanceDestinationFields({
+  item,
+  defaultProjectId,
+  warehouseId,
+  projects,
+  disabled,
+  onChange,
+}: {
+  item: OpeningBalanceItemRow;
+  defaultProjectId?: number;
+  warehouseId?: number;
+  projects: ProjectOption[];
+  disabled?: boolean;
+  onChange: (field: "projectId" | "storageLocation", value: string) => void;
+}) {
+  const projectInputId = useId();
+  const locationInputId = useId();
+  const locationListId = useId();
+  const [open, setOpen] = useState(false);
+  const [locationFocused, setLocationFocused] = useState(false);
+  const [locationSearch, setLocationSearch] = useState(item.storageLocation);
+  const projectId = Number(item.projectId || defaultProjectId) || undefined;
+  const selectedProject = projects.find(project => project.id === projectId);
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setLocationSearch(item.storageLocation),
+      250
+    );
+    return () => window.clearTimeout(timer);
+  }, [item.storageLocation]);
+  const locations = trpc.openingBalances.storageLocations.useQuery(
+    {
+      warehouseId: warehouseId ?? 0,
+      projectId: projectId ?? 0,
+      search: locationSearch,
+    },
+    {
+      enabled:
+        locationFocused && !disabled && Boolean(warehouseId && selectedProject),
+      staleTime: 30_000,
+    }
+  );
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div className="min-w-0 space-y-1">
+        <Label htmlFor={projectInputId} className="text-xs">
+          Proyecto *
+        </Label>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              id={projectInputId}
+              type="button"
+              variant="outline"
+              role="combobox"
+              aria-expanded={open}
+              disabled={disabled || !warehouseId || !projects.length}
+              className="h-10 w-full justify-between font-normal"
+            >
+              <span
+                className={`truncate ${selectedProject ? "" : "text-muted-foreground"}`}
+              >
+                {selectedProject
+                  ? formatProjectLabel(selectedProject)
+                  : "Seleccione proyecto"}
+              </span>
+              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="start"
+            className="w-[var(--radix-popover-trigger-width)] p-0"
+          >
+            <Command>
+              <CommandInput placeholder="Buscar proyecto..." />
+              <CommandList>
+                <CommandEmpty>No se encontraron proyectos.</CommandEmpty>
+                <CommandGroup>
+                  {projects.map(project => (
+                    <CommandItem
+                      key={project.id}
+                      value={formatProjectLabel(project)}
+                      onSelect={() => {
+                        onChange("projectId", String(project.id));
+                        onChange("storageLocation", "");
+                        setOpen(false);
+                      }}
+                    >
+                      <Check
+                        className={`h-4 w-4 ${project.id === projectId ? "opacity-100" : "opacity-0"}`}
+                      />
+                      <span>{formatProjectLabel(project)}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+        {warehouseId && !projects.length ? (
+          <p className="text-xs text-destructive">
+            Esta bodega no tiene proyectos activos disponibles.
+          </p>
+        ) : null}
+      </div>
+      <div className="min-w-0 space-y-1">
+        <Label htmlFor={locationInputId} className="text-xs">
+          Ubicación
+        </Label>
+        <Input
+          id={locationInputId}
+          list={locationListId}
+          value={item.storageLocation}
+          maxLength={255}
+          disabled={disabled || !selectedProject}
+          onFocus={() => setLocationFocused(true)}
+          onBlur={() => setLocationFocused(false)}
+          onChange={event => onChange("storageLocation", event.target.value)}
+          placeholder="Estante, zona o plantel"
+        />
+        <datalist id={locationListId}>
+          {(locations.data ?? []).map(location => (
+            <option key={location} value={location} />
+          ))}
+        </datalist>
+        <p className="text-xs text-muted-foreground">
+          {locations.isError
+            ? "No se pudieron cargar las sugerencias. Puede escribir la ubicación."
+            : "Seleccione una ubicación existente o escriba una nueva."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function prepareOpeningBalanceItems(
+  rows: OpeningBalanceItemRow[],
+  defaultProjectId: number | undefined,
+  projects: ProjectOption[]
+) {
+  const allowedProjects = new Set(projects.map(project => project.id));
+  const result = [];
+  for (const [index, row] of Array.from(rows.entries())) {
+    const parsed = openingBalanceItemSchema.safeParse({
+      ...row,
+      projectId: Number(row.projectId || defaultProjectId) || undefined,
+    });
+    if (!parsed.success) {
+      toast.error(
+        `Ítem ${index + 1}: complete código, descripción y una cantidad válida de hasta dos decimales.`
+      );
+      return null;
+    }
+    if (!parsed.data.projectId || !allowedProjects.has(parsed.data.projectId)) {
+      toast.error(
+        `Ítem ${index + 1}: seleccione un proyecto activo asignado a esta bodega.`
+      );
+      return null;
+    }
+    result.push(parsed.data);
+  }
+  return result;
+}
+
 export default function SaldosIniciales() {
   const utils = trpc.useUtils();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [resolvingSapIndex, setResolvingSapIndex] = useState<number | null>(null);
+  const [resolvingSapIndex, setResolvingSapIndex] = useState<number | null>(
+    null
+  );
   const [warehouseComboboxOpen, setWarehouseComboboxOpen] = useState(false);
   const [warehouseId, setWarehouseId] = useState("");
   const [openingDate, setOpeningDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
   const [notes, setNotes] = useState("");
-  const [items, setItems] = useState<OpeningBalanceItemRow[]>([{ ...EMPTY_ROW }]);
+  const [items, setItems] = useState<OpeningBalanceItemRow[]>([
+    { ...EMPTY_ROW },
+  ]);
   const [appendItems, setAppendItems] = useState<OpeningBalanceItemRow[]>([
     { ...EMPTY_ROW },
   ]);
@@ -266,7 +458,10 @@ export default function SaldosIniciales() {
           hasOpeningBalance: warehousesWithOpeningBalanceIds.has(warehouseKey),
         };
         const current = byWarehouseId.get(warehouseKey);
-        if (!current || (warehouse.isPrimary && !current.warehouse?.isPrimary)) {
+        if (
+          !current ||
+          (warehouse.isPrimary && !current.warehouse?.isPrimary)
+        ) {
           byWarehouseId.set(warehouseKey, option);
         }
       }
@@ -281,7 +476,9 @@ export default function SaldosIniciales() {
   }, [projects, warehousesWithOpeningBalanceIds]);
 
   const selectableWarehousesCount = useMemo(
-    () => warehouseOptions.filter((option: any) => !option.hasOpeningBalance).length,
+    () =>
+      warehouseOptions.filter((option: any) => !option.hasOpeningBalance)
+        .length,
     [warehouseOptions]
   );
 
@@ -301,6 +498,27 @@ export default function SaldosIniciales() {
     [warehouseOptions, warehouseId]
   );
   const selectedWarehouse = selectedWarehouseOption?.warehouse ?? null;
+  const createProjectOptions = useMemo(
+    () =>
+      (projects ?? []).filter(project =>
+        project.warehouses?.some(
+          warehouse =>
+            warehouse.id === Number(warehouseId) && warehouse.isActive
+        )
+      ),
+    [projects, warehouseId]
+  );
+  const appendProjectOptions = useMemo(
+    () =>
+      (projects ?? []).filter(project =>
+        project.warehouses?.some(
+          warehouse =>
+            warehouse.id === detail?.openingBalance.warehouseId &&
+            warehouse.isActive
+        )
+      ),
+    [projects, detail?.openingBalance.warehouseId]
+  );
   useEffect(() => {
     if (!warehouseId) return;
     const currentStillAvailable = warehouseOptions.some(
@@ -313,36 +531,40 @@ export default function SaldosIniciales() {
   }, [warehouseOptions, warehouseId]);
 
   const createMutation = trpc.openingBalances.create.useMutation({
-    onSuccess: (result) => {
+    onSuccess: result => {
       toast.success(`Saldo inicial ${result.balanceNumber} registrado`);
       setDialogOpen(false);
       resetForm();
       void Promise.all([
         utils.openingBalances.list.invalidate(),
+        utils.openingBalances.storageLocations.invalidate(),
         utils.inventory.list.invalidate(),
         utils.projects.list.invalidate(),
         utils.warehouses.list.invalidate(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
   const lookupSapItemMutation = trpc.requestItems.lookupSapItem.useMutation({
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
   const addItemsMutation = trpc.openingBalances.addItems.useMutation({
-    onSuccess: (result) => {
-      toast.success(`${result.addedItems} ítem(s) agregado(s) al saldo inicial`);
+    onSuccess: result => {
+      toast.success(
+        `${result.addedItems} ítem(s) agregado(s) al saldo inicial`
+      );
       setAppendItems([{ ...EMPTY_ROW }]);
       setResolvingAppendSapIndex(null);
       void Promise.all([
         utils.openingBalances.list.invalidate(),
+        utils.openingBalances.storageLocations.invalidate(),
         selectedId
           ? utils.openingBalances.getById.invalidate({ id: selectedId })
           : Promise.resolve(),
         utils.inventory.list.invalidate(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
 
   const resetForm = () => {
@@ -359,18 +581,20 @@ export default function SaldosIniciales() {
     field: keyof OpeningBalanceItemRow,
     value: string
   ) => {
-    setItems((current) => {
+    setItems(current => {
       const next = [...current];
       next[index] = { ...next[index], [field]: value };
       return next;
     });
   };
 
-  const addItem = () => setItems((current) => [...current, { ...EMPTY_ROW }]);
+  const addItem = () => setItems(current => [...current, { ...EMPTY_ROW }]);
 
   const removeItem = (index: number) => {
-    setItems((current) =>
-      current.length === 1 ? current : current.filter((_, itemIndex) => itemIndex !== index)
+    setItems(current =>
+      current.length === 1
+        ? current
+        : current.filter((_, itemIndex) => itemIndex !== index)
     );
   };
 
@@ -379,7 +603,7 @@ export default function SaldosIniciales() {
     field: keyof OpeningBalanceItemRow,
     value: string
   ) => {
-    setAppendItems((current) => {
+    setAppendItems(current => {
       const next = [...current];
       next[index] = { ...next[index], [field]: value };
       return next;
@@ -387,10 +611,10 @@ export default function SaldosIniciales() {
   };
 
   const addAppendItem = () =>
-    setAppendItems((current) => [...current, { ...EMPTY_ROW }]);
+    setAppendItems(current => [...current, { ...EMPTY_ROW }]);
 
   const removeAppendItem = (index: number) => {
-    setAppendItems((current) =>
+    setAppendItems(current =>
       current.length === 1
         ? current
         : current.filter((_, itemIndex) => itemIndex !== index)
@@ -409,7 +633,7 @@ export default function SaldosIniciales() {
       });
 
       if (!result) {
-        setItems((current) => {
+        setItems(current => {
           const next = [...current];
           if (!next[index]) return current;
           next[index] = {
@@ -421,7 +645,7 @@ export default function SaldosIniciales() {
         return;
       }
 
-      setItems((current) => {
+      setItems(current => {
         const next = [...current];
         const currentRow = next[index];
         if (!currentRow) return current;
@@ -429,13 +653,16 @@ export default function SaldosIniciales() {
         next[index] = {
           ...currentRow,
           sapItemCode: result.sapItemCode,
-          itemName: currentRow.itemName.trim() || result.itemName || currentRow.itemName,
+          itemName:
+            currentRow.itemName.trim() ||
+            result.itemName ||
+            currentRow.itemName,
           unit: currentRow.unit.trim() || result.unit || currentRow.unit,
         };
         return next;
       });
     } finally {
-      setResolvingSapIndex((current) => (current === index ? null : current));
+      setResolvingSapIndex(current => (current === index ? null : current));
     }
   };
 
@@ -451,7 +678,7 @@ export default function SaldosIniciales() {
       });
 
       if (!result) {
-        setAppendItems((current) => {
+        setAppendItems(current => {
           const next = [...current];
           if (!next[index]) return current;
           next[index] = {
@@ -463,7 +690,7 @@ export default function SaldosIniciales() {
         return;
       }
 
-      setAppendItems((current) => {
+      setAppendItems(current => {
         const next = [...current];
         const currentRow = next[index];
         if (!currentRow) return current;
@@ -471,13 +698,18 @@ export default function SaldosIniciales() {
         next[index] = {
           ...currentRow,
           sapItemCode: result.sapItemCode,
-          itemName: currentRow.itemName.trim() || result.itemName || currentRow.itemName,
+          itemName:
+            currentRow.itemName.trim() ||
+            result.itemName ||
+            currentRow.itemName,
           unit: currentRow.unit.trim() || result.unit || currentRow.unit,
         };
         return next;
       });
     } finally {
-      setResolvingAppendSapIndex((current) => (current === index ? null : current));
+      setResolvingAppendSapIndex(current =>
+        current === index ? null : current
+      );
     }
   };
 
@@ -487,14 +719,14 @@ export default function SaldosIniciales() {
         <div className="space-y-1">
           <h1>Saldos Iniciales</h1>
           <p className="text-sm text-muted-foreground">
-            Registra la existencia con la que arranca cada almacén.
-            Este documento suma al stock actual y queda como apertura formal.
+            Registra la existencia con la que arranca cada almacén. Este
+            documento suma al stock actual y queda como apertura formal.
           </p>
         </div>
 
         <Dialog
           open={dialogOpen}
-          onOpenChange={(open) => {
+          onOpenChange={open => {
             setDialogOpen(open);
             if (!open) resetForm();
           }}
@@ -543,10 +775,13 @@ export default function SaldosIniciales() {
                       <Command>
                         <CommandInput placeholder="Buscar almacén por código o nombre..." />
                         <CommandList className="max-h-[360px]">
-                          <CommandEmpty>No se encontraron almacenes.</CommandEmpty>
+                          <CommandEmpty>
+                            No se encontraron almacenes.
+                          </CommandEmpty>
                           <CommandGroup>
                             {warehouseOptions.map((option: any) => {
-                              const { warehouse, project, hasOpeningBalance } = option;
+                              const { warehouse, project, hasOpeningBalance } =
+                                option;
                               return (
                                 <CommandItem
                                   key={warehouse.id}
@@ -564,6 +799,13 @@ export default function SaldosIniciales() {
                                   disabled={hasOpeningBalance}
                                   onSelect={() => {
                                     setWarehouseId(String(warehouse.id));
+                                    setItems(current =>
+                                      current.map(item => ({
+                                        ...item,
+                                        projectId: "",
+                                        storageLocation: "",
+                                      }))
+                                    );
                                     setWarehouseComboboxOpen(false);
                                   }}
                                 >
@@ -580,7 +822,9 @@ export default function SaldosIniciales() {
                                     </span>
                                     <span className="block truncate text-xs text-muted-foreground">
                                       {formatProjectLabel(project)}
-                                      {hasOpeningBalance ? " · saldo registrado" : ""}
+                                      {hasOpeningBalance
+                                        ? " · saldo registrado"
+                                        : ""}
                                     </span>
                                   </span>
                                 </CommandItem>
@@ -602,12 +846,14 @@ export default function SaldosIniciales() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Fecha de apertura *</Label>
+                  <Label className="text-sm font-semibold">
+                    Fecha de apertura *
+                  </Label>
                   <Input
                     className="h-12 text-base"
                     type="date"
                     value={openingDate}
-                    onChange={(event) => setOpeningDate(event.target.value)}
+                    onChange={event => setOpeningDate(event.target.value)}
                   />
                 </div>
               </div>
@@ -616,7 +862,7 @@ export default function SaldosIniciales() {
                 <Label className="text-sm font-semibold">Notas</Label>
                 <Textarea
                   value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
+                  onChange={event => setNotes(event.target.value)}
                   rows={3}
                   placeholder="Referencia del conteo físico, fecha de corte o comentarios de apertura"
                 />
@@ -624,7 +870,9 @@ export default function SaldosIniciales() {
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <Label className="text-sm font-semibold">Ítems del saldo inicial</Label>
+                  <Label className="text-sm font-semibold">
+                    Ítems del saldo inicial
+                  </Label>
                   <Button type="button" variant="outline" onClick={addItem}>
                     <Plus className="mr-2 h-4 w-4" />
                     Agregar línea
@@ -635,7 +883,7 @@ export default function SaldosIniciales() {
                   {items.map((item, index) => (
                     <div
                       key={index}
-                      className="grid gap-3 rounded-xl border border-border/70 bg-muted/10 p-4 md:grid-cols-[1.2fr_2fr_0.8fr_0.8fr_auto]"
+                      className="grid gap-3 rounded-xl border border-border/70 bg-muted/10 p-4 sm:grid-cols-2 xl:grid-cols-[1.2fr_2fr_0.8fr_0.8fr_auto]"
                     >
                       <div className="space-y-1">
                         <Label className="text-xs">Código SAP *</Label>
@@ -643,9 +891,11 @@ export default function SaldosIniciales() {
                           value={item.sapItemCode}
                           resolving={resolvingSapIndex === index}
                           disabled={resolvingSapIndex === index}
-                          onChange={(value) => updateItem(index, "sapItemCode", value)}
+                          onChange={value =>
+                            updateItem(index, "sapItemCode", value)
+                          }
                           onSelect={(sapItemCode, itemName) => {
-                            setItems((current) => {
+                            setItems(current => {
                               const next = [...current];
                               if (!next[index]) return current;
                               next[index] = {
@@ -669,7 +919,7 @@ export default function SaldosIniciales() {
                         <Label className="text-xs">Descripción *</Label>
                         <Input
                           value={item.itemName}
-                          onChange={(event) =>
+                          onChange={event =>
                             updateItem(index, "itemName", event.target.value)
                           }
                           placeholder="Aceite HTF Universal"
@@ -681,9 +931,9 @@ export default function SaldosIniciales() {
                         <Input
                           type="number"
                           min="0.01"
-                          step="any"
+                          step="0.01"
                           value={item.quantity}
-                          onChange={(event) =>
+                          onChange={event =>
                             updateItem(index, "quantity", event.target.value)
                           }
                           placeholder="0.00"
@@ -694,7 +944,7 @@ export default function SaldosIniciales() {
                         <Label className="text-xs">Unidad</Label>
                         <UnitCombobox
                           value={item.unit}
-                          onChange={(value) => updateItem(index, "unit", value)}
+                          onChange={value => updateItem(index, "unit", value)}
                         />
                       </div>
 
@@ -710,11 +960,25 @@ export default function SaldosIniciales() {
                         </Button>
                       </div>
 
-                      <div className="space-y-1 md:col-span-5">
+                      <div className="sm:col-span-2 xl:col-span-5">
+                        <OpeningBalanceDestinationFields
+                          item={item}
+                          defaultProjectId={
+                            selectedWarehouseOption?.project?.id
+                          }
+                          warehouseId={Number(warehouseId) || undefined}
+                          projects={createProjectOptions}
+                          disabled={createMutation.isPending}
+                          onChange={(field, value) =>
+                            updateItem(index, field, value)
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1 sm:col-span-2 xl:col-span-5">
                         <Label className="text-xs">Notas de la línea</Label>
                         <Input
                           value={item.notes}
-                          onChange={(event) =>
+                          onChange={event =>
                             updateItem(index, "notes", event.target.value)
                           }
                           placeholder="Observación opcional"
@@ -727,7 +991,8 @@ export default function SaldosIniciales() {
 
               {selectableWarehousesCount === 0 ? (
                 <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
-                  Todos los almacenes activos ya tienen su saldo inicial registrado.
+                  Todos los almacenes activos ya tienen su saldo inicial
+                  registrado.
                 </div>
               ) : null}
 
@@ -750,33 +1015,24 @@ export default function SaldosIniciales() {
                       return;
                     }
 
-                    const validItems = items.filter(
-                      (item) =>
-                        item.sapItemCode.trim() &&
-                        item.itemName.trim() &&
-                        item.quantity.trim()
+                    const validItems = prepareOpeningBalanceItems(
+                      items,
+                      selectedWarehouseOption.project.id,
+                      createProjectOptions
                     );
-
-                    if (validItems.length === 0) {
-                      toast.error("Agrega al menos un ítem válido");
-                      return;
-                    }
-
+                    if (!validItems) return;
                     createMutation.mutate({
                       warehouseId: Number(selectedWarehouseOption.warehouse.id),
+                      projectId: selectedWarehouseOption.project.id,
                       openingDate,
                       notes: notes || undefined,
-                      items: validItems.map((item) => ({
-                        sapItemCode: item.sapItemCode,
-                        itemName: item.itemName,
-                        quantity: item.quantity,
-                        unit: item.unit || undefined,
-                        notes: item.notes || undefined,
-                      })),
+                      items: validItems,
                     });
                   }}
                 >
-                  {createMutation.isPending ? "Registrando..." : "Registrar saldo inicial"}
+                  {createMutation.isPending
+                    ? "Registrando..."
+                    : "Registrar saldo inicial"}
                 </Button>
               </div>
             </div>
@@ -806,7 +1062,7 @@ export default function SaldosIniciales() {
                       No. saldo
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Proyecto
+                      Proyecto de apertura
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Bodega
@@ -853,7 +1109,9 @@ export default function SaldosIniciales() {
                       </td>
                       <td className="p-3 text-xs">
                         {row.openingBalance.openingDate
-                          ? new Date(row.openingBalance.openingDate).toLocaleDateString("es-HN")
+                          ? new Date(
+                              row.openingBalance.openingDate
+                            ).toLocaleDateString("es-HN")
                           : "—"}
                       </td>
                       <td className="p-3 text-xs">
@@ -880,7 +1138,7 @@ export default function SaldosIniciales() {
 
       <Dialog
         open={Boolean(selectedId)}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open) {
             setSelectedId(null);
             setAppendItems([{ ...EMPTY_ROW }]);
@@ -899,7 +1157,9 @@ export default function SaldosIniciales() {
             <div className="space-y-5">
               <div className="grid gap-4 md:grid-cols-3">
                 <div>
-                  <Label className="text-xs text-muted-foreground">Proyecto</Label>
+                  <Label className="text-xs text-muted-foreground">
+                    Proyecto de apertura
+                  </Label>
                   <p className="mt-1 text-sm font-medium">
                     {detail.project
                       ? `${detail.project.code} - ${detail.project.name}`
@@ -907,16 +1167,22 @@ export default function SaldosIniciales() {
                   </p>
                 </div>
                 <div>
-                  <Label className="text-xs text-muted-foreground">Bodega</Label>
+                  <Label className="text-xs text-muted-foreground">
+                    Bodega
+                  </Label>
                   <p className="mt-1 text-sm font-medium">
                     {detail.warehouse?.displayName || "—"}
                   </p>
                 </div>
                 <div>
-                  <Label className="text-xs text-muted-foreground">Fecha de apertura</Label>
+                  <Label className="text-xs text-muted-foreground">
+                    Fecha de apertura
+                  </Label>
                   <p className="mt-1 text-sm font-medium">
                     {detail.openingBalance.openingDate
-                      ? new Date(detail.openingBalance.openingDate).toLocaleDateString("es-HN")
+                      ? new Date(
+                          detail.openingBalance.openingDate
+                        ).toLocaleDateString("es-HN")
                       : "—"}
                   </p>
                 </div>
@@ -939,6 +1205,12 @@ export default function SaldosIniciales() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Ítem
                       </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Proyecto
+                      </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Ubicación
+                      </th>
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Cantidad
                       </th>
@@ -952,10 +1224,23 @@ export default function SaldosIniciales() {
                   </thead>
                   <tbody>
                     {(detail.items || []).map((item: any) => (
-                      <tr key={item.id} className="border-b border-border last:border-0">
-                        <td className="p-3 font-mono text-xs">{item.sapItemCode}</td>
+                      <tr
+                        key={item.id}
+                        className="border-b border-border last:border-0"
+                      >
+                        <td className="p-3 font-mono text-xs">
+                          {item.sapItemCode}
+                        </td>
                         <td className="p-3">{item.itemName}</td>
-                        <td className="p-3 text-right font-medium">{item.quantity}</td>
+                        <td className="p-3 text-xs">
+                          {formatProjectLabel(item.project ?? detail.project)}
+                        </td>
+                        <td className="p-3 text-xs">
+                          {item.storageLocation || "Sin ubicación"}
+                        </td>
+                        <td className="p-3 text-right font-medium">
+                          {item.quantity}
+                        </td>
                         <td className="p-3 text-xs">{item.unit || "—"}</td>
                         <td className="p-3 text-xs">{item.notes || "—"}</td>
                       </tr>
@@ -971,10 +1256,15 @@ export default function SaldosIniciales() {
                       Agregar más ítems
                     </Label>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Las cantidades nuevas se sumarán al inventario de esta bodega.
+                      Las cantidades nuevas se sumarán a esta bodega, en el
+                      proyecto y la ubicación de cada ítem.
                     </p>
                   </div>
-                  <Button type="button" variant="outline" onClick={addAppendItem}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={addAppendItem}
+                  >
                     <Plus className="mr-2 h-4 w-4" />
                     Agregar línea
                   </Button>
@@ -984,7 +1274,7 @@ export default function SaldosIniciales() {
                   {appendItems.map((item, index) => (
                     <div
                       key={index}
-                      className="grid gap-3 rounded-xl border border-border/70 bg-muted/20 p-3 md:grid-cols-[1.3fr_1.8fr_0.8fr_0.7fr_1.4fr_auto]"
+                      className="grid gap-3 rounded-xl border border-border/70 bg-muted/20 p-3 sm:grid-cols-2 xl:grid-cols-[1.3fr_1.8fr_0.8fr_0.7fr_1.4fr_auto]"
                     >
                       <div className="space-y-1">
                         <Label className="text-xs">Código SAP *</Label>
@@ -992,11 +1282,11 @@ export default function SaldosIniciales() {
                           value={item.sapItemCode}
                           resolving={resolvingAppendSapIndex === index}
                           disabled={resolvingAppendSapIndex === index}
-                          onChange={(value) =>
+                          onChange={value =>
                             updateAppendItem(index, "sapItemCode", value)
                           }
                           onSelect={(sapItemCode, itemName) => {
-                            setAppendItems((current) => {
+                            setAppendItems(current => {
                               const next = [...current];
                               if (!next[index]) return current;
                               next[index] = {
@@ -1014,8 +1304,12 @@ export default function SaldosIniciales() {
                         <Label className="text-xs">Descripción *</Label>
                         <Input
                           value={item.itemName}
-                          onChange={(event) =>
-                            updateAppendItem(index, "itemName", event.target.value)
+                          onChange={event =>
+                            updateAppendItem(
+                              index,
+                              "itemName",
+                              event.target.value
+                            )
                           }
                           placeholder="Descripción del artículo"
                         />
@@ -1027,8 +1321,12 @@ export default function SaldosIniciales() {
                           min="0.01"
                           step="0.01"
                           value={item.quantity}
-                          onChange={(event) =>
-                            updateAppendItem(index, "quantity", event.target.value)
+                          onChange={event =>
+                            updateAppendItem(
+                              index,
+                              "quantity",
+                              event.target.value
+                            )
                           }
                           placeholder="0.00"
                         />
@@ -1037,14 +1335,16 @@ export default function SaldosIniciales() {
                         <Label className="text-xs">Unidad</Label>
                         <UnitCombobox
                           value={item.unit}
-                          onChange={(value) => updateAppendItem(index, "unit", value)}
+                          onChange={value =>
+                            updateAppendItem(index, "unit", value)
+                          }
                         />
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">Notas</Label>
                         <Input
                           value={item.notes}
-                          onChange={(event) =>
+                          onChange={event =>
                             updateAppendItem(index, "notes", event.target.value)
                           }
                           placeholder="Observación opcional"
@@ -1061,6 +1361,18 @@ export default function SaldosIniciales() {
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
+                      <div className="sm:col-span-2 xl:col-span-6">
+                        <OpeningBalanceDestinationFields
+                          item={item}
+                          defaultProjectId={detail.openingBalance.projectId}
+                          warehouseId={detail.openingBalance.warehouseId}
+                          projects={appendProjectOptions}
+                          disabled={addItemsMutation.isPending}
+                          onChange={(field, value) =>
+                            updateAppendItem(index, field, value)
+                          }
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1071,32 +1383,21 @@ export default function SaldosIniciales() {
                     onClick={() => {
                       if (!detail) return;
 
-                      const validItems = appendItems.filter(
-                        (item) =>
-                          item.sapItemCode.trim() &&
-                          item.itemName.trim() &&
-                          item.quantity.trim() &&
-                          Number(item.quantity) > 0
+                      const validItems = prepareOpeningBalanceItems(
+                        appendItems,
+                        detail.openingBalance.projectId,
+                        appendProjectOptions
                       );
-
-                      if (validItems.length === 0) {
-                        toast.error("Agrega al menos un ítem válido");
-                        return;
-                      }
-
+                      if (!validItems) return;
                       addItemsMutation.mutate({
                         id: detail.openingBalance.id,
-                        items: validItems.map((item) => ({
-                          sapItemCode: item.sapItemCode,
-                          itemName: item.itemName,
-                          quantity: item.quantity,
-                          unit: item.unit || undefined,
-                          notes: item.notes || undefined,
-                        })),
+                        items: validItems,
                       });
                     }}
                   >
-                    {addItemsMutation.isPending ? "Agregando..." : "Agregar ítems"}
+                    {addItemsMutation.isPending
+                      ? "Agregando..."
+                      : "Agregar ítems"}
                   </Button>
                 </div>
               </div>
