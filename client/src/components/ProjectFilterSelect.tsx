@@ -9,12 +9,14 @@ import { trpc } from "@/lib/trpc";
 import { useMemo } from "react";
 
 type ProjectFilterSelectProps = {
+  id?: string;
   value: string;
   onValueChange: (value: string) => void;
   triggerClassName?: string;
 };
 
 export function ProjectFilterSelect({
+  id,
   value,
   onValueChange,
   triggerClassName = "h-10 w-full lg:w-64",
@@ -40,7 +42,7 @@ export function ProjectFilterSelect({
 
   return (
     <Select value={value} onValueChange={onValueChange}>
-      <SelectTrigger className={triggerClassName}>
+      <SelectTrigger id={id} className={triggerClassName}>
         <SelectValue placeholder="Todos los proyectos" />
       </SelectTrigger>
       <SelectContent>

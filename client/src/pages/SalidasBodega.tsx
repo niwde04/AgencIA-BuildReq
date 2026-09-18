@@ -575,6 +575,8 @@ export default function SalidasBodega() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
+  const [deliveryRequestProjectFilter, setDeliveryRequestProjectFilter] =
+    useState("all");
   const [deliveryRequestId, setDeliveryRequestId] = useState("");
   const [deliveryRequestPopoverOpen, setDeliveryRequestPopoverOpen] =
     useState(false);
@@ -657,12 +659,15 @@ export default function SalidasBodega() {
     refetch: refetchDeliveryRequestOptions,
   } = trpc.warehouseExits.requestOptions.useQuery(
     {
+      projectId:
+        deliveryRequestProjectFilter === "all"
+          ? undefined
+          : Number(deliveryRequestProjectFilter),
       search: debouncedDeliveryRequestSearch.trim() || undefined,
       limit: 80,
     },
     {
       enabled: deliveryDialogOpen,
-      placeholderData: previousData => previousData,
       staleTime: 30_000,
     }
   );
@@ -2633,7 +2638,13 @@ export default function SalidasBodega() {
             Abastecimiento.
           </p>
         </div>
-        <Button onClick={() => setDeliveryDialogOpen(true)} size="sm">
+        <Button
+          onClick={() => {
+            setDeliveryRequestProjectFilter("all");
+            setDeliveryDialogOpen(true);
+          }}
+          size="sm"
+        >
           <Plus className="mr-2 h-4 w-4" />
           Nueva salida
         </Button>
@@ -3412,6 +3423,7 @@ export default function SalidasBodega() {
         onOpenChange={open => {
           setDeliveryDialogOpen(open);
           if (!open) {
+            setDeliveryRequestProjectFilter("all");
             setDeliveryRequestId("");
             setDeliveryRequestPopoverOpen(false);
             setDeliveryRequestSearch("");
@@ -3438,6 +3450,34 @@ export default function SalidasBodega() {
           </DialogHeader>
 
           <div className="space-y-5 pt-2">
+            <div className="min-w-0 space-y-2 md:max-w-sm">
+              <Label htmlFor="warehouse-exit-request-project-filter">
+                Job o proyecto
+              </Label>
+              <ProjectFilterSelect
+                id="warehouse-exit-request-project-filter"
+                value={deliveryRequestProjectFilter}
+                onValueChange={value => {
+                  setDeliveryRequestProjectFilter(value);
+                  setDeliveryRequestPopoverOpen(false);
+                  setDeliveryRequestSearch("");
+                  setDeliveryPreviewRequestId(null);
+                  if (
+                    value !== "all" &&
+                    Number(selectedDeliveryRequest?.request.projectId) !==
+                      Number(value)
+                  ) {
+                    setDeliveryRequestId("");
+                    setDeliveryNotes("");
+                  }
+                }}
+                triggerClassName="h-10 w-full min-w-0"
+              />
+              <p className="text-xs text-muted-foreground">
+                Filtre las requisiciones por el Job o proyecto al que
+                pertenecen.
+              </p>
+            </div>
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(260px,360px)]">
               <div className="space-y-2">
                 <Label htmlFor="warehouse-exit-request-selector">
@@ -3531,7 +3571,9 @@ export default function SalidasBodega() {
                         ) : (
                           <>
                             <CommandEmpty>
-                              No se encontraron requisiciones.
+                              {deliveryRequestProjectFilter === "all"
+                                ? "No se encontraron requisiciones."
+                                : "No se encontraron requisiciones para este Job o proyecto."}
                             </CommandEmpty>
                             <CommandGroup
                               heading={
