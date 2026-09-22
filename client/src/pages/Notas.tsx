@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   Trash2,
   ExternalLink,
-  ArrowUpRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -518,44 +517,13 @@ export default function Notas({ type }: { type: FinancialNoteType }) {
             </p>
           ) : null}
         </div>
-        <div className="flex flex-wrap gap-2">
-          {canPrepare && type === "credit" ? (
-            <>
-              <Button onClick={() => start("credit")}>
-                <Plus className="mr-2 h-4 w-4" />
-                Nueva nota de crédito
-              </Button>
-              <Button variant="outline" onClick={() => start("debit")}>
-                <ArrowUpRight className="mr-2 h-4 w-4" />
-                Nueva nota de débito
-              </Button>
-            </>
-          ) : null}
-          <Button variant="outline" asChild>
-            <a
-              href={
-                type === "credit"
-                  ? "/conceptos-notas-credito"
-                  : "/conceptos-notas-debito"
-              }
-            >
-              Conceptos
-            </a>
+        {canPrepare ? (
+          <Button onClick={() => start(type)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Nueva nota de {type === "credit" ? "crédito" : "débito"}
           </Button>
-        </div>
+        ) : null}
       </header>
-      {type === "debit" && canPrepare ? (
-        <p className="rounded-lg border bg-muted/20 p-3 text-sm">
-          Las notas de débito se crean desde{" "}
-          <a
-            href="/notas-credito"
-            className="font-medium text-primary underline"
-          >
-            Notas de crédito
-          </a>{" "}
-          y tienen sus propios conceptos.
-        </p>
-      ) : null}
       <section className="rounded-lg border bg-card">
         <div className="flex flex-wrap items-end gap-3 border-b p-4">
           <div className="min-w-0 flex-1 basis-60">
