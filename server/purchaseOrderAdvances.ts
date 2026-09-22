@@ -1,3 +1,4 @@
+import { noteMoneyUnits } from "../shared/financial-notes";
 import { randomUUID } from "node:crypto";
 import {
   and,
@@ -1013,14 +1014,11 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
     );
     if (advanceAvailable <= 0) continue;
     for (const invoice of invoiceRows) {
-      const invoiceRemaining = money(
-        Math.max(
-          0,
-          money(invoice.netPayable) -
-            (invoiceApplied.get(invoice.id) ?? 0) -
-            (invoiceSettled.get(invoice.id) ?? 0)
-        )
-      );
+      // Payment applications use cents; never round a four-decimal note balance upward.
+      const remainingUnits = noteMoneyUnits(invoice.netPayable)
+        - noteMoneyUnits((invoiceApplied.get(invoice.id) ?? 0).toFixed(4))
+        - noteMoneyUnits((invoiceSettled.get(invoice.id) ?? 0).toFixed(4));
+      const invoiceRemaining = Math.max(0, Number(remainingUnits / BigInt(100)) / 100);
       if (invoiceRemaining <= 0) continue;
       const amount = money(Math.min(advanceAvailable, invoiceRemaining));
       if (amount <= 0) continue;

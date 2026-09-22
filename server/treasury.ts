@@ -631,6 +631,21 @@ async function readBatchItems(executor: any, batchId: number) {
     );
 }
 
+// Every operation that increases or reactivates an invoice commitment uses the
+// same ordered invoice locks as financial notes and advance applications.
+async function lockTreasuryInvoiceBalances(tx: any, items: Array<{sourceType?:string;invoiceId?:number|null}>) {
+  const ids=Array.from(new Set(items.filter(i=>(i.sourceType??'invoice')==='invoice'&&i.invoiceId).map(i=>i.invoiceId!))).sort((a,b)=>a-b);
+  if(ids.length) await tx.select({id:invoices.id}).from(invoices).where(inArray(invoices.id,ids)).orderBy(asc(invoices.id)).for('update');
+  return ids;
+}
+async function assertTreasuryInvoiceBalances(tx: any, ids: number[]) {
+  if(!ids.length) return;
+  const result=await tx.execute(sql`select i.id from invoices i where i.id=any(${sql.param(ids)}::int[]) and i."netPayable"
+    < coalesce((select sum(case when t.status='contabilizada' then coalesce(t."bankPaidAmount",0) when t."activeReservation" then coalesce(t."bankPaidAmount",t."approvedAmount",t."requestedAmount",0) else 0 end) from "treasuryPaymentItems" t where t."invoiceId"=i.id and t."sourceType"='invoice'),0)
+    + coalesce((select sum(a.amount) from "purchaseOrderAdvanceApplications" a where a."invoiceId"=i.id),0) limit 1`);
+  if(result.rows.length) throw new TreasuryRuleError('La operación supera el saldo vigente de la factura después de notas, pagos, anticipos y reservas.');
+}
+
 async function getInvoiceFinancialMap(
   executor: any,
   invoiceIds: number[],
@@ -915,6 +930,7 @@ async function getInvoiceSnapshots(
     .innerJoin(projects, eq(invoices.projectId, projects.id))
     .leftJoin(suppliers, eq(invoices.supplierId, suppliers.id))
     .where(inArray(invoices.id, uniqueIds))
+    .orderBy(asc(invoices.id))
     .for("update", { of: invoices });
 
   if (rows.length !== uniqueIds.length) {
@@ -1700,6 +1716,9 @@ export async function getTreasuryBatchById(batchId: number) {
         invoiceRetentionTotal: invoices.retentionTotal,
         invoiceOtherRetentionTotal: invoices.otherRetentionTotal,
         invoiceDocumentDiscountTotal: invoices.documentDiscountTotal,
+        invoiceCreditNoteTotal: invoices.creditNoteTotal,
+        invoiceDebitNoteTotal: invoices.debitNoteTotal,
+        invoiceNetPayable: invoices.netPayable,
       })
       .from(treasuryPaymentItems)
       .innerJoin(invoices, eq(treasuryPaymentItems.invoiceId, invoices.id))
@@ -1747,6 +1766,8 @@ export async function getTreasuryBatchById(batchId: number) {
         invoiceRetentionTotal: sql<string>`0`,
         invoiceOtherRetentionTotal: sql<string>`0`,
         invoiceDocumentDiscountTotal: sql<string>`0`,
+        invoiceCreditNoteTotal: sql<string>`0`,
+        invoiceDebitNoteTotal: sql<string>`0`,
       })
       .from(treasuryPaymentItems)
       .innerJoin(
@@ -1789,6 +1810,7 @@ export async function getTreasuryBatchById(batchId: number) {
         : (documentAdjustmentsByInvoiceId.get(item.invoiceId) ?? []);
     return {
       ...item,
+      invoiceNetPayableSnapshot: item.invoiceNetPayable,
       ...(item.sourceType === "purchase_order_advance"
         ? advanceFinancialsById.get(item.purchaseOrderAdvanceId)
         : invoiceFinancialsById.get(item.invoiceId)),
@@ -2258,6 +2280,7 @@ export async function createTreasuryBatch(input: {
           )
         )
       );
+    if(paymentKind==='invoice') await assertTreasuryInvoiceBalances(tx,snapshots.map((r:any)=>r.sourceId));
     await insertEvent(tx, {
       batchId: batch.id,
       action: "crear_lote",
@@ -2389,6 +2412,7 @@ export async function updateTreasuryDraft(input: {
           );
       }
     }
+    if(paymentKind==='invoice') await assertTreasuryInvoiceBalances(tx,snapshots.map((r:any)=>r.sourceId));
     const [updated] = await tx
       .update(treasuryPaymentBatches)
       .set({
@@ -3090,6 +3114,7 @@ export async function returnTreasuryBatchToDraft(input: {
   return db.transaction(async tx => {
     const batch = await readBatch(tx, input.batchId);
     const items = await readBatchItems(tx, input.batchId);
+    const lockedInvoiceIds=await lockTreasuryInvoiceBalances(tx,items);
     const bankExportAttachments = await tx
       .select({ id: attachments.id })
       .from(attachments)
@@ -3166,6 +3191,7 @@ export async function returnTreasuryBatchToDraft(input: {
       );
     }
 
+    await assertTreasuryInvoiceBalances(tx,lockedInvoiceIds);
     await insertEvent(tx, {
       batchId: input.batchId,
       action: "regresar_borrador",
@@ -3572,6 +3598,7 @@ async function applyTreasuryBankRows(input: {
   const result = await input.db.transaction(async tx => {
     const batch = await readBatch(tx, input.batchId);
     const items = await readBatchItems(tx, input.batchId);
+    const lockedInvoiceIds=await lockTreasuryInvoiceBalances(tx,items);
     const { matchedRows, hasDifferences, hasPaidLines } = matchTreasuryBankRows(
       input.parsedRows,
       batch,
@@ -3605,6 +3632,7 @@ async function applyTreasuryBankRows(input: {
         metadata: { approvedAmount: approved, paidAmount: row.paidAmount },
       });
     }
+    await assertTreasuryInvoiceBalances(tx,lockedInvoiceIds);
     const now = new Date();
     const nextStatus = hasDifferences
       ? "conciliacion"
@@ -3763,6 +3791,7 @@ export async function resolveTreasuryDifference(input: {
         "La línea no tiene una diferencia pendiente."
       );
     }
+    const lockedInvoiceIds=await lockTreasuryInvoiceBalances(tx,[item]);
     const nextItemStatus =
       input.resolution === "accept" ? "pagada" : "rechazada_banco";
     await tx
@@ -3774,6 +3803,7 @@ export async function resolveTreasuryDifference(input: {
         updatedAt: new Date(),
       })
       .where(eq(treasuryPaymentItems.id, input.itemId));
+    await assertTreasuryInvoiceBalances(tx,lockedInvoiceIds);
     await insertEvent(tx, {
       batchId: input.batchId,
       itemId: input.itemId,
@@ -3866,6 +3896,7 @@ export async function accountTreasuryItems(input: {
         "Solo se pueden contabilizar líneas pagadas por el banco."
       );
     }
+    const lockedInvoiceIds=await lockTreasuryInvoiceBalances(tx,items);
     const now = new Date();
     for (const item of items) {
       const paid = roundTreasuryMoney(Number(item.bankPaidAmount ?? 0));
@@ -3990,6 +4021,7 @@ export async function accountTreasuryItems(input: {
         }
       }
     }
+    await assertTreasuryInvoiceBalances(tx,lockedInvoiceIds);
     const remainingItems = await readBatchItems(tx, input.batchId);
     const allFinal = remainingItems.every(
       (item: any) =>
@@ -4291,6 +4323,7 @@ export async function reopenClosedTreasuryBatch(input: {
   return db.transaction(async tx => {
     const batch = await readBatch(tx, input.batchId);
     const items = await readBatchItems(tx, input.batchId);
+    const lockedInvoiceIds=await lockTreasuryInvoiceBalances(tx,items);
     const targetStatus = getTreasuryReopenTargetStatus(
       batch.status,
       items.map((item: any) => item.status as TreasuryItemStatus)
@@ -4326,6 +4359,7 @@ export async function reopenClosedTreasuryBatch(input: {
       });
     }
 
+    await assertTreasuryInvoiceBalances(tx,lockedInvoiceIds);
     const [updated] = await tx
       .update(treasuryPaymentBatches)
       .set({

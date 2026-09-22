@@ -32,6 +32,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { UNITS } from "@shared/units";
 
 type ReturnItem = {
+  sourceReceiptItemId?: number;
   warehouseId?: number;
   sapItemCode: string;
   itemName: string;
@@ -597,6 +598,7 @@ export default function NuevaDevolucion() {
       .map((item: any) => {
         const purchaseOrderItem = purchaseOrderItemById.get(item.sourceItemId);
         return {
+          sourceReceiptItemId: item.id,
           warehouseId: item.warehouseId ?? undefined,
           sapItemCode:
             purchaseOrderItem?.currentSapItemCode ||
@@ -876,6 +878,7 @@ export default function NuevaDevolucion() {
       sourceReceiptId: sourceReceiptId ? parseInt(sourceReceiptId) : undefined,
       supplierName: supplierName || undefined,
       items: validItems.map((item) => ({
+        sourceReceiptItemId: item.sourceReceiptItemId,
         warehouseId: item.warehouseId,
         sapItemCode: item.sapItemCode || undefined,
         itemName: item.itemName,

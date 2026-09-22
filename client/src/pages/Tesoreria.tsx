@@ -2645,6 +2645,8 @@ function BatchDetailDialog({
                           item.invoiceNetPayable,
                           detail.batch.currency
                         )}
+                        {Number(item.invoiceCreditNoteTotal)>0 ? <a className="mt-1 block text-xs font-normal text-primary hover:underline" href={`/notas-credito?invoiceId=${item.invoiceId}`}>NC: −{formatMoney(item.invoiceCreditNoteTotal,detail.batch.currency)}</a> : null}
+                        {Number(item.invoiceDebitNoteTotal)>0 ? <a className="mt-1 block text-xs font-normal text-primary hover:underline" href={`/notas-debito?invoiceId=${item.invoiceId}`}>ND: +{formatMoney(item.invoiceDebitNoteTotal,detail.batch.currency)}</a> : null}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {formatMoney(

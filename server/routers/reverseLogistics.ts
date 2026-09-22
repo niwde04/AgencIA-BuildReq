@@ -5,6 +5,7 @@ import { TRPCError } from "@trpc/server";
 
 const returnItemSchema = z.object({
   sourceWarehouseExitItemId: z.number().optional(),
+  sourceReceiptItemId: z.number().int().positive().optional(),
   warehouseId: z.number().int().positive().optional(),
   itemName: z.string().min(1, "El nombre del ítem es obligatorio").max(500),
   sapItemCode: z.string().optional(),
@@ -15,6 +16,27 @@ const returnItemSchema = z.object({
 });
 
 export const reverseLogisticsRouter = router({
+  mapReceiptItems: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        mappings: z
+          .array(
+            z.object({
+              itemId: z.number().int().positive(),
+              sourceReceiptItemId: z.number().int().positive(),
+            })
+          )
+          .min(1)
+          .max(200),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { mapSupplierReturnReceiptItems } = await import(
+        "../financialNotes"
+      );
+      return mapSupplierReturnReceiptItems(input.id, input.mappings, ctx.user);
+    }),
   list: protectedProcedure
     .input(
       z
@@ -137,8 +159,7 @@ export const reverseLogisticsRouter = router({
         if (!purchaseOrderDetail?.supplier) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message:
-              "La recepción seleccionada no tiene proveedor asociado",
+            message: "La recepción seleccionada no tiene proveedor asociado",
           });
         }
 
@@ -224,10 +245,10 @@ export const reverseLogisticsRouter = router({
           { isActive: true }
         );
         const activeWarehouseIds = new Set(
-          activeWarehouses.map((warehouse) => warehouse.id)
+          activeWarehouses.map(warehouse => warehouse.id)
         );
         const invalidWarehouseItem = items.find(
-          (item) => !item.warehouseId || !activeWarehouseIds.has(item.warehouseId)
+          item => !item.warehouseId || !activeWarehouseIds.has(item.warehouseId)
         );
         if (invalidWarehouseItem) {
           throw new TRPCError({
@@ -240,12 +261,14 @@ export const reverseLogisticsRouter = router({
         const receiptWarehouseIds = new Set(
           sourceReceiptDetail.items
             .map((item: any) => item.warehouseId)
-            .filter((warehouseId: unknown): warehouseId is number =>
-              typeof warehouseId === "number"
+            .filter(
+              (warehouseId: unknown): warehouseId is number =>
+                typeof warehouseId === "number"
             )
         );
         const invalidWarehouseItem = items.find(
-          (item) => !item.warehouseId || !receiptWarehouseIds.has(item.warehouseId)
+          item =>
+            !item.warehouseId || !receiptWarehouseIds.has(item.warehouseId)
         );
         if (invalidWarehouseItem) {
           throw new TRPCError({
@@ -271,7 +294,7 @@ export const reverseLogisticsRouter = router({
               justification: input.justification,
               receivedByName: input.receivedByName,
               createdById: ctx.user.id,
-              items: input.items.map((item) => {
+              items: input.items.map(item => {
                 if (!item.sourceWarehouseExitItemId) {
                   throw new TRPCError({
                     code: "BAD_REQUEST",
@@ -373,10 +396,11 @@ export const reverseLogisticsRouter = router({
       }
 
       try {
-        const result = await db.createCentralWarehouseTransferFromReverseLogistic(
-          input.id,
-          ctx.user.id
-        );
+        const result =
+          await db.createCentralWarehouseTransferFromReverseLogistic(
+            input.id,
+            ctx.user.id
+          );
 
         const returnRecord = await db.getReverseLogisticById(input.id);
         if (returnRecord) {

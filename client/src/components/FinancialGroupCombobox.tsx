@@ -26,7 +26,16 @@ export type FinancialGroupOption = {
 type FinancialGroupComboboxProps = {
   options: FinancialGroupOption[];
   value: string | null | undefined;
-  onChange: (value: string | null) => void;
+  onChange: (value: string | null, description?: string | null) => void;
+  remote?: {
+    search: string;
+    onSearchChange: (search: string) => void;
+    page: number;
+    totalPages: number;
+    onPageChange: (page: number) => void;
+    loading: boolean;
+    error?: string;
+  };
   selectedDescription?: string | null;
   disabled?: boolean;
 };
@@ -37,6 +46,7 @@ export function FinancialGroupCombobox({
   onChange,
   selectedDescription,
   disabled = false,
+  remote,
 }: FinancialGroupComboboxProps) {
   const [open, setOpen] = useState(false);
   const selectedOption = useMemo(
@@ -74,8 +84,21 @@ export function FinancialGroupCombobox({
         align="start"
         className="w-[var(--radix-popover-trigger-width)] p-0"
       >
-        <Command>
-          <CommandInput placeholder="Buscar grupo financiero..." />
+        <Command shouldFilter={!remote}>
+          <CommandInput
+            placeholder="Buscar grupo financiero..."
+            value={remote?.search}
+            onValueChange={remote?.onSearchChange}
+          />
+          {remote?.loading ? (
+            <p role="status" className="p-3 text-sm">
+              Cargando…
+            </p>
+          ) : remote?.error ? (
+            <p role="alert" className="p-3 text-sm text-destructive">
+              {remote.error}
+            </p>
+          ) : null}
           <CommandList>
             <CommandEmpty>No se encontraron grupos financieros.</CommandEmpty>
             <CommandGroup>
@@ -99,7 +122,10 @@ export function FinancialGroupCombobox({
                   key={option.financialGroupCode}
                   value={`${option.financialGroupDescription} ${option.financialGroupCode} ${option.codN2} ${option.nivel2}`}
                   onSelect={() => {
-                    onChange(option.financialGroupCode);
+                    onChange(
+                      option.financialGroupCode,
+                      option.financialGroupDescription
+                    );
                     setOpen(false);
                   }}
                 >
@@ -119,6 +145,31 @@ export function FinancialGroupCombobox({
             </CommandGroup>
           </CommandList>
         </Command>
+        {remote ? (
+          <div className="flex items-center justify-between gap-2 border-t p-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={remote.page <= 1 || remote.loading}
+              onClick={() => remote.onPageChange(remote.page - 1)}
+            >
+              Anterior
+            </Button>
+            <span className="text-xs">
+              {remote.page} / {remote.totalPages}
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={remote.page >= remote.totalPages || remote.loading}
+              onClick={() => remote.onPageChange(remote.page + 1)}
+            >
+              Siguiente
+            </Button>
+          </div>
+        ) : null}
       </PopoverContent>
     </Popover>
   );

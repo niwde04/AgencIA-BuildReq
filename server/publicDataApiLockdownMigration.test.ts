@@ -5,7 +5,7 @@ describe("public Data API lockdown migration", () => {
   const migration = readFileSync(
     new URL("../drizzle/0134_lock_down_public_data_api.sql", import.meta.url),
     "utf8"
-  );
+  ).replace(/\r\n/g, "\n");
 
   it("removes direct Data API access from current public objects", () => {
     expect(migration).toContain(

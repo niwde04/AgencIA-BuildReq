@@ -88,6 +88,18 @@ export const financialGroupsRouter = router({
       return db.listFinancialGroups(input ?? {});
     }),
 
+  activeOptionsPage: protectedProcedure
+    .input(
+      z.object({
+        search: z.string().trim().max(200).optional(),
+        page: z.number().int().min(1).default(1),
+        pageSize: z.number().int().min(10).max(100).default(25),
+      })
+    )
+    .query(({ ctx, input }) => {
+      assertCanReadArticleCatalog(ctx.user);
+      return db.listFinancialGroups({ ...input, isActive: true });
+    }),
   activeOptions: protectedProcedure.query(async ({ ctx }) => {
     assertCanReadArticleCatalog(ctx.user);
     return db.listActiveFinancialGroups();

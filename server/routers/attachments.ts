@@ -21,6 +21,8 @@ import {
 import { listPurchaseOrderAdvances } from "../purchaseOrderAdvances";
 import { getQualityRetentionReleaseById } from "../qualityRetentionReleases";
 
+import { getFinancialNote, assertFinancialNoteAccess, createFinancialNoteAttachment, deleteFinancialNoteAttachment } from "../financialNotes";
+
 const PDF_MAX_BYTES = 10 * 1000 * 1000;
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -36,6 +38,7 @@ const attachmentEntityTypeSchema = z.enum([
   "transfer",
   "receipt",
   "invoice",
+  "financial_note",
   "supplier",
 ]);
 
@@ -48,6 +51,7 @@ const documentAttachmentEntityTypeSchema = z.enum([
   "transfer_request",
   "receipt",
   "invoice",
+  "financial_note",
   "supplier",
 ]);
 
@@ -783,6 +787,12 @@ async function assertDocumentAttachmentAccess(
   action: "view" | "manage"
 ) {
   switch (entityType) {
+    case "financial_note": {
+      const detail = await getFinancialNote(entityId, user);
+      assertFinancialNoteAccess(detail.note, user, action === "manage" ? "prepare" : "view");
+      if (action === "manage" && !["borrador", "rechazada"].includes(detail.note.status)) throw new TRPCError({ code: "BAD_REQUEST", message: "Solo se modifican adjuntos en borrador o rechazados" });
+      return;
+    }
     case "invoice":
       return assertInvoiceAttachmentAccess(entityId, user, action);
     case "purchase_order":
@@ -982,7 +992,9 @@ export const attachmentsRouter = router({
       let result: { id: number };
       let replacedInvoiceAttachments: Array<{ fileKey: string }> = [];
       try {
-        if (input.entityType === "invoice") {
+        if (input.entityType === "financial_note") {
+          result = await createFinancialNoteAttachment(attachmentData, ctx.user);
+        } else if (input.entityType === "invoice") {
           const replacement = await db.replaceInvoiceAttachments({
             ...attachmentData,
             entityType: "invoice",
@@ -1054,6 +1066,11 @@ export const attachmentsRouter = router({
         } catch (error) {
           throwProcurementAttachmentMutationError(error);
         }
+      }
+      if (attachment.entityType === "financial_note") {
+        const deleted = await deleteFinancialNoteAttachment(input.id, ctx.user);
+        await storageDelete(deleted.fileKey);
+        return { success: true };
       }
       await storageDelete(attachment.fileKey);
       return db.deleteAttachment(input.id);

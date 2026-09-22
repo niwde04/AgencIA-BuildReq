@@ -1194,7 +1194,7 @@ export const invoicesRouter = router({
       }
 
       try {
-        return await db.returnAccountedInvoiceToReview(input.id);
+        return await db.returnAccountedInvoiceToReview(input.id, ctx.user.id);
       } catch (error) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -1368,7 +1368,9 @@ export const invoicesRouter = router({
           return await db.replaceInvoiceRetentions(
             input.id,
             input.retentions,
-            formattedRetentionReceiptNumber
+            formattedRetentionReceiptNumber,
+            undefined,
+            ctx.user.id
           );
         }
 
@@ -1414,7 +1416,8 @@ export const invoicesRouter = router({
               Date
                 ? effectiveRetentionFiscalData.retentionDocumentDate
                 : null),
-          }
+          },
+          ctx.user.id
         );
       } catch (error) {
         throw new TRPCError({

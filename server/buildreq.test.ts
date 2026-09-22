@@ -17114,7 +17114,7 @@ describe("BuildReq - Invoices", () => {
     await expect(
       appRouter.createCaller(ctx).invoices.returnToReview({ id: 10 })
     ).resolves.toEqual(expect.objectContaining({ status: "revisada" }));
-    expect(returnToReviewSpy).toHaveBeenCalledWith(10);
+    expect(returnToReviewSpy).toHaveBeenCalledWith(10, ctx.user!.id);
 
     returnToReviewSpy.mockRestore();
   });
@@ -18490,7 +18490,9 @@ describe("BuildReq - Invoices", () => {
           baseAmount: "500.00",
         }),
       ],
-      undefined
+      undefined,
+      undefined,
+      ctx.user!.id
     );
 
     getInvoiceByIdSpy.mockRestore();
@@ -18730,7 +18732,7 @@ describe("BuildReq - Invoices", () => {
       retentions: [],
     });
 
-    expect(replaceInvoiceRetentionsSpy).toHaveBeenCalledWith(10, [], undefined);
+    expect(replaceInvoiceRetentionsSpy).toHaveBeenCalledWith(10, [], undefined, undefined, ctx.user!.id);
 
     getInvoiceByIdSpy.mockRestore();
     replaceInvoiceRetentionsSpy.mockRestore();
@@ -18776,7 +18778,8 @@ describe("BuildReq - Invoices", () => {
         retentionDocumentRangeEnd: VALID_RETENTION_RANGE_END,
         retentionEmissionDeadline: expect.any(Date),
         retentionDocumentDate: expect.any(Date),
-      }
+      },
+      ctx.user!.id
     );
 
     getInvoiceByIdSpy.mockRestore();
@@ -18877,7 +18880,9 @@ describe("BuildReq - Invoices", () => {
           baseAmount: "1000.00",
         }),
       ],
-      undefined
+      undefined,
+      undefined,
+      ctx.user!.id
     );
 
     getInvoiceByIdSpy.mockRestore();

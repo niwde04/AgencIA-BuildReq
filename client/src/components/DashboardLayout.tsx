@@ -278,6 +278,10 @@ const allMenuItems: MenuItem[] = [
       "admin",
     ],
   },
+  {icon: FileText, label: "Notas de crédito", path: "/notas-credito", roles: ["administracion_central", "administrador_proyecto", "contable", "jefe_bodega_central", "bodeguero_proyecto", "admin"]},
+  {icon: FileText, label: "Notas de débito", path: "/notas-debito", roles: ["administracion_central", "administrador_proyecto", "contable", "jefe_bodega_central", "bodeguero_proyecto", "admin"]},
+  {icon: FileText, label: "Conceptos de notas de crédito", path: "/conceptos-notas-credito", roles: ["administracion_central", "administrador_proyecto", "contable", "jefe_bodega_central", "bodeguero_proyecto", "admin"]},
+  {icon: FileText, label: "Conceptos de notas de débito", path: "/conceptos-notas-debito", roles: ["administracion_central", "administrador_proyecto", "contable", "jefe_bodega_central", "bodeguero_proyecto", "admin"]},
   {
     icon: WalletCards,
     label: "Tesorería",
@@ -413,6 +417,10 @@ const MAIN_MENU_SECTIONS = [
     paths: [
       "/tesoreria",
       "/facturas",
+      "/notas-credito",
+      "/notas-debito",
+      "/conceptos-notas-credito",
+      "/conceptos-notas-debito",
       "/impuestos",
       "/retenciones",
       "/grupos-financieros",
@@ -585,6 +593,10 @@ function DashboardLayoutContent({
           item.path === "/ordenes-compra" ||
           item.path === "/recepciones" ||
           item.path === "/facturas" ||
+          item.path === "/notas-credito" ||
+          item.path === "/notas-debito" ||
+          item.path === "/conceptos-notas-credito" ||
+          item.path === "/conceptos-notas-debito" ||
           item.path === "/tesoreria" ||
           item.path === "/proyectos" ||
           item.path === "/reportes" ||
@@ -621,6 +633,10 @@ function DashboardLayoutContent({
     location !== "/ordenes-compra" &&
     location !== "/recepciones" &&
     location !== "/facturas" &&
+    location !== "/notas-credito" &&
+    location !== "/notas-debito" &&
+    location !== "/conceptos-notas-credito" &&
+    location !== "/conceptos-notas-debito" &&
     location !== "/tesoreria" &&
     location !== "/notificaciones" &&
     location !== "/proyectos" &&

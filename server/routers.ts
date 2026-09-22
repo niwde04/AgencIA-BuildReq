@@ -37,7 +37,11 @@ import { systemSettingsRouter } from "./routers/systemSettings";
 import { treasuryRouter } from "./routers/treasury";
 import { qualityRetentionReleasesRouter } from "./routers/qualityRetentionReleases";
 
+import { financialNotesRouter, noteConceptsRouter } from "./routers/financialNotes";
+
 export const appRouter = router({
+  financialNotes: financialNotesRouter,
+  noteConcepts: noteConceptsRouter,
   system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),

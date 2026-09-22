@@ -289,6 +289,7 @@ export const itemConditionEnum = pgEnum("item_condition", [
   "danado",
 ]);
 export const attachmentEntityTypeEnum = pgEnum("attachment_entity_type", [
+  "financial_note",
   "material_request",
   "supply_flow",
   "reverse_logistic",
@@ -1586,6 +1587,8 @@ export const invoices = pgTable(
     })
       .default("0.0000")
       .notNull(),
+    creditNoteTotal: decimal("creditNoteTotal", { precision: 14, scale: 4 }).default("0.0000").notNull(),
+    debitNoteTotal: decimal("debitNoteTotal", { precision: 14, scale: 4 }).default("0.0000").notNull(),
     netPayable: decimal("netPayable", { precision: 14, scale: 4 })
       .default("0.0000")
       .notNull(),
@@ -2527,6 +2530,7 @@ export const reverseLogisticsItems = pgTable(
     id: serial("id").primaryKey(),
     reverseLogisticId: integer("reverseLogisticId").notNull(),
     sourceWarehouseExitItemId: integer("sourceWarehouseExitItemId"),
+    sourceReceiptItemId: integer("sourceReceiptItemId").references(() => receiptItems.id, { onDelete: "restrict" }),
     warehouseId: integer("warehouseId").references(() => warehouses.id, {
       onDelete: "set null",
     }),

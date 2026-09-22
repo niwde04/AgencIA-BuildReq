@@ -708,6 +708,7 @@ function toAuditUser(
 }
 
 type AttachmentEntityType =
+  | "financial_note"
   | "material_request"
   | "supply_flow"
   | "reverse_logistic"
@@ -14369,7 +14370,8 @@ export async function createTaxRetention(
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  const [retention] = await db
+  return db.transaction(async tx => {
+  const [retention] = await tx
     .insert(taxRetentions)
     .values({
       ...data,
@@ -14377,7 +14379,10 @@ export async function createTaxRetention(
     })
     .returning();
 
+  const { syncRetentionConcept } = await import("./financialNotes");
+  await syncRetentionConcept(tx, retention.id);
   return retention;
+  });
 }
 
 export async function updateTaxRetention(
@@ -14397,7 +14402,8 @@ export async function updateTaxRetention(
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  const [retention] = await db
+  return db.transaction(async tx => {
+  const [retention] = await tx
     .update(taxRetentions)
     .set({
       ...data,
@@ -14413,7 +14419,10 @@ export async function updateTaxRetention(
     throw new Error("Retención no encontrada");
   }
 
+  const { syncRetentionConcept } = await import("./financialNotes");
+  await syncRetentionConcept(tx, retention.id);
   return retention;
+  });
 }
 
 export async function listInvoices(filters?: {
@@ -15757,7 +15766,7 @@ export async function reviewInvoice(id: number, reviewedById: number) {
   });
 }
 
-export async function returnAccountedInvoiceToReview(id: number) {
+export async function returnAccountedInvoiceToReview(id: number, actorId?: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
@@ -15829,6 +15838,10 @@ export async function returnAccountedInvoiceToReview(id: number) {
         "La factura cambió de estado; actualice e intente de nuevo"
       );
     }
+    if (actorId) {
+      const { syncInvoiceRetentionNote } = await import("./financialNotes");
+      await syncInvoiceRetentionNote(tx, id, actorId);
+    }
     return updated;
   });
 }
@@ -15870,9 +15883,11 @@ export async function accountInvoice(params: {
         accountingComment: params.accountingComment?.trim() || null,
         updatedAt: now,
       })
-      .where(eq(invoices.id, params.id))
+      .where(and(eq(invoices.id, params.id), eq(invoices.status, "revisada")))
       .returning();
-    if (!updated) return updated;
+    if (!updated) throw new Error("La factura cambió de estado; actualice e intente nuevamente");
+    const { syncInvoiceRetentionNote } = await import("./financialNotes");
+    await syncInvoiceRetentionNote(tx, updated.id, params.accountedById, { create: true });
     const { applyAvailableAdvancesForPurchaseOrder } = await import(
       "./purchaseOrderAdvances"
     );
@@ -16286,6 +16301,9 @@ export async function correctInvoiceReceiptFromInvoice(params: {
       .where(eq(invoices.id, row.invoice.id))
       .returning();
 
+    const { syncInvoiceRetentionNote } = await import("./financialNotes");
+    await syncInvoiceRetentionNote(tx, updatedInvoice.id, params.correctedById);
+
     return {
       invoice: updatedInvoice,
       receipt: updatedReceipt,
@@ -16315,7 +16333,8 @@ export async function replaceInvoiceRetentions(
     retentionDocumentRangeEnd?: string | null;
     retentionEmissionDeadline?: Date | null;
     retentionDocumentDate?: Date | null;
-  }
+  },
+  actorId?: number
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -16563,6 +16582,8 @@ export async function replaceInvoiceRetentions(
     const netPayable = calculateInvoiceNetPayable({
       total,
       fiscalRetentionTotal: retentionTotal,
+      creditNoteTotal: invoice.creditNoteTotal,
+      debitNoteTotal: invoice.debitNoteTotal,
       otherRetentionTotal: invoice.otherRetentionTotal,
       documentDiscountTotal: invoice.documentDiscountTotal,
     });
@@ -16607,6 +16628,10 @@ export async function replaceInvoiceRetentions(
       .where(eq(invoices.id, invoiceId))
       .returning();
 
+    if (actorId) {
+      const { syncInvoiceRetentionNote } = await import("./financialNotes");
+      await syncInvoiceRetentionNote(tx, invoiceId, actorId);
+    }
     return updatedInvoice;
   });
 
@@ -16700,6 +16725,8 @@ export async function replaceInvoiceDocumentAdjustments(
       fiscalRetentionTotal: invoice.retentionTotal,
       otherRetentionTotal: calculated.otherRetentionTotal,
       documentDiscountTotal: calculated.documentDiscountTotal,
+      creditNoteTotal: invoice.creditNoteTotal,
+      debitNoteTotal: invoice.debitNoteTotal,
     });
     if (netPayable < -0.000001) {
       throw new Error(
@@ -19098,136 +19125,103 @@ export async function updateReverseLogisticStatus(
   return { success: true };
 }
 
-function buildSupplierCreditNoteNumber(returnNumber: string) {
-  return returnNumber.replace(/^DEV-/, "NC-");
-}
-
 export async function generateSupplierReturnCreditNote(
   id: number,
-  processedById: number
+  processedById: number,
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-
-  const detail = await getReverseLogisticById(id);
-  if (!detail) {
-    throw new Error("Devolución no encontrada");
-  }
-
-  if (detail.return.returnType !== "devolucion_proveedor") {
-    throw new Error(
-      "Solo las devoluciones a proveedor generan nota de crédito"
+  return db.transaction(async (tx) => {
+    const [source] = await tx
+      .select()
+      .from(reverseLogistics)
+      .where(eq(reverseLogistics.id, id))
+      .for("update");
+    if (!source || source.returnType !== "devolucion_proveedor")
+      throw new Error("Devolución a proveedor no encontrada");
+    const { noteRows, createSupplierReturnNote } = await import(
+      "./financialNotes"
     );
-  }
-
-  if (detail.return.sapDocumentNumber) {
+    if (source.sapDocumentNumber) {
+      const [note] = await noteRows(
+        tx,
+        sql`select id from "financialNotes" where "sourceReturnId"=${id}`,
+      );
+      return {
+        success: true,
+        status: source.status,
+        sapDocumentNumber: source.sapDocumentNumber,
+        noteId: note?.id as number | undefined,
+      };
+    }
+    if (source.status !== "pendiente")
+      throw new Error("Solo se procesan devoluciones pendientes");
+    const rows = await noteRows(
+      tx,
+      sql`select r.id,r.quantity,r."sourceReceiptItemId",i."itemName",coalesce(i."currentSapItemCode",i."originalSapItemCode") "sapItemCode",ri."warehouseId",i.quantity "receivedQuantity" from "reverseLogisticsItems" r left join "receiptItems" ri on ri.id=r."sourceReceiptItemId" and ri."receiptId"=${source.sourceReceiptId} left join "invoiceItems" i on i."receiptItemId"=ri.id where r."reverseLogisticId"=${id} order by r.id`,
+    );
+    if (
+      !rows.length ||
+      rows.some(
+        (row) =>
+          !row.sourceReceiptItemId || !row.receivedQuantity || !row.warehouseId,
+      )
+    )
+      throw new Error(
+        "Seleccione el renglón de recepción de cada material antes de generar la nota",
+      );
+    const note = await createSupplierReturnNote(tx, id, processedById);
+    // The source invoice is locked by createSupplierReturnNote, serializing other returns from this receipt.
+    const exceeded = await noteRows(
+      tx,
+      sql`select r."sourceReceiptItemId" from "reverseLogisticsItems" r join "reverseLogistics" parent on parent.id=r."reverseLogisticId" join "invoiceItems" i on i."receiptItemId"=r."sourceReceiptItemId" where parent."sourceReceiptId"=${source.sourceReceiptId} and parent."returnType"='devolucion_proveedor' and (parent.id=${id} or parent.status='aprobada') group by r."sourceReceiptItemId",i.quantity having sum(r.quantity)>i.quantity`,
+    );
+    if (exceeded.length)
+      throw new Error(
+        "La cantidad acumulada devuelta supera la cantidad recibida",
+      );
+    for (const row of rows.sort(
+      (a, b) =>
+        a.warehouseId - b.warehouseId ||
+        String(a.sapItemCode || a.itemName).localeCompare(
+          String(b.sapItemCode || b.itemName),
+        ),
+    )) {
+      await consumeInventoryStockWithClient(tx, {
+        sapItemCode: row.sapItemCode,
+        itemName: row.itemName,
+        projectId: source.sourceProjectId,
+        warehouseId: row.warehouseId,
+        quantity: row.quantity,
+      });
+      await tx
+        .update(reverseLogisticsItems)
+        .set({
+          sapItemCode: row.sapItemCode,
+          itemName: row.itemName,
+          warehouseId: row.warehouseId,
+        })
+        .where(eq(reverseLogisticsItems.id, row.id));
+    }
+    await tx
+      .update(reverseLogistics)
+      .set({
+        status: "aprobada",
+        sapDocumentType: "nota_credito",
+        sapDocumentNumber: note.documentNumber,
+        sapSynced: false,
+        processedById,
+        processedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(reverseLogistics.id, id));
     return {
       success: true,
-      status: detail.return.status,
-      sapDocumentNumber: detail.return.sapDocumentNumber,
+      status: "aprobada" as const,
+      sapDocumentNumber: note.documentNumber,
+      noteId: note.id,
     };
-  }
-
-  if (detail.return.status !== "pendiente") {
-    throw new Error(
-      "Solo se puede generar nota de crédito para devoluciones pendientes"
-    );
-  }
-
-  if (detail.items.length === 0) {
-    throw new Error(
-      "La devolución no tiene ítems para generar nota de crédito"
-    );
-  }
-
-  const quantityByItem = new Map<
-    string,
-    {
-      sapItemCode?: string | null;
-      itemName: string;
-      warehouseId?: number | null;
-      quantity: number;
-    }
-  >();
-
-  for (const item of detail.items) {
-    const quantity = parseDecimal(item.quantity);
-    if (quantity <= 0) {
-      throw new Error(
-        `La cantidad de ${item.itemName} debe ser mayor que cero`
-      );
-    }
-
-    if (!item.warehouseId) {
-      throw new Error(
-        `La devolución de ${item.itemName} no tiene almacén origen`
-      );
-    }
-
-    const key = item.sapItemCode?.trim()
-      ? `sap:${item.sapItemCode.trim()}::wh:${item.warehouseId}`
-      : `name:${item.itemName.trim().toLowerCase()}::wh:${item.warehouseId}`;
-    const current = quantityByItem.get(key);
-    quantityByItem.set(key, {
-      sapItemCode: item.sapItemCode,
-      itemName: item.itemName,
-      warehouseId: item.warehouseId,
-      quantity: (current?.quantity ?? 0) + quantity,
-    });
-  }
-
-  for (const groupedItem of Array.from(quantityByItem.values())) {
-    const rows = await listInventoryRowsForStock({
-      sapItemCode: groupedItem.sapItemCode,
-      itemName: groupedItem.itemName,
-      projectId: detail.return.sourceProjectId,
-      warehouseId: groupedItem.warehouseId,
-    });
-    const available = rows.reduce(
-      (total, row) => total + parseDecimal(row.currentStock),
-      0
-    );
-
-    if (available + 0.0001 < groupedItem.quantity) {
-      throw new Error(
-        `Stock insuficiente para ${groupedItem.itemName}. Disponible: ${toDecimalString(
-          available
-        )}, solicitado: ${toDecimalString(groupedItem.quantity)}.`
-      );
-    }
-  }
-
-  for (const item of detail.items) {
-    await consumeInventoryStock({
-      sapItemCode: item.sapItemCode,
-      itemName: item.itemName,
-      projectId: detail.return.sourceProjectId,
-      warehouseId: item.warehouseId,
-      quantity: item.quantity,
-    });
-  }
-
-  const sapDocumentNumber = buildSupplierCreditNoteNumber(
-    detail.return.returnNumber
-  );
-  await db
-    .update(reverseLogistics)
-    .set({
-      status: "aprobada",
-      sapDocumentType: "nota_credito",
-      sapDocumentNumber,
-      sapSynced: false,
-      processedById,
-      processedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(reverseLogistics.id, id));
-
-  return {
-    success: true,
-    status: "aprobada" as const,
-    sapDocumentNumber,
-  };
+  });
 }
 
 // ============================================================
@@ -19982,7 +19976,8 @@ async function consumeInventoryStockWithClient(
     .select()
     .from(inventoryItems)
     .where(and(...conditions))
-    .orderBy(asc(inventoryItems.id));
+    .orderBy(asc(inventoryItems.id))
+    .for("update");
 
   const available = rows.reduce(
     (total: number, row: InventoryItem) =>

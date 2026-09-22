@@ -10,6 +10,7 @@ import {
 
 type DocumentAttachmentEntityType =
   | "invoice"
+  | "financial_note"
   | "purchase_order"
   | "purchase_order_advance"
   | "quality_retention_release"

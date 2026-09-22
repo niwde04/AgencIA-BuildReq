@@ -31,6 +31,8 @@ import TransferRequests from "./pages/TransferRequests";
 import Transfers from "./pages/Transfers";
 import Recepciones from "./pages/Recepciones";
 import Facturas from "./pages/Facturas";
+import Notas from "./pages/Notas";
+import ConceptosNotas from "./pages/ConceptosNotas";
 import Impuestos from "./pages/Impuestos";
 import Retenciones from "./pages/Retenciones";
 import Reportes from "./pages/Reportes";
@@ -192,6 +194,10 @@ function DashboardRoutes() {
       <Route path="/traslados" component={Transfers} />
       <Route path="/recepciones" component={Recepciones} />
       <Route path="/facturas" component={Facturas} />
+      <Route path="/notas-credito"><Notas key="credit" type="credit" /></Route>
+      <Route path="/notas-debito"><Notas key="debit" type="debit" /></Route>
+      <Route path="/conceptos-notas-credito"><ConceptosNotas key="credit" type="credit" /></Route>
+      <Route path="/conceptos-notas-debito"><ConceptosNotas key="debit" type="debit" /></Route>
       <Route path="/tesoreria" component={Tesoreria} />
       <Route path="/reportes" component={Reportes} />
       <Route path="/impuestos" component={Impuestos} />

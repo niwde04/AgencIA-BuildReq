@@ -1,3 +1,5 @@
+import { FiscalDocumentDialogContent, FiscalDocumentInput } from "@/components/FiscalDocument";
+import { InvoiceFinancialNotes } from "@/components/InvoiceFinancialNotes";
 import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
@@ -2534,12 +2536,13 @@ export default function Facturas() {
         : accountPaymentCertificate.status === "vencido"
           ? `Vencida al emitir · venció ${formatDateLabel(accountPaymentCertificate.expirationDate)}`
           : "Sin vencimiento válido";
-  const netPayable = Math.max(invoiceTotal - retentionTotal, 0);
   const adjustedNetPayable = Math.max(
     0,
     calculateInvoiceNetPayable({
       total: invoiceTotal,
       fiscalRetentionTotal: retentionTotal,
+      creditNoteTotal: detail?.invoice.creditNoteTotal,
+      debitNoteTotal: detail?.invoice.debitNoteTotal,
       otherRetentionTotal,
       documentDiscountTotal,
     })
@@ -2596,7 +2599,7 @@ export default function Facturas() {
     detail?.invoice.status === "registrada" || treasuryPayments.length > 0;
   const printInvoiceAdvanceBalance = buildInvoiceAdvanceBalance({
     invoiceStatus: detail?.invoice.status ?? "borrador",
-    netPayable,
+    netPayable: adjustedNetPayable,
     appliedAdvanceAmount,
     availableAccountedAdvanceAmount:
       detail?.purchaseOrderAdvanceSummary?.unappliedAmount,
@@ -2756,9 +2759,13 @@ export default function Facturas() {
         label: `Total retenciones ${invoiceSummaryCurrency}`,
         value: retentionTotal,
       },
+      ...(otherRetentionTotal > 0 ? [{label: `Otras retenciones ${invoiceSummaryCurrency}`,value: otherRetentionTotal}] : []),
+      ...(documentDiscountTotal > 0 ? [{label: `Descuentos ${invoiceSummaryCurrency}`,value: documentDiscountTotal}] : []),
+      ...(Number(invoice.creditNoteTotal) > 0 ? [{label: `Notas de crédito (−) ${invoiceSummaryCurrency}`,value: invoice.creditNoteTotal}] : []),
+      ...(Number(invoice.debitNoteTotal) > 0 ? [{label: `Notas de débito (+) ${invoiceSummaryCurrency}`,value: invoice.debitNoteTotal}] : []),
       {
         label: `Neto a pagar ${invoiceSummaryCurrency}`,
-        value: netPayable,
+        value: adjustedNetPayable,
       },
       ...(hasRegisteredSupplierAdvance
         ? [
@@ -3757,6 +3764,8 @@ export default function Facturas() {
     const nextNetPayable = calculateInvoiceNetPayable({
       total: invoiceTotal,
       fiscalRetentionTotal: retentionTotal,
+      creditNoteTotal: detail?.invoice.creditNoteTotal,
+      debitNoteTotal: detail?.invoice.debitNoteTotal,
       otherRetentionTotal: calculated.otherRetentionTotal,
       documentDiscountTotal: calculated.documentDiscountTotal,
     });
@@ -4496,7 +4505,7 @@ export default function Facturas() {
           if (!open) setSelectedId(null);
         }}
       >
-        <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-lg p-0 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1580px]">
+        <FiscalDocumentDialogContent>
           <DialogHeader className="min-w-0 border-b border-border/70 px-4 py-4 pr-16 sm:px-6 sm:pr-20">
             <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex min-w-0 flex-wrap items-center gap-3">
@@ -5128,7 +5137,7 @@ export default function Facturas() {
                     <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                       <div className="space-y-2">
                         <Label>Número documento</Label>
-                        <Input
+                        <FiscalDocumentInput format="number" fiscal={invoiceDraft.isFiscalDocument}
                           value={invoiceDraft.invoiceNumber}
                           readOnly={!canEditSelectedInvoice}
                           aria-readonly={!canEditSelectedInvoice}
@@ -5161,7 +5170,7 @@ export default function Facturas() {
                             ? "CAI"
                             : "CAI / referencia"}
                         </Label>
-                        <Input
+                        <FiscalDocumentInput format="cai" fiscal={invoiceDraft.isFiscalDocument}
                           value={invoiceDraft.cai}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
@@ -5187,7 +5196,7 @@ export default function Facturas() {
                       </div>
                       <div className="space-y-2">
                         <Label>Rango autorizado inicial</Label>
-                        <Input
+                        <FiscalDocumentInput format="number" fiscal={invoiceDraft.isFiscalDocument}
                           value={invoiceDraft.documentRangeStart}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
@@ -5215,7 +5224,7 @@ export default function Facturas() {
                       </div>
                       <div className="space-y-2">
                         <Label>Rango autorizado final</Label>
-                        <Input
+                        <FiscalDocumentInput format="number" fiscal={invoiceDraft.isFiscalDocument}
                           value={invoiceDraft.documentRangeEnd}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
@@ -6528,6 +6537,8 @@ export default function Facturas() {
                         {formatSelectedInvoiceCurrency(documentDiscountTotal)}
                       </span>
                     </div>
+                    {Number(detail.invoice.creditNoteTotal) > 0 ? <div className="flex justify-between gap-3 text-sm"><span>(−) Notas de crédito</span><span>{formatSelectedInvoiceCurrency(detail.invoice.creditNoteTotal)}</span></div> : null}
+                    {Number(detail.invoice.debitNoteTotal) > 0 ? <div className="flex justify-between gap-3 text-sm"><span>(+) Notas de débito</span><span>{formatSelectedInvoiceCurrency(detail.invoice.debitNoteTotal)}</span></div> : null}
                     <div className="flex justify-between gap-3 border-t border-border pt-3 text-base font-semibold">
                       <span>Neto a pagar</span>
                       <span className="text-emerald-700">
@@ -6813,7 +6824,8 @@ export default function Facturas() {
                 </section>
 
                 <section className="rounded-lg border border-border/70 p-4">
-                  <h3 className="font-semibold">Historial</h3>
+                  <InvoiceFinancialNotes invoiceId={detail.invoice.id} />
+                  <h3 className="mt-4 font-semibold">Historial</h3>
                   <div className="mt-4 space-y-3">
                     {getInvoiceHistoryRows(detail.invoice).map(
                       (entry, index) => (
@@ -6848,7 +6860,7 @@ export default function Facturas() {
               </aside>
             </div>
           )}
-        </DialogContent>
+        </FiscalDocumentDialogContent>
       </Dialog>
 
       <Dialog

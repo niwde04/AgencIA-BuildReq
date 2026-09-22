@@ -192,12 +192,16 @@ export function calculateInvoiceNetPayable(params: {
   fiscalRetentionTotal?: string | number | null;
   otherRetentionTotal?: string | number | null;
   documentDiscountTotal?: string | number | null;
+  creditNoteTotal?: string | number | null;
+  debitNoteTotal?: string | number | null;
 }) {
   return roundInvoiceAdjustmentMoney(
     numberValue(params.total) -
       numberValue(params.fiscalRetentionTotal) -
       numberValue(params.otherRetentionTotal) -
-      numberValue(params.documentDiscountTotal)
+      numberValue(params.documentDiscountTotal) -
+      numberValue(params.creditNoteTotal) +
+      numberValue(params.debitNoteTotal)
   );
 }
 

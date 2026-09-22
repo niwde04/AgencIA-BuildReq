@@ -1,3 +1,4 @@
+import { ReturnReceiptMapping } from "@/components/ReturnReceiptMapping";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -321,7 +322,8 @@ export default function Devoluciones() {
   const generateCreditNoteMutation =
     trpc.reverseLogistics.generateCreditNote.useMutation({
       onSuccess: result => {
-        toast.success(`Nota de crédito ${result.sapDocumentNumber} generada`);
+        toast.success(`Nota de crédito ${result.sapDocumentNumber} preparada en borrador`);
+        void utils.financialNotes.invalidate();
         setCreditNoteReturnId(null);
         void utils.reverseLogistics.list.invalidate();
         if (selectedReturnId) {
@@ -842,12 +844,14 @@ export default function Devoluciones() {
                   </DialogDescription>
                 </div>
               </div>
+              {selectedReturn?.returnType === "devolucion_proveedor" && selectedReturn.status === "pendiente" && selectedReturn.sourceReceiptId && canCreateReturn && returnItems.some(item => !item.sourceReceiptItemId) ? <ReturnReceiptMapping returnId={selectedReturn.id} receiptId={selectedReturn.sourceReceiptId} items={returnItems} /> : null}
               <div className="flex flex-wrap items-center gap-2">
+                {selectedReturn?.sapDocumentNumber ? <Button variant="outline" size="sm" onClick={() => setLocation(`/notas-credito?search=${encodeURIComponent(selectedReturn.sapDocumentNumber!)}`)}>Ver nota de crédito</Button> : null}
                 {canGenerateCreditNote ? (
                   <Button
                     size="sm"
                     onClick={() => setCreditNoteReturnId(selectedReturn.id)}
-                    disabled={generateCreditNoteMutation.isPending}
+                    disabled={generateCreditNoteMutation.isPending || returnItems.some(item => !item.sourceReceiptItemId)}
                     className="w-fit"
                   >
                     <CreditCard className="mr-2 h-4 w-4" />
@@ -1131,7 +1135,7 @@ export default function Devoluciones() {
             <AlertDialogDescription>
               Esta acción descontará del inventario del proyecto los ítems de la
               devolución y marcará el documento como aprobado con número de nota
-              de crédito. No se puede repetir para la misma devolución.
+              de crédito en borrador para completar sus datos fiscales. No se puede repetir para la misma devolución.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
