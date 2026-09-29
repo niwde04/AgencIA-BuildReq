@@ -2,6 +2,8 @@
 
 Actualizado: 2026-09-28.
 
+Impuestos ya tiene una migración aplicada en Cloud y SSH: restaura los cuatro códigos predeterminados ausentes y añade el grupo financiero opcional. Los códigos de todas las líneas existentes de facturas/órdenes/recepciones encuentran su catálogo; las huellas de documentos permanecieron iguales. Selector con buscador y protección contra renombrar códigos preparados en `demo`, sin push ni despliegue. Validación: tipos, build, 63 pruebas y revisión móvil aprobados. Detalles y recuperación: [impuestos.md](impuestos.md).
+
 Retenciones permite asignar o quitar el código financiero desde un combobox con búsqueda remota por código/descripción y paginación. Comparte `financialNoteConcepts.financialGroupCode` con el catálogo de conceptos; no agrega columnas ni altera las notas contabilizadas. Cambio preparado en la rama `demo`, pendiente de push y despliegue en Dokploy por decisión del usuario.
 
 Para este cambio se verificaron en Supabase Cloud y en el servidor SSH las columnas existentes, la clave foránea al grupo financiero y el enlace único de las cinco retenciones a sus conceptos. Ambos entornos están listos sin migración nueva; esto no implica que todas las migraciones antiguas estén alineadas. Las correcciones anteriores de claves foráneas e índices pendientes en Cloud siguen fuera del alcance de esta entrega.

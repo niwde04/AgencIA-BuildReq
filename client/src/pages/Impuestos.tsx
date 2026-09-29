@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { FinancialGroupCombobox } from "@/components/FinancialGroupCombobox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,6 +38,8 @@ type SalesTaxRecord = {
   appliesToTaxCodes?: string[] | null;
   note?: string | null;
   erpCode?: string | null;
+  financialGroupCode?: string | null;
+  financialGroupDescription?: string | null;
 };
 
 type SalesTaxForm = {
@@ -51,6 +54,8 @@ type SalesTaxForm = {
   appliesToTaxCodes: string;
   note: string;
   erpCode: string;
+  financialGroupCode: string | null;
+  financialGroupDescription: string | null;
 };
 
 const PAGE_SIZE = 25;
@@ -67,6 +72,8 @@ const emptyForm: SalesTaxForm = {
   appliesToTaxCodes: "",
   note: "",
   erpCode: "",
+  financialGroupCode: null,
+  financialGroupDescription: null,
 };
 
 function formatRate(value: string | number | null | undefined) {
@@ -127,8 +134,7 @@ export default function Impuestos() {
   const listInput = useMemo(
     () => ({
       search: debouncedSearch || undefined,
-      isActive:
-        activeFilter === "all" ? undefined : activeFilter === "active",
+      isActive: activeFilter === "all" ? undefined : activeFilter === "active",
       page,
       pageSize: PAGE_SIZE,
     }),
@@ -144,6 +150,31 @@ export default function Impuestos() {
   useEffect(() => {
     if (data?.page && data.page !== page) setPage(data.page);
   }, [data?.page, page]);
+
+  const [groupSearch, setGroupSearch] = useState("");
+  const [groupTerm, setGroupTerm] = useState("");
+  const [groupPage, setGroupPage] = useState(1);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setGroupTerm(groupSearch.trim());
+      setGroupPage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [groupSearch]);
+  const groups = trpc.financialGroups.activeOptionsPage.useQuery(
+    { search: groupTerm || undefined, page: groupPage, pageSize: 25 },
+    { enabled: canManageTaxes && dialogOpen }
+  );
+  useEffect(() => {
+    if (groups.data?.page && groups.data.page !== groupPage) {
+      setGroupPage(groups.data.page);
+    }
+  }, [groups.data?.page, groupPage]);
+  const resetGroupSearch = () => {
+    setGroupSearch("");
+    setGroupTerm("");
+    setGroupPage(1);
+  };
 
   const createMutation = trpc.taxes.create.useMutation({
     onSuccess: () => {
@@ -181,7 +212,8 @@ export default function Impuestos() {
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
-  const rangeStart = total === 0 ? 0 : ((data?.page ?? page) - 1) * PAGE_SIZE + 1;
+  const rangeStart =
+    total === 0 ? 0 : ((data?.page ?? page) - 1) * PAGE_SIZE + 1;
   const rangeEnd =
     total === 0 ? 0 : Math.min((data?.page ?? page) * PAGE_SIZE, total);
   const saving = createMutation.isPending || updateMutation.isPending;
@@ -189,11 +221,13 @@ export default function Impuestos() {
   const openCreateDialog = () => {
     setSelectedTax(null);
     setForm(emptyForm);
+    resetGroupSearch();
     setDialogOpen(true);
   };
 
   const openEditDialog = (tax: SalesTaxRecord) => {
     setSelectedTax(tax);
+    resetGroupSearch();
     setForm({
       taxCode: tax.taxCode,
       description: tax.description,
@@ -206,11 +240,14 @@ export default function Impuestos() {
       appliesToTaxCodes: (tax.appliesToTaxCodes ?? []).join(", "),
       note: tax.note ?? "",
       erpCode: tax.erpCode ?? "",
+      financialGroupCode: tax.financialGroupCode ?? null,
+      financialGroupDescription: tax.financialGroupDescription ?? null,
     });
     setDialogOpen(true);
   };
 
   const submitForm = () => {
+    if (saving) return;
     if (!canManageTaxes) {
       toast.error("No tiene permisos para modificar impuestos");
       return;
@@ -254,6 +291,7 @@ export default function Impuestos() {
           : [],
       note: form.note.trim() || null,
       erpCode: form.erpCode.trim().toUpperCase() || null,
+      financialGroupCode: form.financialGroupCode || null,
     };
 
     if (selectedTax) {
@@ -297,7 +335,7 @@ export default function Impuestos() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Buscar por código, descripción, etiqueta o ERP"
+            placeholder="Buscar por código, descripción o grupo financiero"
             value={search}
             onChange={event => setSearch(event.target.value)}
             className="pl-9"
@@ -329,7 +367,8 @@ export default function Impuestos() {
                 No se pudo cargar el catálogo
               </p>
               <p className="mb-4 text-sm text-muted-foreground">
-                {error.message || "Ocurrió un error consultando la base de datos."}
+                {error.message ||
+                  "Ocurrió un error consultando la base de datos."}
               </p>
               <Button variant="outline" onClick={() => void refetch()}>
                 Reintentar
@@ -366,6 +405,9 @@ export default function Impuestos() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Estado
                       </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Código financiero
+                      </th>
                       {canManageTaxes ? (
                         <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Acciones
@@ -379,9 +421,7 @@ export default function Impuestos() {
                         key={tax.id}
                         className="border-b border-border transition-colors last:border-0 hover:bg-muted/30"
                       >
-                        <td className="p-3 font-mono text-xs">
-                          {tax.taxCode}
-                        </td>
+                        <td className="p-3 font-mono text-xs">{tax.taxCode}</td>
                         <td className="max-w-[360px] p-3">
                           <div className="font-medium">{tax.description}</div>
                           <div className="text-xs text-muted-foreground">
@@ -400,9 +440,7 @@ export default function Impuestos() {
                             {tax.taxType === "base" ? "Base" : "Adicional"}
                           </Badge>
                         </td>
-                        <td className="p-3 capitalize">
-                          {tax.fiscalCategory}
-                        </td>
+                        <td className="p-3 capitalize">{tax.fiscalCategory}</td>
                         <td className="p-3">
                           <Badge
                             variant="outline"
@@ -414,6 +452,22 @@ export default function Impuestos() {
                           >
                             {tax.isActive ? "Activo" : "Inactivo"}
                           </Badge>
+                        </td>
+                        <td className="max-w-[260px] p-3">
+                          {tax.financialGroupCode ? (
+                            <>
+                              <span className="font-mono text-xs">
+                                {tax.financialGroupCode}
+                              </span>
+                              <p className="text-xs text-muted-foreground">
+                                {tax.financialGroupDescription}
+                              </p>
+                            </>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              Sin asignar
+                            </span>
+                          )}
                         </td>
                         {canManageTaxes ? (
                           <td className="p-3 text-right">
@@ -480,7 +534,7 @@ export default function Impuestos() {
 
       {canManageTaxes ? (
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="sm:max-w-2xl">
+          <DialogContent className="max-h-[90dvh] grid-cols-1 overflow-y-auto sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>
                 {selectedTax ? "Editar impuesto" : "Crear impuesto"}
@@ -488,11 +542,19 @@ export default function Impuestos() {
             </DialogHeader>
 
             <div className="space-y-4 pt-2">
+              {selectedTax ? (
+                <p className="text-xs text-muted-foreground">
+                  El código conserva el vínculo con los documentos existentes.
+                  Para un código diferente, cree otro impuesto.
+                </p>
+              ) : null}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div className="space-y-1">
                   <Label className="text-xs">Código</Label>
                   <Input
                     value={form.taxCode}
+                    disabled={!!selectedTax}
+                    aria-label="Código"
                     onChange={event =>
                       setForm(current => ({
                         ...current,
@@ -626,6 +688,42 @@ export default function Impuestos() {
                   />
                 </div>
               ) : null}
+
+              <div className="space-y-1">
+                <Label htmlFor="tax-financial-group" className="text-xs">
+                  Código financiero
+                </Label>
+                <FinancialGroupCombobox
+                  id="tax-financial-group"
+                  showCode
+                  options={groups.data?.items ?? []}
+                  value={form.financialGroupCode}
+                  selectedDescription={form.financialGroupDescription}
+                  disabled={saving}
+                  onChange={(financialGroupCode, description) =>
+                    setForm(current => ({
+                      ...current,
+                      financialGroupCode,
+                      financialGroupDescription: description ?? null,
+                    }))
+                  }
+                  remote={{
+                    search: groupSearch,
+                    onSearchChange: setGroupSearch,
+                    page: groupPage,
+                    totalPages: groups.data?.totalPages ?? 1,
+                    onPageChange: setGroupPage,
+                    loading: groups.isFetching,
+                    error: groups.error
+                      ? "No se pudieron cargar los grupos financieros. Intente buscar de nuevo."
+                      : undefined,
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Opcional. Busque por código o descripción del grupo
+                  financiero.
+                </p>
+              </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1">

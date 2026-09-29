@@ -11,6 +11,7 @@ Aplicación de compras, recepciones, inventario, facturas de proveedores y tesor
 - Tesorería: `server/treasury.ts`; anticipos: `server/purchaseOrderAdvances.ts`.
 - NC/ND y sus catálogos: `server/financialNotes.ts`, `server/routers/financialNotes.ts`, `shared/financial-notes.ts`, `client/src/pages/Notas.tsx`, `client/src/pages/ConceptosNotas.tsx`.
 - Código financiero de retenciones: fuente única en `financialNoteConcepts.financialGroupCode`, enlazada mediante `retentionCatalogId`; Retenciones y Conceptos de notas editan la misma asignación. Omitir el campo preserva el valor y enviar `null` lo quita. Las notas contabilizadas conservan su copia histórica.
+- Impuestos: `salesTaxes.taxCode` coincide con el código guardado en las líneas; no reasignar históricos por tasa ni renombrar códigos desde la API. `salesTaxes.financialGroupCode` guarda el grupo opcional. Restauración segura del catálogo y migración: [impuestos.md](impuestos.md).
 - Facturas y notas comparten presentación/datos fiscales en `client/src/components/FiscalDocument.tsx`.
 
 Reglas críticas: no duplicar deducción de retenciones al contabilizar su NC; conservar base/ISV originales de facturas; validar disponibilidad dentro de transacciones con bloqueos de factura compartidos entre notas, pagos y anticipos. Las notas contabilizadas y sus copias históricas no se editan. El inventario devuelto pertenece a Devoluciones, no a la anulación financiera de la NC.

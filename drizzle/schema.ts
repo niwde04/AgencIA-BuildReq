@@ -13,6 +13,7 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type {
@@ -2229,10 +2230,16 @@ export const salesTaxes = pgTable(
       .notNull(),
     note: text("note"),
     erpCode: varchar("erpCode", { length: 50 }),
+    financialGroupCode: varchar("financialGroupCode", { length: 20 }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
   table => ({
+    financialGroupFk: foreignKey({
+      name: "sales_tax_financial_group_fk",
+      columns: [table.financialGroupCode],
+      foreignColumns: [financialGroups.financialGroupCode],
+    }).onUpdate("cascade").onDelete("restrict"),
     taxCodeIdx: uniqueIndex("sales_tax_code_idx").on(table.taxCode),
     activeIdx: index("sales_tax_active_idx").on(table.isActive),
     typeIdx: index("sales_tax_type_idx").on(table.taxType),

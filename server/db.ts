@@ -1,3 +1,4 @@
+import { TRPCError } from "@trpc/server";
 import { createHash, randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { performance } from "node:perf_hooks";
@@ -13952,6 +13953,8 @@ function defaultSalesTaxRows() {
     ),
     note: null,
     erpCode: null,
+    financialGroupCode: null,
+    financialGroupDescription: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
   }));
@@ -13984,7 +13987,9 @@ function buildSalesTaxWhere(filters?: SalesTaxListFilters) {
         ilike(salesTaxes.description, search),
         ilike(salesTaxes.shortLabel, search),
         ilike(salesTaxes.erpCode, search),
-        ilike(salesTaxes.note, search)
+        ilike(salesTaxes.note, search),
+        ilike(salesTaxes.financialGroupCode, search),
+        ilike(financialGroups.financialGroupDescription, search)
       )!
     );
   }
@@ -14019,6 +14024,7 @@ export async function listSalesTaxes(filters?: SalesTaxListFilters) {
   const [totalResult] = await db
     .select({ count: count() })
     .from(salesTaxes)
+    .leftJoin(financialGroups, eq(financialGroups.financialGroupCode, salesTaxes.financialGroupCode))
     .where(where);
   const total = totalResult?.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -14026,8 +14032,9 @@ export async function listSalesTaxes(filters?: SalesTaxListFilters) {
   const offset = (page - 1) * pageSize;
 
   const items = await db
-    .select()
+    .select({ ...getTableColumns(salesTaxes), financialGroupDescription: financialGroups.financialGroupDescription })
     .from(salesTaxes)
+    .leftJoin(financialGroups, eq(financialGroups.financialGroupCode, salesTaxes.financialGroupCode))
     .where(where)
     .orderBy(asc(salesTaxes.displayOrder), asc(salesTaxes.taxCode))
     .limit(pageSize)
@@ -14057,6 +14064,23 @@ export async function getActiveSalesTaxCatalog() {
   return salesTaxRowsToCatalog(await listActiveSalesTaxes());
 }
 
+async function validateSalesTaxFinancialGroup(
+  tx: Pick<NonNullable<Awaited<ReturnType<typeof getDb>>>, "execute">,
+  code: string | null | undefined,
+  currentCode?: string | null
+) {
+  if (!code) return;
+  const result = await tx.execute(sql`select 1 from "financialGroups"
+    where "financialGroupCode" = ${code}
+      and ("isActive" or "financialGroupCode" = ${currentCode ?? null})
+    for share`);
+  if (!result.rows.length)
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Seleccione un grupo financiero activo",
+    });
+}
+
 export async function createSalesTax(
   data: Pick<
     InsertSalesTax,
@@ -14071,24 +14095,34 @@ export async function createSalesTax(
     | "appliesToTaxCodes"
     | "note"
     | "erpCode"
+    | "financialGroupCode"
   >
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  const [created] = await db
-    .insert(salesTaxes)
-    .values({
-      ...data,
-      taxCode: normalizeSalesTaxCode(data.taxCode),
-      ratePercent: toRateString(data.ratePercent),
-      appliesToTaxCodes: parsePurchaseOrderAdditionalTaxCodes(
-        data.appliesToTaxCodes as any
-      ),
-    })
-    .returning();
+  return db.transaction(async tx => {
+    await validateSalesTaxFinancialGroup(tx, data.financialGroupCode);
+    const taxCode = normalizeSalesTaxCode(data.taxCode);
+    if (!taxCode)
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Ingrese un código con letras o números",
+      });
+    const [created] = await tx
+      .insert(salesTaxes)
+      .values({
+        ...data,
+        taxCode: normalizeSalesTaxCode(data.taxCode),
+        ratePercent: toRateString(data.ratePercent),
+        appliesToTaxCodes: parsePurchaseOrderAdditionalTaxCodes(
+          data.appliesToTaxCodes as any
+        ),
+      })
+      .returning();
 
-  return created;
+    return created;
+  });
 }
 
 export async function updateSalesTax(
@@ -14107,35 +14141,63 @@ export async function updateSalesTax(
       | "appliesToTaxCodes"
       | "note"
       | "erpCode"
+      | "financialGroupCode"
     >
   >
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  const [updated] = await db
-    .update(salesTaxes)
-    .set({
-      ...data,
-      ...(data.taxCode !== undefined
-        ? { taxCode: normalizeSalesTaxCode(data.taxCode) }
-        : {}),
-      ...(data.ratePercent !== undefined
-        ? { ratePercent: toRateString(data.ratePercent) }
-        : {}),
-      ...(data.appliesToTaxCodes !== undefined
-        ? {
-            appliesToTaxCodes: parsePurchaseOrderAdditionalTaxCodes(
-              data.appliesToTaxCodes as any
-            ),
-          }
-        : {}),
-      updatedAt: new Date(),
-    })
-    .where(eq(salesTaxes.id, id))
-    .returning();
+  return db.transaction(async tx => {
+    const [current] = await tx
+      .select()
+      .from(salesTaxes)
+      .where(eq(salesTaxes.id, id))
+      .for("update");
+    if (!current)
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "Impuesto no encontrado",
+      });
+    if (
+      data.taxCode !== undefined &&
+      normalizeSalesTaxCode(data.taxCode) !== current.taxCode
+    ) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "El código vincula el impuesto con sus documentos y no se puede cambiar. Cree otro impuesto para un código diferente.",
+      });
+    }
+    await validateSalesTaxFinancialGroup(
+      tx,
+      data.financialGroupCode,
+      current.financialGroupCode
+    );
+    const [updated] = await tx
+      .update(salesTaxes)
+      .set({
+        ...data,
+        ...(data.taxCode !== undefined
+          ? { taxCode: normalizeSalesTaxCode(data.taxCode) }
+          : {}),
+        ...(data.ratePercent !== undefined
+          ? { ratePercent: toRateString(data.ratePercent) }
+          : {}),
+        ...(data.appliesToTaxCodes !== undefined
+          ? {
+              appliesToTaxCodes: parsePurchaseOrderAdditionalTaxCodes(
+                data.appliesToTaxCodes as any
+              ),
+            }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(salesTaxes.id, id))
+      .returning();
 
-  return updated;
+    return updated;
+  });
 }
 
 export async function removeSalesTax(id: number) {
@@ -14158,6 +14220,19 @@ export async function removeSalesTax(id: number) {
         WHERE "taxCode" = ${tax.taxCode}
           OR "additionalTaxCodes" @> ${codeJson}::jsonb
       )`,
+      otherUsageCount: sql<number>`(
+        SELECT count(*)::int FROM (
+          SELECT 1 FROM "receiptItems" WHERE "taxCode" = ${tax.taxCode}
+            OR "additionalTaxCodes" @> ${codeJson}::jsonb
+            OR "taxBreakdown" @> ${JSON.stringify([{ taxCode: tax.taxCode }])}::jsonb
+          UNION ALL
+          SELECT 1 FROM "financialNoteLines" WHERE "taxCode" = ${tax.taxCode}
+            OR "taxSnapshot" @> ${JSON.stringify([{ taxCode: tax.taxCode }])}::jsonb
+            OR "taxSnapshot" ->> 'taxCode' = ${tax.taxCode}
+          UNION ALL
+          SELECT 1 FROM "salesTaxes" WHERE "appliesToTaxCodes" @> ${codeJson}::jsonb
+        ) used
+      )`,
       invoiceCount: sql<number>`(
         SELECT count(*)::int
         FROM "invoiceItems"
@@ -14171,7 +14246,8 @@ export async function removeSalesTax(id: number) {
 
   if (
     Number(usage?.purchaseOrderCount ?? 0) > 0 ||
-    Number(usage?.invoiceCount ?? 0) > 0
+    Number(usage?.invoiceCount ?? 0) > 0 ||
+    Number(usage?.otherUsageCount ?? 0) > 0
   ) {
     const [updated] = await db
       .update(salesTaxes)

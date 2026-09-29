@@ -82,6 +82,7 @@ const taxInputSchema = z.object({
   appliesToTaxCodes: z.array(z.string().trim().min(1)).optional(),
   note: z.string().trim().max(1000).optional().nullable(),
   erpCode: z.string().trim().max(50).optional().nullable(),
+  financialGroupCode: z.string().trim().min(1).max(20).optional().nullable(),
 });
 
 export const taxesRouter = router({
@@ -121,10 +122,13 @@ export const taxesRouter = router({
         displayOrder: input.displayOrder,
         appliesToTaxCodes:
           input.taxType === "additional"
-            ? parsePurchaseOrderAdditionalTaxCodes(input.appliesToTaxCodes ?? [])
+            ? parsePurchaseOrderAdditionalTaxCodes(
+                input.appliesToTaxCodes ?? []
+              )
             : [],
         note: nullableText(input.note),
         erpCode: nullableText(input.erpCode)?.toUpperCase() ?? null,
+        financialGroupCode: input.financialGroupCode,
       });
     }),
 
@@ -143,10 +147,13 @@ export const taxesRouter = router({
         displayOrder: input.displayOrder,
         appliesToTaxCodes:
           input.taxType === "additional"
-            ? parsePurchaseOrderAdditionalTaxCodes(input.appliesToTaxCodes ?? [])
+            ? parsePurchaseOrderAdditionalTaxCodes(
+                input.appliesToTaxCodes ?? []
+              )
             : [],
         note: nullableText(input.note),
         erpCode: nullableText(input.erpCode)?.toUpperCase() ?? null,
+        financialGroupCode: input.financialGroupCode,
       });
     }),
 
