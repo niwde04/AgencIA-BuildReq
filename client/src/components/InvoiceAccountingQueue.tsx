@@ -1,14 +1,20 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "wouter";
 import {
   CheckCircle2,
   ChevronDown,
+  Download,
   Loader2,
   Search,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { buildDatedExcelFileName, downloadWorkbook } from "@/lib/excel-export";
+import {
+  buildInvoiceAccountingWorksheets,
+  collectInvoiceAccountingExport,
+} from "@/lib/invoice-accounting-export";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { DataPagination } from "@/components/DataPagination";
 import {
@@ -90,13 +96,22 @@ export function InvoiceAccountingQueue({
     action: "account" | "reject";
   } | null>(null);
   const [comment, setComment] = useState("");
-  const query = trpc.treasury.invoiceAccountingQueue.useQuery({
+  const exportInProgress = useRef(false);
+  const [exportProgress, setExportProgress] = useState<{
+    loaded: number;
+    total: number;
+  } | null>(null);
+  const exporting = exportProgress !== null;
+  const filters = {
     search: debouncedSearch.trim() || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     projectId: project === "all" ? undefined : Number(project),
     currency: currency === "all" ? undefined : currency,
     status,
+  };
+  const query = trpc.treasury.invoiceAccountingQueue.useQuery({
+    ...filters,
     page,
     pageSize: PAGE_SIZE,
   });
@@ -149,6 +164,45 @@ export function InvoiceAccountingQueue({
         id: decision.row.id,
         accountingComment: comment.trim() || undefined,
       });
+  };
+  const exportExcel = async () => {
+    if (exportInProgress.current || busy) return;
+    exportInProgress.current = true;
+    setExportProgress({ loaded: 0, total: query.data?.total ?? 0 });
+    // Capture exactly the filters visible when Download is pressed, including typed search.
+    const exportFilters = { ...filters, search: search.trim() || undefined };
+    try {
+      const invoices = await collectInvoiceAccountingExport(
+        (page, pageSize) =>
+          utils.treasury.invoiceAccountingQueue.fetch(
+            { ...exportFilters, page, pageSize },
+            { staleTime: 0 }
+          ),
+        (loaded, total) => setExportProgress({ loaded, total })
+      );
+      if (!invoices.length) {
+        toast.info("No hay facturas para exportar con estos filtros.");
+        return;
+      }
+      await downloadWorkbook(
+        buildDatedExcelFileName("facturas-por-contabilizar"),
+        buildInvoiceAccountingWorksheets(invoices)
+      );
+      toast.success(
+        "Excel generado con " +
+          invoices.length.toLocaleString("es-HN") +
+          " facturas"
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el Excel. Intenta nuevamente."
+      );
+    } finally {
+      exportInProgress.current = false;
+      setExportProgress(null);
+    }
   };
   const rows = query.data?.items ?? [];
   return (
@@ -290,7 +344,7 @@ export function InvoiceAccountingQueue({
                       />
                     </div>
                   </div>
-                  <div className="space-y-2 sm:col-span-2 xl:col-span-4">
+                  <div className="min-w-0 space-y-2 sm:col-span-2 xl:col-span-3">
                     <Label htmlFor="accounting-search">Buscar</Label>
                     <div className="relative">
                       <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -307,6 +361,31 @@ export function InvoiceAccountingQueue({
                       />
                     </div>
                   </div>
+                  <Button
+                    className="min-h-10 w-full sm:col-span-2 xl:col-span-1"
+                    onClick={() => void exportExcel()}
+                    disabled={
+                      exporting ||
+                      busy ||
+                      query.isLoading ||
+                      query.isError ||
+                      query.data?.total === 0
+                    }
+                    title="Descargar todas las facturas que coincidan con los filtros"
+                    aria-live="polite"
+                  >
+                    {exporting ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="mr-2 h-4 w-4" />
+                    )}
+                    {exportProgress
+                      ? "Exportando " +
+                        exportProgress.loaded.toLocaleString("es-HN") +
+                        "/" +
+                        exportProgress.total.toLocaleString("es-HN")
+                      : "Exportar Excel"}
+                  </Button>
                 </div>
                 {query.isError ? (
                   <div
@@ -475,7 +554,11 @@ export function InvoiceAccountingQueue({
                                       <div className="flex gap-2">
                                         <Button
                                           size="sm"
-                                          disabled={busy || query.isFetching}
+                                          disabled={
+                                            busy ||
+                                            query.isFetching ||
+                                            exporting
+                                          }
                                           onClick={() => choose(row, "account")}
                                         >
                                           <CheckCircle2 className="mr-1 h-4 w-4" />
@@ -484,7 +567,11 @@ export function InvoiceAccountingQueue({
                                         <Button
                                           size="sm"
                                           variant="outline"
-                                          disabled={busy || query.isFetching}
+                                          disabled={
+                                            busy ||
+                                            query.isFetching ||
+                                            exporting
+                                          }
                                           onClick={() => choose(row, "reject")}
                                         >
                                           <XCircle className="mr-1 h-4 w-4" />
