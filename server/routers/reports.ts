@@ -164,12 +164,20 @@ export const reportsRouter = router({
   systemInvoices: protectedProcedure
     .input(
       z.object({
+        currency: z.enum(["HNL", "USD"]).nullish(),
         projectId: z.number().int().positive().nullish(),
         dateFrom: dateInputSchema,
         dateTo: dateInputSchema,
         search: z.string().trim().max(200).nullish(),
         status: z
-          .enum(["borrador", "revisada", "rechazada", "registrada", "anulada"])
+          .enum([
+            "borrador",
+            "revisada",
+            "pendiente_contabilizar",
+            "rechazada",
+            "registrada",
+            "anulada",
+          ])
           .nullish(),
       })
     )
@@ -193,6 +201,7 @@ export const reportsRouter = router({
         dateFrom,
         dateTo,
         search: input.search,
+        currency: input.currency,
         ...(input.status
           ? { statuses: [input.status] }
           : { excludeStatus: "anulada" }),

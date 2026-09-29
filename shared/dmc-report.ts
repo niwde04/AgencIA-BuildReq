@@ -234,6 +234,7 @@ export type DmcReportPayload = {
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
   revisada: "Enviada a revisión",
+  pendiente_contabilizar: "Pendiente de contabilizar",
   rechazada: "Rechazada",
   registrada: "Contabilizada",
   anulada: "Anulada",

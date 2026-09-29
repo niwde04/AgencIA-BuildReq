@@ -14533,6 +14533,7 @@ export async function listInvoices(filters?: {
   status?: string;
   statuses?: string[];
   excludeStatus?: string;
+  excludeStatuses?: string[];
   supplierId?: number;
   search?: string;
 }) {
@@ -14555,6 +14556,10 @@ export async function listInvoices(filters?: {
     conditions.push(inArray(invoices.status, filters.statuses as any));
   if (filters?.excludeStatus)
     conditions.push(sql`${invoices.status} <> ${filters.excludeStatus}`);
+  if (filters?.excludeStatuses?.length)
+    conditions.push(
+      sql`${invoices.status}::text <> all(${sql.param(filters.excludeStatuses)}::text[])`
+    );
   if (filters?.supplierId)
     conditions.push(eq(invoices.supplierId, filters.supplierId));
   const normalizedSearch = filters?.search?.trim();
@@ -14733,6 +14738,7 @@ export async function listInvoices(filters?: {
 export async function listDmcReportSourceInvoices(filters?: {
   invoiceIds?: number[];
   projectId?: number | null;
+  currency?: "HNL" | "USD" | null;
   projectIds?: number[] | null;
   statuses?: string[];
   excludeStatus?: string;
@@ -14744,6 +14750,8 @@ export async function listDmcReportSourceInvoices(filters?: {
   if (!db) return [];
 
   const conditions = [];
+  if (filters?.currency)
+    conditions.push(eq(invoices.currency, filters.currency));
   if (filters?.invoiceIds) {
     if (filters.invoiceIds.length === 0) return [];
     conditions.push(inArray(invoices.id, filters.invoiceIds));
@@ -15852,6 +15860,8 @@ export async function reviewInvoice(id: number, reviewedById: number) {
         status: "revisada",
         reviewedById,
         reviewedAt: now,
+        submittedForAccountingAt: null,
+        submittedForAccountingById: null,
         accountedById: null,
         accountedAt: null,
         accountingComment: null,
@@ -15860,14 +15870,54 @@ export async function reviewInvoice(id: number, reviewedById: number) {
         rejectedAt: null,
         updatedAt: now,
       })
-      .where(eq(invoices.id, id))
+      .where(
+        and(
+          eq(invoices.id, id),
+          inArray(invoices.status, ["borrador", "rechazada"])
+        )
+      )
       .returning();
+    if (!updated)
+      throw new Error(
+        "La factura cambió de estado; actualice e intente nuevamente"
+      );
 
     return updated;
   });
 }
 
-export async function returnAccountedInvoiceToReview(id: number, actorId?: number) {
+export async function submitInvoiceForAccounting(params: {
+  id: number;
+  submittedById: number;
+  accountingComment?: string | null;
+}) {
+  const database = await getDb();
+  if (!database) throw new Error("DB not available");
+  const now = new Date();
+  // This transition only queues the invoice. Accounting/advances/notes happen later.
+  const [updated] = await database
+    .update(invoices)
+    .set({
+      status: "pendiente_contabilizar",
+      submittedForAccountingAt: now,
+      submittedForAccountingById: params.submittedById,
+      accountingComment: params.accountingComment?.trim() || null,
+      updatedAt: now,
+    })
+    .where(and(eq(invoices.id, params.id), eq(invoices.status, "revisada")))
+    .returning();
+  if (!updated)
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "La factura cambió de estado; actualice e intente nuevamente",
+    });
+  return updated;
+}
+
+export async function returnAccountedInvoiceToReview(
+  id: number,
+  actorId?: number
+) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
@@ -15926,6 +15976,8 @@ export async function returnAccountedInvoiceToReview(id: number, actorId?: numbe
       .update(invoices)
       .set({
         status: "revisada",
+        submittedForAccountingAt: null,
+        submittedForAccountingById: null,
         accountedById: null,
         accountedAt: null,
         accountingComment: null,
@@ -15984,11 +16036,21 @@ export async function accountInvoice(params: {
         accountingComment: params.accountingComment?.trim() || null,
         updatedAt: now,
       })
-      .where(and(eq(invoices.id, params.id), eq(invoices.status, "revisada")))
+      .where(
+        and(
+          eq(invoices.id, params.id),
+          eq(invoices.status, "pendiente_contabilizar")
+        )
+      )
       .returning();
-    if (!updated) throw new Error("La factura cambió de estado; actualice e intente nuevamente");
+    if (!updated)
+      throw new Error(
+        "La factura cambió de estado; actualice e intente nuevamente"
+      );
     const { syncInvoiceRetentionNote } = await import("./financialNotes");
-    await syncInvoiceRetentionNote(tx, updated.id, params.accountedById, { create: true });
+    await syncInvoiceRetentionNote(tx, updated.id, params.accountedById, {
+      create: true,
+    });
     const { applyAvailableAdvancesForPurchaseOrder } = await import(
       "./purchaseOrderAdvances"
     );
@@ -16024,8 +16086,18 @@ export async function rejectInvoiceFromAccounting(params: {
       accountingComment: null,
       updatedAt: now,
     })
-    .where(eq(invoices.id, params.id))
+    .where(
+      and(
+        eq(invoices.id, params.id),
+        eq(invoices.status, "pendiente_contabilizar")
+      )
+    )
     .returning();
+  if (!updated)
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "La factura cambió de estado; actualice e intente nuevamente",
+    });
 
   return updated;
 }
@@ -22978,7 +23050,7 @@ export async function getDashboardSidebarCounts(params: {
         select count(*)::integer
         from ${invoices}
         where ${params.includeReviewedInvoices}
-          and ${invoices.status} = 'revisada'
+          and ${invoices.status} in ('revisada', 'pendiente_contabilizar')
           and ${projectScope(invoices.projectId, params.projectIds)}
       ) as "invoicesReviewed"
   `);

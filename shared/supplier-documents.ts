@@ -23,6 +23,7 @@ export type SupplierRetentionPolicy = "rt15_only" | "manual" | "none";
 export type InvoiceRetentionEligibilityStatus =
   | "borrador"
   | "revisada"
+  | "pendiente_contabilizar"
   | "rechazada"
   | "registrada"
   | "anulada";

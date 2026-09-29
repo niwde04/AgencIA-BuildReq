@@ -234,6 +234,7 @@ export const receiptSourceTypeEnum = pgEnum("receipt_source_type", [
 export const invoiceStatusEnum = pgEnum("invoice_status", [
   "borrador",
   "revisada",
+  "pendiente_contabilizar",
   "rechazada",
   "registrada",
   "anulada",
@@ -1595,6 +1596,8 @@ export const invoices = pgTable(
       .notNull(),
     reviewedById: integer("reviewedById"),
     reviewedAt: timestamp("reviewedAt"),
+    submittedForAccountingAt: timestamp("submittedForAccountingAt"),
+    submittedForAccountingById: integer("submittedForAccountingById"),
     accountedById: integer("accountedById"),
     accountedAt: timestamp("accountedAt"),
     accountingComment: text("accountingComment"),

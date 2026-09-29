@@ -196,6 +196,7 @@ export type TreasuryInvoiceSummaryPayload = {
 const INVOICE_STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
   revisada: "Enviada a revisión",
+  pendiente_contabilizar: "Pendiente de contabilizar",
   rechazada: "Rechazada",
   registrada: "Contabilizada",
   anulada: "Anulada",

@@ -1,4 +1,8 @@
-import { FiscalDocumentDialogContent, FiscalDocumentInput } from "@/components/FiscalDocument";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  FiscalDocumentDialogContent,
+  FiscalDocumentInput,
+} from "@/components/FiscalDocument";
 import { InvoiceFinancialNotes } from "@/components/InvoiceFinancialNotes";
 import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
@@ -119,6 +123,7 @@ const PAGE_SIZE = 50;
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
   revisada: "Enviada a revisión",
+  pendiente_contabilizar: "Pendiente de contabilizar",
   rechazada: "Rechazada",
   registrada: "Contabilizada",
   anulada: "Anulada",
@@ -127,6 +132,7 @@ const STATUS_LABELS: Record<string, string> = {
 const STATUS_COLORS: Record<string, string> = {
   borrador: "border-slate-300 bg-slate-50 text-slate-700",
   revisada: "border-blue-300 bg-blue-50 text-blue-700",
+  pendiente_contabilizar: "border-amber-300 bg-amber-50 text-amber-800",
   rechazada: "border-rose-300 bg-rose-50 text-rose-700",
   registrada: "border-emerald-300 bg-emerald-50 text-emerald-700",
   anulada: "border-rose-300 bg-rose-50 text-rose-700",
@@ -962,6 +968,13 @@ function getInvoiceHistoryRows(invoice: any) {
     });
   }
 
+  if (invoice.submittedForAccountingAt) {
+    rows.push({
+      label: "Enviada a contabilizar",
+      date: invoice.submittedForAccountingAt,
+      state: "done",
+    });
+  }
   if (invoice.rejectedAt) {
     rows.push({
       label: "Factura rechazada",
@@ -976,9 +989,12 @@ function getInvoiceHistoryRows(invoice: any) {
       date: invoice.accountedAt,
       state: "done",
     });
-  } else if (invoice.status === "revisada") {
+  } else if (["revisada", "pendiente_contabilizar"].includes(invoice.status)) {
     rows.push({
-      label: "Pendiente de contabilizar",
+      label:
+        invoice.status === "revisada"
+          ? "Pendiente de envío a contabilizar"
+          : "Pendiente de contabilizar",
       state: "pending",
     });
   }
@@ -1575,6 +1591,9 @@ export default function Facturas() {
   const [searchTerm, setSearchTerm] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [currencyFilter, setCurrencyFilter] = useState<"all" | "HNL" | "USD">(
+    "all"
+  );
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
@@ -1600,8 +1619,6 @@ export default function Facturas() {
   const [isExportingInternalReport, setIsExportingInternalReport] =
     useState(false);
   const [accountingComment, setAccountingComment] = useState("");
-  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
-  const [rejectionComment, setRejectionComment] = useState("");
   const [correctionDialogOpen, setCorrectionDialogOpen] = useState(false);
   const [correctionReason, setCorrectionReason] = useState("");
   const [receiptFiscalSyncDialogOpen, setReceiptFiscalSyncDialogOpen] =
@@ -1735,16 +1752,26 @@ export default function Facturas() {
           : (statusFilter as
               | "borrador"
               | "revisada"
+              | "pendiente_contabilizar"
               | "rechazada"
               | "registrada"
               | "anulada"),
+      currency: currencyFilter === "all" ? undefined : currencyFilter,
       search: debouncedSearchTerm.trim() || undefined,
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
       page,
       pageSize: PAGE_SIZE,
     }),
-    [dateFrom, dateTo, debouncedSearchTerm, page, projectFilter, statusFilter]
+    [
+      dateFrom,
+      dateTo,
+      debouncedSearchTerm,
+      page,
+      projectFilter,
+      statusFilter,
+      currencyFilter,
+    ]
   );
 
   const {
@@ -2025,34 +2052,25 @@ export default function Facturas() {
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
-  const accountMutation = trpc.invoices.account.useMutation({
-    onSuccess: () => {
-      toast.success("Factura contabilizada");
-      setAccountingComment("");
-      void utils.invoices.invalidate();
-      if (selectedId)
-        void utils.invoices.getById.invalidate({ id: selectedId });
-      setSelectedId(null);
-    },
-    onError: error => toast.error(getFriendlyMutationError(error.message)),
-  });
+  const submitAccountingMutation =
+    trpc.invoices.submitForAccounting.useMutation({
+      onSuccess: () => {
+        toast.success("Factura enviada a contabilizar en Tesorería");
+        void utils.treasury.invoiceAccountingQueue.invalidate();
+        void utils.dashboard.sidebarCounts.invalidate();
+        setAccountingComment("");
+        void utils.invoices.invalidate();
+        if (selectedId)
+          void utils.invoices.getById.invalidate({ id: selectedId });
+        setSelectedId(null);
+      },
+      onError: error => toast.error(getFriendlyMutationError(error.message)),
+    });
   const returnToReviewMutation = trpc.invoices.returnToReview.useMutation({
     onSuccess: (_data, variables) => {
       toast.success("Factura regresada a revisión");
       void utils.invoices.invalidate();
       void utils.invoices.getById.invalidate({ id: variables.id });
-    },
-    onError: error => toast.error(getFriendlyMutationError(error.message)),
-  });
-  const rejectMutation = trpc.invoices.reject.useMutation({
-    onSuccess: () => {
-      toast.success("Factura rechazada");
-      setRejectDialogOpen(false);
-      setRejectionComment("");
-      void utils.invoices.invalidate();
-      if (selectedId)
-        void utils.invoices.getById.invalidate({ id: selectedId });
-      setSelectedId(null);
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
@@ -2220,8 +2238,6 @@ export default function Facturas() {
   useEffect(() => {
     if (!detail?.invoice) return;
     setAccountingComment("");
-    setRejectionComment("");
-    setRejectDialogOpen(false);
     setCorrectionReason("");
     setCorrectionDialogOpen(false);
     setActionFeedback({
@@ -2342,7 +2358,14 @@ export default function Facturas() {
 
   useEffect(
     () => setPage(1),
-    [dateFrom, dateTo, debouncedSearchTerm, projectFilter, statusFilter]
+    [
+      dateFrom,
+      dateTo,
+      debouncedSearchTerm,
+      projectFilter,
+      statusFilter,
+      currencyFilter,
+    ]
   );
   useEffect(() => {
     if (
@@ -2759,10 +2782,38 @@ export default function Facturas() {
         label: `Total retenciones ${invoiceSummaryCurrency}`,
         value: retentionTotal,
       },
-      ...(otherRetentionTotal > 0 ? [{label: `Otras retenciones ${invoiceSummaryCurrency}`,value: otherRetentionTotal}] : []),
-      ...(documentDiscountTotal > 0 ? [{label: `Descuentos ${invoiceSummaryCurrency}`,value: documentDiscountTotal}] : []),
-      ...(Number(invoice.creditNoteTotal) > 0 ? [{label: `Notas de crédito (−) ${invoiceSummaryCurrency}`,value: invoice.creditNoteTotal}] : []),
-      ...(Number(invoice.debitNoteTotal) > 0 ? [{label: `Notas de débito (+) ${invoiceSummaryCurrency}`,value: invoice.debitNoteTotal}] : []),
+      ...(otherRetentionTotal > 0
+        ? [
+            {
+              label: `Otras retenciones ${invoiceSummaryCurrency}`,
+              value: otherRetentionTotal,
+            },
+          ]
+        : []),
+      ...(documentDiscountTotal > 0
+        ? [
+            {
+              label: `Descuentos ${invoiceSummaryCurrency}`,
+              value: documentDiscountTotal,
+            },
+          ]
+        : []),
+      ...(Number(invoice.creditNoteTotal) > 0
+        ? [
+            {
+              label: `Notas de crédito (−) ${invoiceSummaryCurrency}`,
+              value: invoice.creditNoteTotal,
+            },
+          ]
+        : []),
+      ...(Number(invoice.debitNoteTotal) > 0
+        ? [
+            {
+              label: `Notas de débito (+) ${invoiceSummaryCurrency}`,
+              value: invoice.debitNoteTotal,
+            },
+          ]
+        : []),
       {
         label: `Neto a pagar ${invoiceSummaryCurrency}`,
         value: adjustedNetPayable,
@@ -3123,7 +3174,7 @@ export default function Facturas() {
     (canEditInvoices && isDraft) || (canAccountInvoices && isReviewed);
   const canManageInvoiceAttachments = canReviewInvoices && isDraft;
   const canReviewSelectedInvoice = canReviewInvoices && isDraft;
-  const canAccountSelectedInvoice = canAccountInvoices && isReviewed;
+  const canSubmitSelectedInvoice = canAccountInvoices && isReviewed;
   const canReturnSelectedInvoiceToReview =
     isSystemInvoiceReviewAdmin &&
     isAccounted &&
@@ -4092,15 +4143,15 @@ export default function Facturas() {
     submitInvoiceForReview();
   };
 
-  const handleAccountInvoice = () => {
-    if (!selectedId) return;
+  const handleSubmitForAccounting = () => {
+    if (!selectedId || submitAccountingMutation.isPending) return;
     if (documentAdjustmentsDirty) {
       toast.error(
-        "Guarde las retenciones y descuentos por documento antes de contabilizar"
+        "Guarde las retenciones y descuentos por documento antes de enviar a contabilizar"
       );
       return;
     }
-    accountMutation.mutate({
+    submitAccountingMutation.mutate({
       id: selectedId,
       accountingComment: accountingComment.trim() || undefined,
     });
@@ -4113,18 +4164,6 @@ export default function Facturas() {
     );
     if (!confirmed) return;
     returnToReviewMutation.mutate({ id: selectedId });
-  };
-
-  const handleRejectInvoice = () => {
-    if (!selectedId) return;
-    if (rejectionComment.trim().length < 5) {
-      toast.error("Escribe un comentario de rechazo de al menos 5 caracteres");
-      return;
-    }
-    rejectMutation.mutate({
-      id: selectedId,
-      rejectionComment: rejectionComment.trim(),
-    });
   };
 
   const handleCorrectReceipt = () => {
@@ -4147,6 +4186,7 @@ export default function Facturas() {
         projectId: projectFilter === "all" ? null : Number(projectFilter),
         dateFrom: dateFrom || null,
         dateTo: dateTo || null,
+        currency: currencyFilter === "all" ? null : currencyFilter,
         search: debouncedSearchTerm.trim() || null,
         status:
           statusFilter === "all"
@@ -4154,6 +4194,7 @@ export default function Facturas() {
             : (statusFilter as
                 | "borrador"
                 | "revisada"
+                | "pendiente_contabilizar"
                 | "rechazada"
                 | "registrada"
                 | "anulada"),
@@ -4203,7 +4244,7 @@ export default function Facturas() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+      <div className="flex flex-col gap-3 xl:flex-row xl:flex-wrap xl:items-end">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -4260,6 +4301,21 @@ export default function Facturas() {
                 {project.code} - {project.name}
               </SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={currencyFilter}
+          onValueChange={value =>
+            setCurrencyFilter(value as typeof currencyFilter)
+          }
+        >
+          <SelectTrigger aria-label="Moneda" className="h-10 w-full lg:w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todas las monedas</SelectItem>
+            <SelectItem value="HNL">Lempiras (HNL)</SelectItem>
+            <SelectItem value="USD">Dólares (USD)</SelectItem>
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -4585,26 +4641,19 @@ export default function Facturas() {
                             : "Registrar Factura"}
                     </Button>
                   ) : null}
-                  {canAccountSelectedInvoice ? (
+                  {canSubmitSelectedInvoice ? (
                     <>
                       <Button
-                        onClick={handleAccountInvoice}
+                        onClick={handleSubmitForAccounting}
                         disabled={
-                          accountMutation.isPending || documentAdjustmentsDirty
+                          submitAccountingMutation.isPending ||
+                          documentAdjustmentsDirty
                         }
                       >
                         <CheckCircle2 className="mr-2 h-4 w-4" />
-                        {accountMutation.isPending
-                          ? "Contabilizando..."
-                          : "Contabilizar"}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setRejectDialogOpen(true)}
-                        disabled={rejectMutation.isPending}
-                      >
-                        <XCircle className="mr-2 h-4 w-4" />
-                        Rechazar
+                        {submitAccountingMutation.isPending
+                          ? "Enviando..."
+                          : "Enviar a contabilizar"}
                       </Button>
                     </>
                   ) : null}
@@ -4652,6 +4701,14 @@ export default function Facturas() {
                   </div>
                 ) : null}
 
+                {detail.invoice.status === "pendiente_contabilizar" ? (
+                  <Alert>
+                    <AlertDescription>
+                      Factura enviada a contabilizar. Contabilidad puede
+                      contabilizarla o rechazarla desde Tesorería.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
                 {isRejected && detail.invoice.rejectionComment ? (
                   <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
                     <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -6461,7 +6518,7 @@ export default function Facturas() {
                   </p>
                 </section>
 
-                {canAccountSelectedInvoice ? (
+                {canSubmitSelectedInvoice ? (
                   <section className="rounded-lg border border-border/70 p-4">
                     <h3 className="font-semibold">Comentario contable</h3>
                     <Textarea
@@ -6537,8 +6594,26 @@ export default function Facturas() {
                         {formatSelectedInvoiceCurrency(documentDiscountTotal)}
                       </span>
                     </div>
-                    {Number(detail.invoice.creditNoteTotal) > 0 ? <div className="flex justify-between gap-3 text-sm"><span>(−) Notas de crédito</span><span>{formatSelectedInvoiceCurrency(detail.invoice.creditNoteTotal)}</span></div> : null}
-                    {Number(detail.invoice.debitNoteTotal) > 0 ? <div className="flex justify-between gap-3 text-sm"><span>(+) Notas de débito</span><span>{formatSelectedInvoiceCurrency(detail.invoice.debitNoteTotal)}</span></div> : null}
+                    {Number(detail.invoice.creditNoteTotal) > 0 ? (
+                      <div className="flex justify-between gap-3 text-sm">
+                        <span>(−) Notas de crédito</span>
+                        <span>
+                          {formatSelectedInvoiceCurrency(
+                            detail.invoice.creditNoteTotal
+                          )}
+                        </span>
+                      </div>
+                    ) : null}
+                    {Number(detail.invoice.debitNoteTotal) > 0 ? (
+                      <div className="flex justify-between gap-3 text-sm">
+                        <span>(+) Notas de débito</span>
+                        <span>
+                          {formatSelectedInvoiceCurrency(
+                            detail.invoice.debitNoteTotal
+                          )}
+                        </span>
+                      </div>
+                    ) : null}
                     <div className="flex justify-between gap-3 border-t border-border pt-3 text-base font-semibold">
                       <span>Neto a pagar</span>
                       <span className="text-emerald-700">
@@ -7078,58 +7153,6 @@ export default function Facturas() {
               {correctReceiptMutation.isPending
                 ? "Corrigiendo..."
                 : "Anular y crear borrador"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={rejectDialogOpen}
-        onOpenChange={open => {
-          if (!open && !rejectMutation.isPending) {
-            setRejectDialogOpen(false);
-            setRejectionComment("");
-          }
-        }}
-      >
-        <DialogContent className="max-w-lg rounded-2xl border-border/70">
-          <DialogHeader className="space-y-2">
-            <DialogTitle>Rechazar factura</DialogTitle>
-            <DialogDescription>
-              Esta factura quedará como rechazada para que administración vea el
-              motivo y corrija la información o los adjuntos.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="invoice-rejection-comment">
-              Comentario de rechazo *
-            </Label>
-            <Textarea
-              id="invoice-rejection-comment"
-              value={rejectionComment}
-              onChange={event => setRejectionComment(event.target.value)}
-              rows={4}
-              maxLength={2000}
-              disabled={rejectMutation.isPending}
-            />
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setRejectDialogOpen(false);
-                setRejectionComment("");
-              }}
-              disabled={rejectMutation.isPending}
-            >
-              Cancelar
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleRejectInvoice}
-              disabled={rejectMutation.isPending}
-            >
-              {rejectMutation.isPending ? "Rechazando..." : "Confirmar rechazo"}
             </Button>
           </div>
         </DialogContent>

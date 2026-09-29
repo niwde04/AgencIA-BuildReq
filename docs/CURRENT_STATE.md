@@ -2,6 +2,8 @@
 
 Actualizado: 2026-09-28.
 
+Facturas ahora envía a una bandeja de Tesorería antes de contabilizar. La bandeja está encima del reporte existente, incluye moneda y las columnas financieras solicitadas; ISV abre el desglose guardado. Contabilizar/rechazar es atómico y enviar no genera notas ni aplica anticipos. Código preparado en demo, sin push ni despliegue. Migración aditiva aplicada en Cloud y SSH, con once tablas financieras y permisos intactos; salud de ambas aplicaciones verificada. Detalles y recuperación: [facturas-contabilizacion.md](facturas-contabilizacion.md).
+
 Impuestos ya tiene una migración aplicada en Cloud y SSH: restaura los cuatro códigos predeterminados ausentes y añade el grupo financiero opcional. Los códigos de todas las líneas existentes de facturas/órdenes/recepciones encuentran su catálogo; las huellas de documentos permanecieron iguales. Selector con buscador y protección contra renombrar códigos preparados en `demo`, sin push ni despliegue. Validación: tipos, build, 63 pruebas y revisión móvil aprobados. Detalles y recuperación: [impuestos.md](impuestos.md).
 
 Retenciones permite asignar o quitar el código financiero desde un combobox con búsqueda remota por código/descripción y paginación. Comparte `financialNoteConcepts.financialGroupCode` con el catálogo de conceptos; no agrega columnas ni altera las notas contabilizadas. Cambio preparado en la rama `demo`, pendiente de push y despliegue en Dokploy por decisión del usuario.

@@ -587,6 +587,7 @@ describeDb(
     it("generates the retention draft within invoice posting and rejects double posting", async () => {
       await setupRetentions();
       await client.query(`update invoices set status='revisada' where id=1`);
+      await database.submitInvoiceForAccounting({ id: 1, submittedById: 1 });
       await database.accountInvoice({ id: 1, accountedById: 1 });
       await expect(
         database.accountInvoice({ id: 1, accountedById: 1 })
@@ -608,6 +609,178 @@ describeDb(
         (await service.getFinancialNote(notes[0].id, admin)).note.status
       ).toBe("borrador");
     });
+    it("queues without notes or advances, then posts and applies the paid advance once", async () => {
+      await setupRetentions();
+      await client.query(`update invoices set status='borrador'; update invoices set status='revisada' where id=1;
+            insert into "purchaseOrderAdvances" (id,"advanceNumber","purchaseOrderId","projectId","supplierId",currency,"requestedAmount","requestedPaymentDate","createdById") values (1,'ANT-QUEUE',1,1,1,'HNL',300,current_date,1);
+            insert into "treasuryPaymentBatches" (id,"batchNumber","projectId",currency,"requestedPaymentDate","createdById","paymentKind") values (1,'TES-QUEUE',1,'HNL',current_date,1,'purchase_order_advance');
+            insert into "treasuryPaymentItems" ("batchId","sourceType","purchaseOrderAdvanceId","supplierId","supplierCode","supplierName","invoiceDocumentNumber",currency,"invoiceNetPayable","requestedAmount","bankPaidAmount",status,"activeReservation","accountedAt") values (1,'purchase_order_advance',1,1,'S1','Supplier One','ANT-QUEUE','HNL',300,300,300,'contabilizada',false,now());`);
+      const before = (
+        await client.query(
+          'select total, "taxAmount", "retentionTotal", "netPayable" from invoices where id=1'
+        )
+      ).rows[0];
+      const sent = await database.submitInvoiceForAccounting({
+        id: 1,
+        submittedById: 1,
+        accountingComment: "Listo",
+      });
+      expect(sent.status).toBe("pendiente_contabilizar");
+      expect(sent.submittedForAccountingAt).toBeInstanceOf(Date);
+      expect(sent.accountedAt).toBeNull();
+      expect(
+        (await client.query('select count(*)::int n from "financialNotes"')).rows[0]
+          .n
+      ).toBe(0);
+      expect(
+        (
+          await client.query(
+            'select count(*)::int n from "purchaseOrderAdvanceApplications"'
+          )
+        ).rows[0].n
+      ).toBe(0);
+      expect(
+        (
+          await client.query(
+            'select total, "taxAmount", "retentionTotal", "netPayable" from invoices where id=1'
+          )
+        ).rows[0]
+      ).toEqual(before);
+      await expect(
+        database.submitInvoiceForAccounting({ id: 1, submittedById: 1 })
+      ).rejects.toThrow(/cambió de estado/);
+      await database.accountInvoice({ id: 1, accountedById: 1 });
+      expect(
+        (
+          await client.query(
+            'select amount from "purchaseOrderAdvanceApplications" where "invoiceId"=1'
+          )
+        ).rows
+      ).toEqual([{ amount: "300.0000" }]);
+      expect(
+        (await client.query('select count(*)::int n from "financialNotes"')).rows[0]
+          .n
+      ).toBe(1);
+      const { listInvoiceAccountingQueue } = await import("./invoiceAccounting");
+      const queue = await listInvoiceAccountingQueue({ status: "registrada" });
+      expect(queue.items).toHaveLength(1);
+      expect(queue.items[0]).toMatchObject({
+        net: 700,
+        appliedAdvance: 300,
+        balance: 400,
+      });
+      await expect(
+        database.accountInvoice({ id: 1, accountedById: 1 })
+      ).rejects.toThrow(/cambió de estado/);
+      expect(
+        (
+          await client.query(
+            'select count(*)::int n from "purchaseOrderAdvanceApplications"'
+          )
+        ).rows[0].n
+      ).toBe(1);
+    });
+    it("serializes competing accounting and rejection decisions", async () => {
+      await setupRetentions();
+      await client.query(`update invoices set status='revisada' where id=1`);
+      await database.submitInvoiceForAccounting({ id: 1, submittedById: 1 });
+      const results = await Promise.allSettled([
+        database.accountInvoice({ id: 1, accountedById: 1 }),
+        database.rejectInvoiceFromAccounting({
+          id: 1,
+          rejectedById: 1,
+          rejectionComment: "Corregir soporte",
+        }),
+      ]);
+      expect(results.filter(result => result.status === "fulfilled")).toHaveLength(
+        1
+      );
+      expect(results.filter(result => result.status === "rejected")).toHaveLength(
+        1
+      );
+      const invoice = (
+        await client.query(
+          'select status, "accountedAt", "rejectionComment" from invoices where id=1'
+        )
+      ).rows[0];
+      const noteCount = (
+        await client.query('select count(*)::int n from "financialNotes"')
+      ).rows[0].n;
+      if (invoice.status === "registrada") {
+        expect(invoice.accountedAt).toBeInstanceOf(Date);
+        expect(noteCount).toBe(1);
+      } else {
+        expect(invoice.status).toBe("rechazada");
+        expect(invoice.accountedAt).toBeNull();
+        expect(invoice.rejectionComment).toBe("Corregir soporte");
+        expect(noteCount).toBe(0);
+      }
+    });
+    it("rejects with a reason, permits correction and requires resubmission", async () => {
+      await client.query(`update invoices set status='revisada' where id=1`);
+      await database.submitInvoiceForAccounting({ id: 1, submittedById: 1 });
+      await expect(database.reviewInvoice(1, 1)).rejects.toThrow(
+        /cambió de estado/
+      );
+      const rejected = await database.rejectInvoiceFromAccounting({
+        id: 1,
+        rejectedById: 1,
+        rejectionComment: "Corregir factura",
+      });
+      expect(rejected.submittedForAccountingAt).toBeInstanceOf(Date);
+      const reviewed = await database.reviewInvoice(1, 1);
+      expect(reviewed.status).toBe("revisada");
+      expect(reviewed.submittedForAccountingAt).toBeNull();
+      await expect(
+        database.accountInvoice({ id: 1, accountedById: 1 })
+      ).rejects.toThrow(/cambió de estado/);
+      await database.submitInvoiceForAccounting({ id: 1, submittedById: 1 });
+      await database.accountInvoice({ id: 1, accountedById: 1 });
+    });
+    it("paginates only submitted documents and combines currency, project, dates and invoice search", async () => {
+      await client.query(
+        `update invoices set status='revisada', "documentDate"='2026-09-20', "invoiceNumber"='001-001-01-00000001' where id in (1,2,3); update invoices set currency='USD', "exchangeRate"=26, "exchangeRateDate"='2026-09-20', "projectId"=2 where id=2;`
+      );
+      for (const id of [1, 2, 3])
+        await database.submitInvoiceForAccounting({ id, submittedById: 1 });
+      await database.rejectInvoiceFromAccounting({
+        id: 3,
+        rejectedById: 1,
+        rejectionComment: "Revisar factura",
+      });
+      const { listInvoiceAccountingQueue } = await import("./invoiceAccounting");
+      const page = await listInvoiceAccountingQueue({
+        status: "pendiente_contabilizar",
+        currency: "USD",
+        projectIds: [2],
+        dateFrom: "2026-09-01",
+        dateTo: "2026-09-30",
+        search: "OC-P1",
+        page: 99,
+        pageSize: 10,
+      });
+      expect(page).toMatchObject({ total: 1, page: 1, totalPages: 1 });
+      expect(page.items.map(item => item.id)).toEqual([2]);
+      expect(
+        (
+          await listInvoiceAccountingQueue({
+            status: "pendiente_contabilizar",
+            projectIds: [1],
+            currency: "USD",
+          })
+        ).total
+      ).toBe(0);
+      expect(
+        (await listInvoiceAccountingQueue({ status: "rechazada" })).items.map(
+          item => item.id
+        )
+      ).toEqual([3]);
+      expect((await listInvoiceAccountingQueue({})).total).toBe(3);
+      expect(
+        (await listInvoiceAccountingQueue({ dateFrom: "2027-01-01" })).total
+      ).toBe(0);
+    });
+
     async function setupRetentions() {
       await client.query(
         `insert into "invoiceRetentions" ("invoiceId","retentionCatalogId","retentionType",description,amount) values (1,101,'amount','Retención fiscal',100),(1,101,'amount','Retención fiscal',150); update invoices set "retentionTotal"=250,"otherRetentionTotal"=30,"documentDiscountTotal"=20,"netPayable"=700 where id=1;`

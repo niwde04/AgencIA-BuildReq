@@ -782,6 +782,7 @@ export async function getTreasuryInvoiceReportPayments(invoiceIds: number[]) {
 }
 
 export async function listTreasuryInvoiceReportPage(input: {
+  currency?: "HNL" | "USD" | null;
   paymentStatus: "all" | "paid" | "pending" | "partial";
   search?: string | null;
   dateFrom?: Date | null;
@@ -802,6 +803,7 @@ export async function listTreasuryInvoiceReportPage(input: {
   }
 
   const conditions = [eq(invoices.status, "registrada")];
+  if (input.currency) conditions.push(eq(invoices.currency, input.currency));
   if (input.projectIds) {
     conditions.push(
       input.projectIds.length

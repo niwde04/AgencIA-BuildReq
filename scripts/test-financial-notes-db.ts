@@ -19,6 +19,10 @@ async function main() {
   const token = randomBytes(8).toString("hex");
   const name = `buildreq_notes_test_${token}`;
   const url = new URL(source);
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname))
+    throw new Error(
+      "Database tests require a local disposable PostgreSQL instance"
+    );
   const admin = new Client({ connectionString: source });
   let created = false;
   let fixture: Client | undefined;
@@ -34,7 +38,10 @@ async function main() {
       generateDrizzleJson(schema)
     );
     await fixture.query("CREATE SCHEMA IF NOT EXISTS private");
-    for (const statement of statements) await fixture.query(statement);
+    for (const statement of statements)
+      await fixture.query(
+        statement.replace(/'pendiente_contabilizar',\s*/g, "")
+      );
     await fixture.query(
       'ALTER TABLE invoices DROP COLUMN "creditNoteTotal", DROP COLUMN "debitNoteTotal"; ALTER TABLE "reverseLogisticsItems" DROP COLUMN "sourceReceiptItemId"'
     );
@@ -44,6 +51,18 @@ async function main() {
     );
     await fixture.query(migration);
     await fixture.query(migration); // Verify a second application preserves the catalog/cutoff.
+    await fixture.query(
+      'ALTER TABLE invoices DROP COLUMN "submittedForAccountingAt", DROP COLUMN "submittedForAccountingById"'
+    );
+    const queueMigration = readFileSync(
+      new URL(
+        "../drizzle/20260929052542_invoice_accounting_queue.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
+    await fixture.query(queueMigration);
+    await fixture.query(queueMigration);
     await fixture.end();
     fixture = undefined;
     console.log(

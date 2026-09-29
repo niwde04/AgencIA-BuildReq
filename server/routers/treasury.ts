@@ -18,6 +18,7 @@ import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { buildTreasuryInvoiceReportPdfBase64 } from "../_core/documents";
 import * as db from "../db";
 import * as treasury from "../treasury";
+import { listInvoiceAccountingQueue } from "../invoiceAccounting";
 
 type User = treasury.TreasuryActor;
 
@@ -35,6 +36,7 @@ const reportDateSchema = z
 const invoiceReportSearchSchema = z.string().trim().max(200).nullish();
 const invoiceSummaryReportInputSchema = z.object({
   paymentStatus: invoicePaymentReportStatusSchema,
+  currency: currencySchema.nullish(),
   dateFrom: reportDateSchema,
   dateTo: reportDateSchema,
   search: invoiceReportSearchSchema,
@@ -237,6 +239,7 @@ async function buildTreasuryInvoiceSummaryReport(
   const previewPage = input.page
     ? await treasury.listTreasuryInvoiceReportPage({
         paymentStatus: input.paymentStatus,
+        currency: input.currency,
         search: input.search,
         dateFrom,
         dateTo,
@@ -249,6 +252,7 @@ async function buildTreasuryInvoiceSummaryReport(
     dateFrom,
     dateTo,
     statuses: ["registrada"],
+    currency: input.currency,
     ...(previewPage ? { invoiceIds: previewPage.invoiceIds } : {}),
   };
   const sourceInvoices = await db.listDmcReportSourceInvoices(
@@ -520,6 +524,55 @@ export const treasuryRouter = router({
         excludeBatchId: input.batchId,
         projectIds: input.projectId ? undefined : getProjectScopeIds(ctx.user),
       });
+    }),
+
+  invoiceAccountingQueue: protectedProcedure
+    .input(
+      z.object({
+        status: z
+          .enum([
+            "pendiente_contabilizar",
+            "registrada",
+            "rechazada",
+            "anulada",
+            "all",
+          ])
+          .default("pendiente_contabilizar"),
+        projectId: z.number().int().positive().optional(),
+        currency: currencySchema.optional(),
+        dateFrom: reportDateSchema,
+        dateTo: reportDateSchema,
+        search: z.string().trim().max(200).optional(),
+        page: z.number().int().positive().default(1),
+        pageSize: z.number().int().min(10).max(50).default(10),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertTreasuryAccess(ctx.user);
+      if (input.projectId && !canAccessProject(ctx.user, input.projectId)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a ese proyecto.",
+        });
+      }
+      if (input.dateFrom && input.dateTo && input.dateFrom > input.dateTo) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La fecha inicial no puede ser mayor que la fecha final.",
+        });
+      }
+      return listInvoiceAccountingQueue(
+        applyProjectScope(
+          {
+            ...input,
+            status: input.status === "all" ? undefined : input.status,
+            dateFrom: input.dateFrom ?? undefined,
+            dateTo: input.dateTo ?? undefined,
+          },
+          ctx.user
+        )
+      );
     }),
 
   invoiceSummaryReport: protectedProcedure

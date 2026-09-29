@@ -8,6 +8,7 @@ Aplicación de compras, recepciones, inventario, facturas de proveedores y tesor
 - Autenticación/contexto: `server/_core/context.ts`, `server/_core/supabaseAuth.ts`. Permisos por proyecto: `server/projectAccess.ts`; roles: `shared/buildreq-roles.ts`.
 - Esquema base: `drizzle/schema.ts`. Esquema de notas: `drizzle/financial-notes-schema.ts`. Ambos están en `drizzle.config.ts`.
 - Facturas, recepciones e inventario: `server/db.ts` y routers específicos en `server/routers/`.
+- Envío de facturas a contabilizar: nuevo estado `pendiente_contabilizar`; enviar no contabiliza. Bandeja paginada en `server/invoiceAccounting.ts` y `client/src/components/InvoiceAccountingQueue.tsx`. Flujo, importes y migración: [facturas-contabilizacion.md](facturas-contabilizacion.md).
 - Tesorería: `server/treasury.ts`; anticipos: `server/purchaseOrderAdvances.ts`.
 - NC/ND y sus catálogos: `server/financialNotes.ts`, `server/routers/financialNotes.ts`, `shared/financial-notes.ts`, `client/src/pages/Notas.tsx`, `client/src/pages/ConceptosNotas.tsx`.
 - Código financiero de retenciones: fuente única en `financialNoteConcepts.financialGroupCode`, enlazada mediante `retentionCatalogId`; Retenciones y Conceptos de notas editan la misma asignación. Omitir el campo preserva el valor y enviar `null` lo quita. Las notas contabilizadas conservan su copia histórica.

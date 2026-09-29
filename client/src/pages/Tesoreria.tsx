@@ -1,3 +1,4 @@
+import { InvoiceAccountingQueue } from "@/components/InvoiceAccountingQueue";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -2645,8 +2646,30 @@ function BatchDetailDialog({
                           item.invoiceNetPayable,
                           detail.batch.currency
                         )}
-                        {Number(item.invoiceCreditNoteTotal)>0 ? <a className="mt-1 block text-xs font-normal text-primary hover:underline" href={`/notas-credito?invoiceId=${item.invoiceId}`}>NC: −{formatMoney(item.invoiceCreditNoteTotal,detail.batch.currency)}</a> : null}
-                        {Number(item.invoiceDebitNoteTotal)>0 ? <a className="mt-1 block text-xs font-normal text-primary hover:underline" href={`/notas-debito?invoiceId=${item.invoiceId}`}>ND: +{formatMoney(item.invoiceDebitNoteTotal,detail.batch.currency)}</a> : null}
+                        {Number(item.invoiceCreditNoteTotal) > 0 ? (
+                          <a
+                            className="mt-1 block text-xs font-normal text-primary hover:underline"
+                            href={`/notas-credito?invoiceId=${item.invoiceId}`}
+                          >
+                            NC: −
+                            {formatMoney(
+                              item.invoiceCreditNoteTotal,
+                              detail.batch.currency
+                            )}
+                          </a>
+                        ) : null}
+                        {Number(item.invoiceDebitNoteTotal) > 0 ? (
+                          <a
+                            className="mt-1 block text-xs font-normal text-primary hover:underline"
+                            href={`/notas-debito?invoiceId=${item.invoiceId}`}
+                          >
+                            ND: +
+                            {formatMoney(
+                              item.invoiceDebitNoteTotal,
+                              detail.batch.currency
+                            )}
+                          </a>
+                        ) : null}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {formatMoney(
@@ -3499,6 +3522,9 @@ export default function Tesoreria() {
   const urlSearch = useSearch();
   const [invoicePaymentReportStatus, setInvoicePaymentReportStatus] =
     useState<InvoicePaymentReportStatus>("all");
+  const [invoiceReportCurrency, setInvoiceReportCurrency] = useState<
+    "all" | "HNL" | "USD"
+  >("all");
   const [invoiceReportDateFrom, setInvoiceReportDateFrom] = useState("");
   const [invoiceReportDateTo, setInvoiceReportDateTo] = useState("");
   const [invoiceReportSearch, setInvoiceReportSearch] = useState("");
@@ -3543,6 +3569,7 @@ export default function Tesoreria() {
   const invoiceSummaryQuery = trpc.treasury.invoiceSummaryReport.useQuery(
     {
       paymentStatus: invoicePaymentReportStatus,
+      currency: invoiceReportCurrency === "all" ? null : invoiceReportCurrency,
       dateFrom: invoiceReportDateFrom || null,
       dateTo: invoiceReportDateTo || null,
       search: debouncedInvoiceReportSearch.trim() || null,
@@ -3570,6 +3597,7 @@ export default function Tesoreria() {
     setInvoiceReportPage(1);
   }, [
     invoicePaymentReportStatus,
+    invoiceReportCurrency,
     invoiceReportDateFrom,
     invoiceReportDateTo,
     invoiceReportSearch,
@@ -3800,6 +3828,8 @@ export default function Tesoreria() {
     try {
       const payload = await utils.treasury.invoiceSummaryReport.fetch({
         paymentStatus: invoicePaymentReportStatus,
+        currency:
+          invoiceReportCurrency === "all" ? null : invoiceReportCurrency,
         dateFrom: invoiceReportDateFrom || null,
         dateTo: invoiceReportDateTo || null,
         search: invoiceReportSearch.trim() || null,
@@ -3828,6 +3858,8 @@ export default function Tesoreria() {
     try {
       const file = await exportInvoiceSummaryPdfMutation.mutateAsync({
         paymentStatus: invoicePaymentReportStatus,
+        currency:
+          invoiceReportCurrency === "all" ? null : invoiceReportCurrency,
         dateFrom: invoiceReportDateFrom || null,
         dateTo: invoiceReportDateTo || null,
         search: invoiceReportSearch.trim() || null,
@@ -4187,7 +4219,11 @@ export default function Tesoreria() {
         </Accordion>
       </Card>
 
-      <Card className="order-[-1]">
+      <InvoiceAccountingQueue
+        canAccount={settingsQuery.data.permissions.canAccount}
+      />
+
+      <Card className="order-[-1] min-w-0">
         <Accordion
           type="single"
           collapsible
@@ -4218,7 +4254,7 @@ export default function Tesoreria() {
             </AccordionTrigger>
             <AccordionContent className="pb-0">
               <CardContent className="space-y-4 border-t pt-6">
-                <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[14rem_11rem_11rem_minmax(16rem,1fr)_auto_auto]">
+                <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <div className="space-y-2">
                     <Label>Estado de factura</Label>
                     <Select
@@ -4240,6 +4276,29 @@ export default function Tesoreria() {
                             {label}
                           </SelectItem>
                         ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="treasury-invoice-currency">Moneda</Label>
+                    <Select
+                      value={invoiceReportCurrency}
+                      onValueChange={value =>
+                        setInvoiceReportCurrency(
+                          value as typeof invoiceReportCurrency
+                        )
+                      }
+                    >
+                      <SelectTrigger
+                        id="treasury-invoice-currency"
+                        className="w-full"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todas las monedas</SelectItem>
+                        <SelectItem value="HNL">Lempiras (HNL)</SelectItem>
+                        <SelectItem value="USD">Dólares (USD)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

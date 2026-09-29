@@ -135,7 +135,11 @@ function assertAccountingAccess(
   detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>
 ) {
   if (user.buildreqRole === "contable") return;
-  const restrictedStatuses = ["revisada", "registrada"];
+  const restrictedStatuses = [
+    "revisada",
+    "pendiente_contabilizar",
+    "registrada",
+  ];
   if (!restrictedStatuses.includes(detail.invoice.status)) return;
   if (!canAccessReviewedInvoices(user)) {
     throw new TRPCError({
@@ -160,13 +164,13 @@ function assertInvoiceDraft(
   }
 }
 
-function assertInvoiceReviewed(
+function assertInvoicePendingAccounting(
   detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>
 ) {
-  if (detail.invoice.status !== "revisada") {
+  if (detail.invoice.status !== "pendiente_contabilizar") {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Solo se pueden contabilizar o rechazar facturas revisadas",
+      message: "Envíe primero la factura a contabilizar desde Facturas",
     });
   }
 }
@@ -520,9 +524,17 @@ export const invoicesRouter = router({
       z.object({
         projectId: z.number().optional(),
         status: z
-          .enum(["borrador", "revisada", "rechazada", "registrada", "anulada"])
+          .enum([
+            "borrador",
+            "revisada",
+            "pendiente_contabilizar",
+            "rechazada",
+            "registrada",
+            "anulada",
+          ])
           .optional(),
         supplierId: z.number().optional(),
+        currency: z.enum(["HNL", "USD"]).optional(),
         search: z.string().trim().optional(),
         dateFrom: z
           .string()
@@ -548,7 +560,10 @@ export const invoicesRouter = router({
         !canAccessReviewedInvoices(ctx.user) && status !== "revisada"
           ? "revisada"
           : undefined;
-      if (!canAccessReviewedInvoices(ctx.user) && status === "revisada") {
+      if (
+        !canAccessReviewedInvoices(ctx.user) &&
+        (status === "revisada" || status === "pendiente_contabilizar")
+      ) {
         return {
           items: [],
           total: 0,
@@ -558,7 +573,17 @@ export const invoicesRouter = router({
         };
       }
       return listInvoicesPage(
-        applyProjectScope({ ...input, status, excludeStatus }, ctx.user)
+        applyProjectScope(
+          {
+            ...input,
+            status,
+            excludeStatus,
+            excludeStatuses: canAccessReviewedInvoices(ctx.user)
+              ? undefined
+              : ["revisada", "pendiente_contabilizar"],
+          },
+          ctx.user
+        )
       );
     }),
 
@@ -571,6 +596,7 @@ export const invoicesRouter = router({
             .enum([
               "borrador",
               "revisada",
+              "pendiente_contabilizar",
               "rechazada",
               "registrada",
               "anulada",
@@ -594,7 +620,10 @@ export const invoicesRouter = router({
         !canAccessReviewedInvoices(ctx.user) && status !== "revisada"
           ? "revisada"
           : undefined;
-      if (!canAccessReviewedInvoices(ctx.user) && status === "revisada") {
+      if (
+        !canAccessReviewedInvoices(ctx.user) &&
+        (status === "revisada" || status === "pendiente_contabilizar")
+      ) {
         return [];
       }
 
@@ -604,6 +633,9 @@ export const invoicesRouter = router({
             ...input,
             status,
             excludeStatus,
+            excludeStatuses: canAccessReviewedInvoices(ctx.user)
+              ? undefined
+              : ["revisada", "pendiente_contabilizar"],
           },
           ctx.user
         )
@@ -1149,6 +1181,39 @@ export const invoicesRouter = router({
       return db.reviewInvoice(input.id, ctx.user.id);
     }),
 
+  submitForAccounting: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        accountingComment: z.string().trim().max(2000).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canAccountInvoices(ctx.user))
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo Contabilidad o Superusuario puede enviar facturas a contabilizar",
+        });
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail)
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      if (detail.invoice.status !== "revisada")
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Solo se pueden enviar facturas revisadas",
+        });
+      assertRequiredMissingCpcRetention(detail);
+      return db.submitInvoiceForAccounting({
+        id: input.id,
+        submittedById: ctx.user.id,
+        accountingComment: input.accountingComment,
+      });
+    }),
+
   account: protectedProcedure
     .input(
       z.object({
@@ -1172,7 +1237,7 @@ export const invoicesRouter = router({
           message: "Factura no encontrada",
         });
       }
-      assertInvoiceReviewed(detail);
+      assertInvoicePendingAccounting(detail);
       assertRequiredMissingCpcRetention(detail);
 
       return db.accountInvoice({
@@ -1228,7 +1293,7 @@ export const invoicesRouter = router({
           message: "Factura no encontrada",
         });
       }
-      assertInvoiceReviewed(detail);
+      assertInvoicePendingAccounting(detail);
 
       return db.rejectInvoiceFromAccounting({
         id: input.id,

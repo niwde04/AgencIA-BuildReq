@@ -17727,14 +17727,14 @@ describe("BuildReq - Invoices", () => {
     reviewInvoiceSpy.mockRestore();
   });
 
-  it("Contable can account reviewed invoices", async () => {
+  it("Contable can account submitted invoices", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
     const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
       ...invoiceDetail,
       invoice: {
         ...invoiceDetail.invoice,
-        status: "revisada",
+        status: "pendiente_contabilizar",
       },
     } as any);
     const accountInvoiceSpy = vi.spyOn(db, "accountInvoice").mockResolvedValue({
@@ -17756,14 +17756,14 @@ describe("BuildReq - Invoices", () => {
     accountInvoiceSpy.mockRestore();
   });
 
-  it("blocks accounting a reviewed invoice without valid CPC or RT01", async () => {
+  it("blocks accounting a submitted invoice without valid CPC or RT01", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
     const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
       ...invoiceDetail,
       invoice: {
         ...invoiceDetail.invoice,
-        status: "revisada",
+        status: "pendiente_contabilizar",
       },
       accountPaymentCertificate: null,
       retentionPolicy: "manual",
@@ -17789,14 +17789,14 @@ describe("BuildReq - Invoices", () => {
     accountInvoiceSpy.mockRestore();
   });
 
-  it("Superuser can account reviewed invoices", async () => {
+  it("Superuser can account submitted invoices", async () => {
     const { ctx } = createUserContext({ role: "admin", buildreqRole: null });
     const caller = appRouter.createCaller(ctx);
     const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
       ...invoiceDetail,
       invoice: {
         ...invoiceDetail.invoice,
-        status: "revisada",
+        status: "pendiente_contabilizar",
       },
     } as any);
     const accountInvoiceSpy = vi.spyOn(db, "accountInvoice").mockResolvedValue({
@@ -17817,14 +17817,14 @@ describe("BuildReq - Invoices", () => {
     accountInvoiceSpy.mockRestore();
   });
 
-  it("Contable can reject reviewed invoices with a comment", async () => {
+  it("Contable can reject submitted invoices with a comment", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
     const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
       ...invoiceDetail,
       invoice: {
         ...invoiceDetail.invoice,
-        status: "revisada",
+        status: "pendiente_contabilizar",
       },
     } as any);
     const rejectInvoiceSpy = vi

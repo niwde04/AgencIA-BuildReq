@@ -898,6 +898,9 @@ export type InvoicePageFilters = PageInput & {
   status?: string;
   statuses?: string[];
   excludeStatus?: string;
+  excludeStatuses?: string[];
+  currency?: "HNL" | "USD";
+  accountingSubmittedOnly?: boolean;
   supplierId?: number;
   dateFrom?: string;
   dateTo?: string;
@@ -909,6 +912,14 @@ export async function listInvoicesPage(filters: InvoicePageFilters) {
   const createdBy = alias(users, "invoice_page_created_by");
   const requestedBy = alias(users, "invoice_page_requested_by");
   const conditions: any[] = [];
+  if (filters.currency)
+    conditions.push(eq(invoices.currency, filters.currency));
+  if (filters.accountingSubmittedOnly)
+    conditions.push(sql`${invoices.submittedForAccountingAt} is not null`);
+  if (filters.excludeStatuses?.length)
+    conditions.push(
+      sql`${invoices.status}::text <> all(${sql.param(filters.excludeStatuses)}::text[])`
+    );
   if (filters.projectId)
     conditions.push(eq(invoices.projectId, filters.projectId));
   addProjectScope(conditions, invoices.projectId, filters.projectIds);
@@ -1023,6 +1034,7 @@ export async function listInvoicesPage(filters: InvoicePageFilters) {
     status: filters.status,
     statuses: filters.statuses,
     excludeStatus: filters.excludeStatus,
+    excludeStatuses: filters.excludeStatuses,
     supplierId: filters.supplierId,
   });
   return pageResult(items, total, filters);

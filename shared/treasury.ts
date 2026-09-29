@@ -205,9 +205,12 @@ export function buildInvoiceAdvanceBalance(input: {
   const actualAppliedAmount = roundTreasuryMoney(
     Math.max(0, Number(input.appliedAdvanceAmount ?? 0))
   );
-  const canPreviewApplication = ["borrador", "revisada", "rechazada"].includes(
-    input.invoiceStatus
-  );
+  const canPreviewApplication = [
+    "borrador",
+    "revisada",
+    "pendiente_contabilizar",
+    "rechazada",
+  ].includes(input.invoiceStatus);
   const pendingApplicationAmount = canPreviewApplication
     ? roundTreasuryMoney(
         Math.min(
