@@ -1,4 +1,3 @@
-import { noteMoneyUnits } from "../shared/financial-notes";
 import { randomUUID } from "node:crypto";
 import {
   and,
@@ -32,7 +31,7 @@ import {
   summarizePurchaseOrderLines,
   type PurchaseCurrency,
 } from "../shared/purchase-orders";
-import { hasAtMostDecimalPlaces } from "../shared/money";
+import { decimalToMinorUnits, hasAtMostDecimalPlaces } from "../shared/money";
 import { getDb } from "./db";
 
 type DbExecutor = NonNullable<Awaited<ReturnType<typeof getDb>>> | any;
@@ -1014,11 +1013,12 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
     );
     if (advanceAvailable <= 0) continue;
     for (const invoice of invoiceRows) {
-      // Payment applications use cents; never round a four-decimal note balance upward.
-      const remainingUnits = noteMoneyUnits(invoice.netPayable)
-        - noteMoneyUnits((invoiceApplied.get(invoice.id) ?? 0).toFixed(4))
-        - noteMoneyUnits((invoiceSettled.get(invoice.id) ?? 0).toFixed(4));
-      const invoiceRemaining = Math.max(0, Number(remainingUnits / BigInt(100)) / 100);
+      // Round the invoice payable once to cents, just like Treasury settlement.
+      const remainingCents =
+        decimalToMinorUnits(invoice.netPayable) -
+        decimalToMinorUnits(invoiceApplied.get(invoice.id) ?? 0) -
+        decimalToMinorUnits(invoiceSettled.get(invoice.id) ?? 0);
+      const invoiceRemaining = Math.max(0, remainingCents / 100);
       if (invoiceRemaining <= 0) continue;
       const amount = money(Math.min(advanceAvailable, invoiceRemaining));
       if (amount <= 0) continue;

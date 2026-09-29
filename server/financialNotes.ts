@@ -1,3 +1,4 @@
+import { invoiceNoteBalanceSql } from "./invoiceMoney";
 import { TRPCError } from "@trpc/server";
 import { sql, type SQL } from "drizzle-orm";
 import { getDb } from "./db";
@@ -332,9 +333,7 @@ export async function getFinancialNote(id: number, user: NoteActor) {
   ]);
   const balances = await noteRows<{ invoiceId: number; available: string }>(
     db,
-    sql`select i.id "invoiceId", (i."netPayable"
-      - coalesce((select sum(case when t.status='contabilizada' then coalesce(t."bankPaidAmount",0) when t."activeReservation" then coalesce(t."bankPaidAmount",t."approvedAmount",t."requestedAmount",0) else 0 end) from "treasuryPaymentItems" t where t."invoiceId"=i.id and t."sourceType"='invoice'),0)
-      - coalesce((select sum(a.amount) from "purchaseOrderAdvanceApplications" a where a."invoiceId"=i.id),0))::text available
+    sql`select i.id "invoiceId", ${invoiceNoteBalanceSql(sql`i.id`, sql`i."netPayable"`)}::numeric(14,4)::text available
       from invoices i where i.id=any(${sql.param(allocations.map(a => a.invoiceId))}::int[])`
   );
   return {
@@ -403,9 +402,7 @@ export async function listFinancialNotes(
 export async function invoiceNoteAvailable(tx: Executor, invoiceId: number) {
   const [row] = await noteRows<{ available: string }>(
     tx,
-    sql`select (i."netPayable"
-    - coalesce((select sum(case when t.status='contabilizada' then coalesce(t."bankPaidAmount",0) when t."activeReservation" then coalesce(t."bankPaidAmount",t."approvedAmount",t."requestedAmount",0) else 0 end) from "treasuryPaymentItems" t where t."invoiceId"=i.id and t."sourceType"='invoice'),0)
-    - coalesce((select sum(a.amount) from "purchaseOrderAdvanceApplications" a where a."invoiceId"=i.id),0))::numeric(14,4)::text available from invoices i where i.id=${invoiceId}`
+    sql`select ${invoiceNoteBalanceSql(sql`i.id`, sql`i."netPayable"`)}::numeric(14,4)::text available from invoices i where i.id=${invoiceId}`
   );
   return row?.available ?? "0.0000";
 }
@@ -446,7 +443,7 @@ export async function eligibleNoteInvoices(
     available: string;
   }>(
     db,
-    sql`with candidates as (select i.id,i."invoiceDocumentNumber",i."invoiceNumber",i."supplierId",i."projectId",i.currency,i."netPayable",s.name "supplierName",p.name "projectName" from invoices i join suppliers s on s.id=i."supplierId" join projects p on p.id=i."projectId" where ${filter} order by i.id desc limit ${pageSize} offset ${(page - 1) * pageSize}) select c.*, (c."netPayable" - coalesce(t.committed,0) - coalesce(a.applied,0))::numeric(14,4)::text available from candidates c left join lateral (select sum(case when t.status='contabilizada' then coalesce(t."bankPaidAmount",0) when t."activeReservation" then coalesce(t."bankPaidAmount",t."approvedAmount",t."requestedAmount",0) else 0 end) committed from "treasuryPaymentItems" t where t."invoiceId"=c.id and t."sourceType"='invoice') t on true left join lateral (select sum(amount) applied from "purchaseOrderAdvanceApplications" where "invoiceId"=c.id) a on true order by c.id desc`
+    sql`with candidates as (select i.id,i."invoiceDocumentNumber",i."invoiceNumber",i."supplierId",i."projectId",i.currency,i."netPayable",s.name "supplierName",p.name "projectName" from invoices i join suppliers s on s.id=i."supplierId" join projects p on p.id=i."projectId" where ${filter} order by i.id desc limit ${pageSize} offset ${(page - 1) * pageSize}) select c.*, ${invoiceNoteBalanceSql(sql`c.id`, sql`c."netPayable"`)}::numeric(14,4)::text available from candidates c order by c.id desc`
   );
   const [{ total }] = await noteRows(
     db,

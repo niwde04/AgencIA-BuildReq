@@ -1,3 +1,4 @@
+import { invoiceCommittedMoneySql } from "./invoiceMoney";
 import { randomUUID } from "node:crypto";
 import {
   and,
@@ -639,11 +640,32 @@ async function lockTreasuryInvoiceBalances(tx: any, items: Array<{sourceType?:st
   return ids;
 }
 async function assertTreasuryInvoiceBalances(tx: any, ids: number[]) {
-  if(!ids.length) return;
-  const result=await tx.execute(sql`select i.id from invoices i where i.id=any(${sql.param(ids)}::int[]) and i."netPayable"
-    < coalesce((select sum(case when t.status='contabilizada' then coalesce(t."bankPaidAmount",0) when t."activeReservation" then coalesce(t."bankPaidAmount",t."approvedAmount",t."requestedAmount",0) else 0 end) from "treasuryPaymentItems" t where t."invoiceId"=i.id and t."sourceType"='invoice'),0)
-    + coalesce((select sum(a.amount) from "purchaseOrderAdvanceApplications" a where a."invoiceId"=i.id),0) limit 1`);
-  if(result.rows.length) throw new TreasuryRuleError('La operación supera el saldo vigente de la factura después de notas, pagos, anticipos y reservas.');
+  if (!ids.length) return;
+  const result = await tx.execute(sql`
+    select document, currency, payable, committed from (
+      select i."invoiceDocumentNumber" as document, i.currency,
+        round(i."netPayable", 2) as payable,
+        ${invoiceCommittedMoneySql(sql`i.id`)} as committed
+      from invoices i where i.id = any(${sql.param(ids)}::int[])
+    ) balance where balance.payable < balance.committed limit 1
+  `);
+  const exceeded = result.rows[0];
+  if (exceeded) {
+    throw new TreasuryRuleError(
+      "La operación supera el saldo vigente de " +
+        exceeded.document +
+        ". " +
+        "Neto pagable: " +
+        Number(exceeded.payable).toFixed(2) +
+        " " +
+        exceeded.currency +
+        "; pagos, anticipos y reservas: " +
+        Number(exceeded.committed).toFixed(2) +
+        " " +
+        exceeded.currency +
+        "."
+    );
+  }
 }
 
 async function getInvoiceFinancialMap(
@@ -696,8 +718,10 @@ async function getInvoiceFinancialMap(
       if (payment.invoiceId !== invoice.id) continue;
       if (payment.status === "contabilizada") {
         paidAmount += roundTreasuryMoney(Number(payment.bankPaidAmount ?? 0));
-      }
-      if (payment.activeReservation && payment.batchId !== excludeBatchId) {
+      } else if (
+        payment.activeReservation &&
+        payment.batchId !== excludeBatchId
+      ) {
         reservedAmount += roundTreasuryMoney(
           Number(
             payment.bankPaidAmount ??

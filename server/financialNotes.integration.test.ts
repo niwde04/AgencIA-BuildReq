@@ -1087,11 +1087,222 @@ describeDb(
       ).rejects.toThrow(/saldo vigente/);
       expect(await balance()).toBe("200.0000");
     });
-    it("does not round a fractional remaining balance upward for a treasury reservation", async () => {
-      await post(draft("credit", "999.9950"));
+    it.each(["HNL", "USD"] as const)(
+      "settles the displayed cent balance in %s without changing the four-decimal invoice",
+      async currency => {
+        await client.query(
+          `update invoices set total=216733.1055, "netPayable"=216733.1055, currency=$1, "exchangeRate"=$2, "exchangeRateDate"=$3 where id=1`,
+          [
+            currency,
+            currency === "USD" ? 26 : null,
+            currency === "USD" ? "2026-09-29" : null,
+          ]
+        );
+        const eligible = await treasury.listEligibleTreasuryInvoices({
+          projectId: 1,
+          currency,
+        });
+        const invoice = eligible.find(row => row.invoice.id === 1)!;
+        expect(invoice.money.availableAmount).toBe(216733.11);
+        const request = {
+          actor: admin,
+          projectId: 1,
+          currency,
+          requestedPaymentDate: new Date("2026-09-29T12:00:00Z"),
+          items: [
+            { invoiceId: 1, requestedAmount: invoice.money.availableAmount },
+          ],
+        };
+        const batch = await treasury.createTreasuryBatch(request);
+        await treasury.updateTreasuryDraft({ ...request, batchId: batch.id });
+        expect(await balance()).toBe("0.0000");
+        await expect(
+          treasury.createTreasuryBatch({
+            ...request,
+            items: [{ invoiceId: 1, requestedAmount: 0.01 }],
+          })
+        ).rejects.toThrow(/no superar 0.00/);
+        // Simulate the bank's paid result, then run the real accounting transaction.
+        await client.query(
+          `update "treasuryPaymentBatches" set status='pendiente_contabilizacion' where id=$1`,
+          [batch.id]
+        );
+        const itemIds = (
+          await client.query(
+            `update "treasuryPaymentItems" set status='pagada', "bankPaidAmount"="requestedAmount", "bankPaidDate"=current_date where "batchId"=$1 returning id`,
+            [batch.id]
+          )
+        ).rows.map(row => row.id);
+        await treasury.accountTreasuryItems({
+          actor: admin,
+          batchId: batch.id,
+          itemIds,
+        });
+        expect(await balance()).toBe("0.0000");
+        expect(
+          (await client.query('select "netPayable" from invoices where id=1'))
+            .rows[0].netPayable
+        ).toBe("216733.1055");
+        expect(
+          (
+            await treasury.listEligibleTreasuryInvoices({
+              projectId: 1,
+              currency,
+            })
+          ).some(row => row.invoice.id === 1)
+        ).toBe(false);
+        const overCredit = draft("credit", "0.0001");
+        await expect(create(overCredit)).rejects.toThrow(/saldo disponible/);
+      }
+    );
+    it("keeps genuine excesses blocked by one cent and rolls back the entire batch", async () => {
+      await client.query(
+        'update invoices set total=216733.1055, "netPayable"=216733.1055 where id=1'
+      );
+      await expect(reserve(216733.12)).rejects.toThrow(/no superar 216733.11/);
+      expect(
+        (
+          await client.query(
+            'select count(*)::int n from "treasuryPaymentBatches"'
+          )
+        ).rows[0].n
+      ).toBe(0);
+      expect(
+        (
+          await client.query(
+            'select count(*)::int n from "treasuryPaymentItems"'
+          )
+        ).rows[0].n
+      ).toBe(0);
+      const firstPayment = await reserve(100000);
+      await client.query(
+        `update "treasuryPaymentItems" set status='contabilizada', "bankPaidAmount"=100000, "activeReservation"=false where "batchId"=$1`,
+        [firstPayment.id]
+      );
+      await reserve(116733.11);
+      expect(await balance()).toBe("0.0000");
+      await expect(reserve(0.01)).rejects.toThrow(/no superar 0.00/);
+    });
+    it("settles a fractional remainder in cents while preserving the exact credit amount", async () => {
+      const note = await post(draft("credit", "999.9950"));
       expect(await balance()).toBe("0.0050");
-      await expect(reserve(0.01)).rejects.toThrow(/saldo vigente/);
-      expect(await balance()).toBe("0.0050");
+      await reserve(0.01);
+      expect(await balance()).toBe("0.0000");
+      const detail = await service.getFinancialNote(note.id, admin);
+      expect(detail.note.total).toBe("999.9950");
+      expect(detail.allocations[0].available).toBe("0.0000");
+      const candidates = await service.eligibleNoteInvoices(
+        { type: "credit", projectId: 1 },
+        admin
+      );
+      expect(candidates.items.find(row => row.id === 1)?.available).toBe(
+        "0.0000"
+      );
+      await expect(reserve(0.01)).rejects.toThrow(/no superar 0.00/);
+    });
+    it("does not round the maximum credit above the original invoice amount", async () => {
+      await client.query(
+        'update invoices set total=100.0055, "netPayable"=100.0055 where id=1'
+      );
+      expect(await balance()).toBe("100.0055");
+      await expect(create(draft("credit", "100.0100"))).rejects.toThrow(
+        /saldo disponible/
+      );
+      await post(draft("credit", "100.0055"));
+      expect(await balance()).toBe("0.0000");
+    });
+    it("applies advances to the same cent-rounded payable and does not create a false note deficit", async () => {
+      await client.query(`update invoices set status='borrador' where id<>1;
+      update invoices set total=216733.1055, "netPayable"=216733.1055 where id=1;
+      insert into "purchaseOrderAdvances" (id,"advanceNumber","purchaseOrderId","projectId","supplierId",currency,"requestedAmount","requestedPaymentDate","createdById") values (1,'ANT-ROUND',1,1,1,'HNL',216733.11,current_date,1);
+      insert into "treasuryPaymentBatches" (id,"batchNumber","projectId",currency,"requestedPaymentDate","createdById","paymentKind") values (1,'TES-ROUND',1,'HNL',current_date,1,'purchase_order_advance');
+      insert into "treasuryPaymentItems" ("batchId","sourceType","purchaseOrderAdvanceId","supplierId","supplierCode","supplierName","invoiceDocumentNumber",currency,"invoiceNetPayable","requestedAmount","bankPaidAmount",status,"activeReservation") values (1,'purchase_order_advance',1,1,'S1','Supplier','ANT-ROUND','HNL',216733.11,216733.11,216733.11,'contabilizada',false)`);
+      const advances = await import("./purchaseOrderAdvances");
+      await (await database.getDb())!.transaction(tx =>
+        advances.applyAvailableAdvancesForPurchaseOrder({
+          executor: tx,
+          purchaseOrderId: 1,
+          actorId: 1,
+        })
+      );
+      expect(
+        (
+          await client.query(
+            'select amount from "purchaseOrderAdvanceApplications" where "invoiceId"=1'
+          )
+        ).rows
+      ).toEqual([{ amount: "216733.1100" }]);
+      expect(await balance()).toBe("0.0000");
+      await (await database.getDb())!.transaction(tx =>
+        advances.applyAvailableAdvancesForPurchaseOrder({
+          executor: tx,
+          purchaseOrderId: 1,
+          actorId: 1,
+        })
+      );
+      expect(
+        (
+          await client.query(
+            'select count(*)::int n from "purchaseOrderAdvanceApplications"'
+          )
+        ).rows[0].n
+      ).toBe(1);
+    });
+    it("can account a retention note after the rounded full balance has been paid", async () => {
+      await setupRetentions();
+      await client.query(
+        'update invoices set total=1000.0055, "netPayable"=700.0055 where id=1'
+      );
+      const note = await sync();
+      const detail = await service.getFinancialNote(note!.id, admin);
+      const input = noteDraftSchema.parse({
+        type: "credit",
+        lines: detail.lines.map(line => ({
+          ...line,
+          notes: line.notes ?? undefined,
+        })),
+        allocations: detail.allocations,
+      });
+      await prepare(note!.id, input);
+      const payment = await reserve(700.01);
+      await client.query(
+        `update "treasuryPaymentItems" set status='contabilizada', "bankPaidAmount"=700.01, "activeReservation"=false where "batchId"=$1`,
+        [payment.id]
+      );
+      await service.transitionFinancialNote(
+        note!.id,
+        "account",
+        undefined,
+        accountant
+      );
+      expect(await balance()).toBe("0.0000");
+      expect(
+        (await service.getFinancialNote(note!.id, admin)).note.status
+      ).toBe("registrada");
+      expect(
+        (await client.query('select "netPayable" from invoices where id=1'))
+          .rows[0].netPayable
+      ).toBe("700.0055");
+    });
+    it("uses the same per-payment rounding as the UI for legacy bank amounts", async () => {
+      await client.query(
+        'update invoices set total=100.0055, "netPayable"=100.0055 where id=1'
+      );
+      for (let index = 0; index < 2; index += 1) {
+        const payment = await reserve(10.01);
+        await client.query(
+          `update "treasuryPaymentItems" set status='contabilizada', "bankPaidAmount"=10.0050, "activeReservation"=false where "batchId"=$1`,
+          [payment.id]
+        );
+      }
+      const eligible = await treasury.listEligibleTreasuryInvoices({
+        projectId: 1,
+      });
+      expect(
+        eligible.find(row => row.invoice.id === 1)?.money.availableAmount
+      ).toBe(79.99);
+      await reserve(79.99);
+      expect(await balance()).toBe("0.0000");
     });
     it("serializes actual advance application and a simultaneous credit", async () => {
       const input = draft("credit", "700");
