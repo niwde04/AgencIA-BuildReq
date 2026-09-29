@@ -1619,6 +1619,8 @@ export default function Facturas() {
   const [isExportingInternalReport, setIsExportingInternalReport] =
     useState(false);
   const [accountingComment, setAccountingComment] = useState("");
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectionComment, setRejectionComment] = useState("");
   const [correctionDialogOpen, setCorrectionDialogOpen] = useState(false);
   const [correctionReason, setCorrectionReason] = useState("");
   const [receiptFiscalSyncDialogOpen, setReceiptFiscalSyncDialogOpen] =
@@ -2043,6 +2045,8 @@ export default function Facturas() {
   const reviewMutation = trpc.invoices.review.useMutation({
     onSuccess: (_data, variables) => {
       toast.success("Factura enviada a revisión");
+      void utils.treasury.invoiceAccountingQueue.invalidate();
+      void utils.dashboard.sidebarCounts.invalidate();
       setActionFeedback(current => ({
         ...current,
         reviewSentId: variables.id,
@@ -2055,7 +2059,7 @@ export default function Facturas() {
   const submitAccountingMutation =
     trpc.invoices.submitForAccounting.useMutation({
       onSuccess: () => {
-        toast.success("Factura enviada a contabilizar en Tesorería");
+        toast.success("Factura enviada a Tesorería para segunda validación");
         void utils.treasury.invoiceAccountingQueue.invalidate();
         void utils.dashboard.sidebarCounts.invalidate();
         setAccountingComment("");
@@ -2066,6 +2070,21 @@ export default function Facturas() {
       },
       onError: error => toast.error(getFriendlyMutationError(error.message)),
     });
+  const rejectMutation = trpc.invoices.reject.useMutation({
+    onSuccess: (_data, variables) => {
+      toast.success(
+        "Factura rechazada; puede corregirse y enviarse nuevamente a revisión"
+      );
+      setRejectDialogOpen(false);
+      setRejectionComment("");
+      void utils.invoices.invalidate();
+      void utils.invoices.getById.invalidate({ id: variables.id });
+      void utils.treasury.invoiceAccountingQueue.invalidate();
+      void utils.dashboard.sidebarCounts.invalidate();
+      setSelectedId(null);
+    },
+    onError: error => toast.error(getFriendlyMutationError(error.message)),
+  });
   const returnToReviewMutation = trpc.invoices.returnToReview.useMutation({
     onSuccess: (_data, variables) => {
       toast.success("Factura regresada a revisión");
@@ -2102,6 +2121,8 @@ export default function Facturas() {
   });
   useEffect(() => {
     if (selectedId !== null) return;
+    setRejectDialogOpen(false);
+    setRejectionComment("");
     retentionDraftInvoiceIdRef.current = null;
     retentionDraftsDirtyRef.current = false;
     setRetentionsDirty(false);
@@ -4144,16 +4165,40 @@ export default function Facturas() {
   };
 
   const handleSubmitForAccounting = () => {
-    if (!selectedId || submitAccountingMutation.isPending) return;
+    if (
+      !selectedId ||
+      submitAccountingMutation.isPending ||
+      rejectMutation.isPending
+    )
+      return;
     if (documentAdjustmentsDirty) {
       toast.error(
-        "Guarde las retenciones y descuentos por documento antes de enviar a contabilizar"
+        "Guarde las retenciones y descuentos por documento antes de contabilizar"
       );
       return;
     }
     submitAccountingMutation.mutate({
       id: selectedId,
       accountingComment: accountingComment.trim() || undefined,
+    });
+  };
+
+  const handleRejectInvoice = () => {
+    if (
+      !selectedId ||
+      !canSubmitSelectedInvoice ||
+      rejectMutation.isPending ||
+      submitAccountingMutation.isPending
+    )
+      return;
+    if (rejectionComment.trim().length < 5) {
+      toast.error("Escribe un motivo de rechazo de al menos 5 caracteres");
+      return;
+    }
+    rejectMutation.mutate({
+      id: selectedId,
+      rejectionComment: rejectionComment.trim(),
+      stage: "invoice",
     });
   };
 
@@ -4638,7 +4683,9 @@ export default function Facturas() {
                           ? "Enviando..."
                           : reviewSendConfirmed
                             ? "Enviada a revisión"
-                            : "Registrar Factura"}
+                            : isRejected
+                              ? "Enviar nuevamente a revisión"
+                              : "Registrar Factura"}
                     </Button>
                   ) : null}
                   {canSubmitSelectedInvoice ? (
@@ -4647,13 +4694,25 @@ export default function Facturas() {
                         onClick={handleSubmitForAccounting}
                         disabled={
                           submitAccountingMutation.isPending ||
+                          rejectMutation.isPending ||
                           documentAdjustmentsDirty
                         }
                       >
                         <CheckCircle2 className="mr-2 h-4 w-4" />
                         {submitAccountingMutation.isPending
                           ? "Enviando..."
-                          : "Enviar a contabilizar"}
+                          : "Contabilizar"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setRejectDialogOpen(true)}
+                        disabled={
+                          rejectMutation.isPending ||
+                          submitAccountingMutation.isPending
+                        }
+                      >
+                        <XCircle className="mr-2 h-4 w-4" />
+                        Rechazar
                       </Button>
                     </>
                   ) : null}
@@ -4701,11 +4760,20 @@ export default function Facturas() {
                   </div>
                 ) : null}
 
+                {canSubmitSelectedInvoice ? (
+                  <Alert>
+                    <AlertDescription>
+                      Al contabilizar, la factura pasará a Tesorería para una
+                      segunda validación.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
                 {detail.invoice.status === "pendiente_contabilizar" ? (
                   <Alert>
                     <AlertDescription>
-                      Factura enviada a contabilizar. Contabilidad puede
-                      contabilizarla o rechazarla desde Tesorería.
+                      Factura pendiente de segunda validación en Tesorería. Allí
+                      se puede contabilizar definitivamente o rechazar para
+                      corregir y volver a revisión.
                     </AlertDescription>
                   </Alert>
                 ) : null}
@@ -7153,6 +7221,68 @@ export default function Facturas() {
               {correctReceiptMutation.isPending
                 ? "Corrigiendo..."
                 : "Anular y crear borrador"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={rejectDialogOpen}
+        onOpenChange={open => {
+          if (!rejectMutation.isPending) {
+            setRejectDialogOpen(open);
+            if (!open) setRejectionComment("");
+          }
+        }}
+      >
+        <DialogContent
+          className="max-w-lg"
+          onInteractOutside={event => {
+            if (rejectMutation.isPending) event.preventDefault();
+          }}
+          onEscapeKeyDown={event => {
+            if (rejectMutation.isPending) event.preventDefault();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Rechazar factura</DialogTitle>
+            <DialogDescription>
+              La factura {detail?.invoice.invoiceDocumentNumber} quedará
+              rechazada. Administración podrá corregirla y enviarla nuevamente a
+              revisión.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="invoice-rejection-comment">
+              Motivo de rechazo *
+            </Label>
+            <Textarea
+              id="invoice-rejection-comment"
+              value={rejectionComment}
+              onChange={event => setRejectionComment(event.target.value)}
+              rows={4}
+              maxLength={2000}
+              disabled={rejectMutation.isPending}
+            />
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              variant="outline"
+              disabled={rejectMutation.isPending}
+              onClick={() => {
+                setRejectDialogOpen(false);
+                setRejectionComment("");
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleRejectInvoice}
+              disabled={
+                rejectMutation.isPending || rejectionComment.trim().length < 5
+              }
+            >
+              {rejectMutation.isPending ? "Rechazando..." : "Confirmar rechazo"}
             </Button>
           </div>
         </DialogContent>

@@ -1276,6 +1276,7 @@ export const invoicesRouter = router({
       z.object({
         id: z.number(),
         rejectionComment: z.string().trim().min(5).max(2000),
+        stage: z.enum(["invoice", "treasury"]).default("treasury"),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -1293,12 +1294,22 @@ export const invoicesRouter = router({
           message: "Factura no encontrada",
         });
       }
-      assertInvoicePendingAccounting(detail);
+      const expectedStatus =
+        input.stage === "invoice" ? "revisada" : "pendiente_contabilizar";
+      if (input.stage === "treasury") {
+        assertInvoicePendingAccounting(detail);
+      } else if (detail.invoice.status !== expectedStatus) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Solo se pueden rechazar facturas revisadas desde Facturas",
+        });
+      }
 
       return db.rejectInvoiceFromAccounting({
         id: input.id,
         rejectedById: ctx.user.id,
         rejectionComment: input.rejectionComment,
+        expectedStatus,
       });
     }),
 

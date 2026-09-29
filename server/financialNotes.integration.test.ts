@@ -716,6 +716,108 @@ describeDb(
         expect(noteCount).toBe(0);
       }
     });
+    it("rejects in the invoice validation without financial movements, then follows both validations again", async () => {
+      await setupRetentions();
+      await client.query("update invoices set status='revisada' where id=1");
+      const rejected = await database.rejectInvoiceFromAccounting({
+        id: 1,
+        rejectedById: 1,
+        rejectionComment: "Corregir primera revisión",
+        expectedStatus: "revisada",
+      });
+      expect(rejected.status).toBe("rechazada");
+      expect(rejected.submittedForAccountingAt).toBeNull();
+      expect(rejected.accountedAt).toBeNull();
+      expect(rejected.rejectedById).toBe(1);
+      expect(rejected.rejectionComment).toBe("Corregir primera revisión");
+      const { listInvoiceAccountingQueue } = await import(
+        "./invoiceAccounting"
+      );
+      expect(
+        (await listInvoiceAccountingQueue({ status: "rechazada" })).items
+      ).toHaveLength(0);
+      expect(
+        (await client.query('select count(*)::int n from "financialNotes"'))
+          .rows[0].n
+      ).toBe(0);
+      expect(
+        (
+          await client.query(
+            'select count(*)::int n from "purchaseOrderAdvanceApplications"'
+          )
+        ).rows[0].n
+      ).toBe(0);
+      const reviewed = await database.reviewInvoice(1, 1);
+      expect(reviewed.status).toBe("revisada");
+      expect(reviewed.rejectionComment).toBeNull();
+      await expect(
+        database.accountInvoice({ id: 1, accountedById: 1 })
+      ).rejects.toThrow(/cambió de estado/);
+      await database.submitInvoiceForAccounting({ id: 1, submittedById: 1 });
+      await database.accountInvoice({ id: 1, accountedById: 1 });
+      expect(
+        (await client.query('select count(*)::int n from "financialNotes"'))
+          .rows[0].n
+      ).toBe(1);
+    });
+    it("does not let a stale rejection cross validation stages", async () => {
+      await client.query("update invoices set status='revisada' where id=1");
+      await database.submitInvoiceForAccounting({ id: 1, submittedById: 1 });
+      await expect(
+        database.rejectInvoiceFromAccounting({
+          id: 1,
+          rejectedById: 1,
+          rejectionComment: "Primera revisión desactualizada",
+          expectedStatus: "revisada",
+        })
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      await database.rejectInvoiceFromAccounting({
+        id: 1,
+        rejectedById: 1,
+        rejectionComment: "Corregir desde Tesorería",
+      });
+      await database.reviewInvoice(1, 1);
+      await expect(
+        database.rejectInvoiceFromAccounting({
+          id: 1,
+          rejectedById: 1,
+          rejectionComment: "Tesorería desactualizada",
+        })
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      expect(
+        (await client.query("select status from invoices where id=1")).rows[0]
+          .status
+      ).toBe("revisada");
+    });
+    it("allows only one decision when the first approval and rejection compete", async () => {
+      await client.query("update invoices set status='revisada' where id=1");
+      const results = await Promise.allSettled([
+        database.submitInvoiceForAccounting({ id: 1, submittedById: 1 }),
+        database.rejectInvoiceFromAccounting({
+          id: 1,
+          rejectedById: 1,
+          rejectionComment: "Corregir primera revisión",
+          expectedStatus: "revisada",
+        }),
+      ]);
+      expect(
+        results.filter(result => result.status === "fulfilled")
+      ).toHaveLength(1);
+      expect(
+        results.filter(result => result.status === "rejected")
+      ).toHaveLength(1);
+      const invoice = (
+        await client.query(
+          'select status, "accountedAt" from invoices where id=1'
+        )
+      ).rows[0];
+      expect(["pendiente_contabilizar", "rechazada"]).toContain(invoice.status);
+      expect(invoice.accountedAt).toBeNull();
+      expect(
+        (await client.query('select count(*)::int n from "financialNotes"'))
+          .rows[0].n
+      ).toBe(0);
+    });
     it("rejects with a reason, permits correction and requires resubmission", async () => {
       await client.query(`update invoices set status='revisada' where id=1`);
       await database.submitInvoiceForAccounting({ id: 1, submittedById: 1 });

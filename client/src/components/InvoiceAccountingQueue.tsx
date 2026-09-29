@@ -158,7 +158,11 @@ export function InvoiceAccountingQueue({
         toast.error("Escribe un motivo de al menos 5 caracteres");
         return;
       }
-      reject.mutate({ id: decision.row.id, rejectionComment: comment.trim() });
+      reject.mutate({
+        id: decision.row.id,
+        rejectionComment: comment.trim(),
+        stage: "treasury",
+      });
     } else
       account.mutate({
         id: decision.row.id,
@@ -696,8 +700,8 @@ export function InvoiceAccountingQueue({
             </DialogTitle>
             <DialogDescription>
               {decision?.action === "account"
-                ? "Se registrará la contabilización y se aplicarán los anticipos disponibles correspondientes."
-                : "La factura volverá a Facturas para corregirla y enviarla nuevamente."}
+                ? "Segunda validación: se registrará la contabilización y se aplicarán los anticipos disponibles correspondientes."
+                : "La factura volverá a Facturas para corregirla, enviarla a revisión y pasar nuevamente por ambas validaciones."}
             </DialogDescription>
           </DialogHeader>
           {decision && (

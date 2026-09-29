@@ -67,6 +67,12 @@ describe("invoice accounting queue", () => {
         () => caller.invoices.submitForAccounting({ id: 1 }),
         () => caller.invoices.account({ id: 1 }),
         () => caller.invoices.reject({ id: 1, rejectionComment: "Corregir" }),
+        () =>
+          caller.invoices.reject({
+            id: 1,
+            rejectionComment: "Corregir",
+            stage: "invoice",
+          }),
       ])
         await expect(request()).rejects.toMatchObject({ code: "FORBIDDEN" });
     }
@@ -83,6 +89,60 @@ describe("invoice accounting queue", () => {
       ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     }
   );
+  it.each([
+    ["invoice", "revisada"],
+    ["treasury", "pendiente_contabilizar"],
+  ] as const)(
+    "rejects from the %s stage using its exact expected status",
+    async (stage, status) => {
+      vi.spyOn(db, "getInvoiceById").mockResolvedValue(detail(status));
+      const reject = vi
+        .spyOn(db, "rejectInvoiceFromAccounting")
+        .mockResolvedValue({ id: 1, status: "rechazada" } as any);
+      const account = vi.spyOn(db, "accountInvoice");
+      await appRouter
+        .createCaller(context())
+        .invoices.reject({
+          id: 1,
+          rejectionComment: "  Corregir soporte  ",
+          stage,
+        });
+      expect(reject).toHaveBeenCalledWith({
+        id: 1,
+        rejectedById: 1,
+        rejectionComment: "Corregir soporte",
+        expectedStatus: status,
+      });
+      expect(account).not.toHaveBeenCalled();
+    }
+  );
+  it.each([
+    "borrador",
+    "rechazada",
+    "pendiente_contabilizar",
+    "registrada",
+    "anulada",
+  ])("does not reject %s from an outdated invoice view", async status => {
+    vi.spyOn(db, "getInvoiceById").mockResolvedValue(detail(status));
+    const reject = vi.spyOn(db, "rejectInvoiceFromAccounting");
+    await expect(
+      appRouter
+        .createCaller(context())
+        .invoices.reject({
+          id: 1,
+          rejectionComment: "Corregir",
+          stage: "invoice",
+        })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(reject).not.toHaveBeenCalled();
+  });
+  it("requires a reason in the first validation too", async () => {
+    await expect(
+      appRouter
+        .createCaller(context())
+        .invoices.reject({ id: 1, rejectionComment: " ", stage: "invoice" })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
   it("requires a rejection reason", async () => {
     await expect(
       appRouter
@@ -135,12 +195,10 @@ describe("invoice accounting queue", () => {
       .spyOn(treasury, "getTreasurySettings")
       .mockResolvedValue({ treasuryEnabled: true } as any);
     await expect(
-      appRouter
-        .createCaller(context())
-        .treasury.invoiceAccountingQueue({
-          dateFrom: "2026-12-01",
-          dateTo: "2026-01-01",
-        })
+      appRouter.createCaller(context()).treasury.invoiceAccountingQueue({
+        dateFrom: "2026-12-01",
+        dateTo: "2026-01-01",
+      })
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     settings.mockResolvedValue({ treasuryEnabled: false } as any);
     await expect(

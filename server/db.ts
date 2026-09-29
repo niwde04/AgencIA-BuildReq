@@ -16067,6 +16067,7 @@ export async function rejectInvoiceFromAccounting(params: {
   id: number;
   rejectedById: number;
   rejectionComment: string;
+  expectedStatus?: "revisada" | "pendiente_contabilizar";
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -16089,7 +16090,8 @@ export async function rejectInvoiceFromAccounting(params: {
     .where(
       and(
         eq(invoices.id, params.id),
-        eq(invoices.status, "pendiente_contabilizar")
+        // Keep each rejection in its own validation stage, even after a concurrent send.
+        eq(invoices.status, params.expectedStatus ?? "pendiente_contabilizar")
       )
     )
     .returning();
