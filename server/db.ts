@@ -20,6 +20,7 @@ import {
 import { drizzle } from "drizzle-orm/node-postgres";
 import { alias } from "drizzle-orm/pg-core";
 import { Pool } from "pg";
+import { financialNoteConcepts } from "../drizzle/financial-notes-schema";
 import {
   normalizeOpeningBalanceItems,
   type OpeningBalanceItemInput,
@@ -14296,7 +14297,9 @@ function buildTaxRetentionWhere(filters?: TaxRetentionListFilters) {
         ilike(taxRetentions.taxCode, search),
         ilike(taxRetentions.description, search),
         ilike(taxRetentions.erpCode, search),
-        ilike(taxRetentions.note, search)
+        ilike(taxRetentions.note, search),
+        ilike(financialNoteConcepts.financialGroupCode, search),
+        ilike(financialGroups.financialGroupDescription, search)
       )!
     );
   }
@@ -14327,6 +14330,14 @@ export async function listTaxRetentions(filters?: TaxRetentionListFilters) {
   const [totalResult] = await db
     .select({ count: count() })
     .from(taxRetentions)
+    .leftJoin(
+      financialNoteConcepts,
+      eq(financialNoteConcepts.retentionCatalogId, taxRetentions.id)
+    )
+    .leftJoin(
+      financialGroups,
+      eq(financialGroups.financialGroupCode, financialNoteConcepts.financialGroupCode)
+    )
     .where(where);
   const total = totalResult?.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -14334,8 +14345,20 @@ export async function listTaxRetentions(filters?: TaxRetentionListFilters) {
   const offset = (page - 1) * pageSize;
 
   const items = await db
-    .select()
+    .select({
+      ...getTableColumns(taxRetentions),
+      financialGroupCode: financialNoteConcepts.financialGroupCode,
+      financialGroupDescription: financialGroups.financialGroupDescription,
+    })
     .from(taxRetentions)
+    .leftJoin(
+      financialNoteConcepts,
+      eq(financialNoteConcepts.retentionCatalogId, taxRetentions.id)
+    )
+    .leftJoin(
+      financialGroups,
+      eq(financialGroups.financialGroupCode, financialNoteConcepts.financialGroupCode)
+    )
     .where(where)
     .orderBy(asc(taxRetentions.taxCode))
     .limit(pageSize)
@@ -14365,23 +14388,24 @@ export async function createTaxRetention(
   data: Pick<
     InsertTaxRetention,
     "taxCode" | "description" | "ratePercent" | "isActive" | "note" | "erpCode"
-  >
+  > & { financialGroupCode?: string | null }
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
+  const { financialGroupCode, ...retentionData } = data;
   return db.transaction(async tx => {
-  const [retention] = await tx
-    .insert(taxRetentions)
-    .values({
-      ...data,
-      ratePercent: toRateString(data.ratePercent),
-    })
-    .returning();
+    const [retention] = await tx
+      .insert(taxRetentions)
+      .values({
+        ...retentionData,
+        ratePercent: toRateString(data.ratePercent),
+      })
+      .returning();
 
-  const { syncRetentionConcept } = await import("./financialNotes");
-  await syncRetentionConcept(tx, retention.id);
-  return retention;
+    const { syncRetentionConcept } = await import("./financialNotes");
+    await syncRetentionConcept(tx, retention.id, financialGroupCode);
+    return retention;
   });
 }
 
@@ -14397,31 +14421,32 @@ export async function updateTaxRetention(
       | "note"
       | "erpCode"
     >
-  >
+  > & { financialGroupCode?: string | null }
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
+  const { financialGroupCode, ...retentionData } = data;
   return db.transaction(async tx => {
-  const [retention] = await tx
-    .update(taxRetentions)
-    .set({
-      ...data,
-      ...(data.ratePercent !== undefined
-        ? { ratePercent: toRateString(data.ratePercent) }
-        : {}),
-      updatedAt: new Date(),
-    })
-    .where(eq(taxRetentions.id, id))
-    .returning();
+    const [retention] = await tx
+      .update(taxRetentions)
+      .set({
+        ...retentionData,
+        ...(data.ratePercent !== undefined
+          ? { ratePercent: toRateString(data.ratePercent) }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(taxRetentions.id, id))
+      .returning();
 
-  if (!retention) {
-    throw new Error("Retención no encontrada");
-  }
+    if (!retention) {
+      throw new Error("Retención no encontrada");
+    }
 
-  const { syncRetentionConcept } = await import("./financialNotes");
-  await syncRetentionConcept(tx, retention.id);
-  return retention;
+    const { syncRetentionConcept } = await import("./financialNotes");
+    await syncRetentionConcept(tx, retention.id, financialGroupCode);
+    return retention;
   });
 }
 

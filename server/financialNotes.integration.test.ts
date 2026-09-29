@@ -155,6 +155,140 @@ describeDb(
       });
     }
 
+    async function retentionGroups() {
+      await client.query(
+        `INSERT INTO "financialGroups" ("financialGroupCode","financialGroupDescription","codN2","nivel2","isActive") VALUES ('TEST-RET-01','Retención financiera uno','TEST','Pruebas',true),('TEST-RET-02','Retención financiera dos','TEST','Pruebas',true) ON CONFLICT ("financialGroupCode") DO UPDATE SET "isActive"=true`
+      );
+    }
+    it("assigns financial groups through retentions and searches the shared concept by code and description", async () => {
+      await retentionGroups();
+      const retention = await database.createTaxRetention({
+        taxCode: "TEST-" + randomUUID().slice(0, 8),
+        description: "Prueba de grupo",
+        ratePercent: "1",
+        isActive: true,
+        financialGroupCode: "TEST-RET-01",
+      });
+      for (const search of ["TEST-RET-01", "Retención financiera uno"]) {
+        const listed = await database.listTaxRetentions({ search });
+        expect(listed.items.find(r => r.id === retention.id)).toMatchObject({
+          financialGroupCode: "TEST-RET-01",
+          financialGroupDescription: "Retención financiera uno",
+        });
+      }
+      await database.updateTaxRetention(retention.id, {
+        financialGroupCode: "TEST-RET-02",
+      });
+      await database.updateTaxRetention(retention.id, {
+        description: "Cliente antiguo sin campo",
+      });
+      await (await database.getDb())!.transaction(tx =>
+        service.syncRetentionConcept(tx, retention.id)
+      );
+      expect(
+        (await database.listTaxRetentions({ search: retention.taxCode }))
+          .items[0].financialGroupCode
+      ).toBe("TEST-RET-02");
+      await database.updateTaxRetention(retention.id, {
+        financialGroupCode: null,
+      });
+      expect(
+        (await database.listTaxRetentions({ search: retention.taxCode }))
+          .items[0].financialGroupCode
+      ).toBeNull();
+    });
+    it("rejects invalid or newly selected inactive groups atomically and preserves an existing inactive assignment", async () => {
+      await retentionGroups();
+      const retention = await database.createTaxRetention({
+        taxCode: "TEST-" + randomUUID().slice(0, 8),
+        description: "Descripción original",
+        ratePercent: "1",
+        isActive: true,
+        financialGroupCode: "TEST-RET-01",
+      });
+      await client.query(
+        `UPDATE "financialGroups" SET "isActive"=false WHERE "financialGroupCode" IN ('TEST-RET-01','TEST-RET-02')`
+      );
+      await expect(
+        database.updateTaxRetention(retention.id, {
+          description: "No guardar",
+          financialGroupCode: "TEST-RET-02",
+        })
+      ).rejects.toThrow(/grupo financiero activo/);
+      await expect(
+        database.updateTaxRetention(retention.id, {
+          description: "No guardar",
+          financialGroupCode: "NOT-A-GROUP",
+        })
+      ).rejects.toThrow(/grupo financiero activo/);
+      expect(
+        (await database.listTaxRetentions({ search: retention.taxCode }))
+          .items[0]
+      ).toMatchObject({
+        description: "Descripción original",
+        financialGroupCode: "TEST-RET-01",
+      });
+      await expect(
+        database.updateTaxRetention(retention.id, {
+          description: "Grupo previo conservado",
+          financialGroupCode: "TEST-RET-01",
+        })
+      ).resolves.toHaveProperty("id", retention.id);
+      const code = "TEST-" + randomUUID().slice(0, 8);
+      await expect(
+        database.createTaxRetention({
+          taxCode: code,
+          description: "No crear",
+          ratePercent: "1",
+          isActive: true,
+          financialGroupCode: "NOT-A-GROUP",
+        })
+      ).rejects.toThrow(/grupo financiero activo/);
+      expect((await database.listTaxRetentions({ search: code })).total).toBe(
+        0
+      );
+    });
+    it("uses the retention group for new note lines and preserves accounted financial snapshots", async () => {
+      await retentionGroups();
+      await database.updateTaxRetention(101, {
+        financialGroupCode: "TEST-RET-01",
+      });
+      await setupRetentions();
+      const note = (await sync())!;
+      const detail = await service.getFinancialNote(note.id, admin);
+      expect(detail.lines[0]).toMatchObject({
+        financialGroupCode: "TEST-RET-01",
+        financialGroupDescription: "Retención financiera uno",
+      });
+      await prepare(
+        note.id,
+        noteDraftSchema.parse({
+          type: "credit",
+          lines: detail.lines.map(l => ({ ...l, notes: l.notes ?? undefined })),
+          allocations: detail.allocations,
+        })
+      );
+      await service.transitionFinancialNote(
+        note.id,
+        "account",
+        undefined,
+        accountant
+      );
+      await database.updateTaxRetention(101, {
+        financialGroupCode: "TEST-RET-02",
+      });
+      const after = await service.getFinancialNote(note.id, admin);
+      expect(after.lines[0]).toMatchObject({
+        financialGroupCode: "TEST-RET-01",
+        financialGroupDescription: "Retención financiera uno",
+      });
+      expect(
+        (await database.listTaxRetentions({ search: "RT01" })).items.find(
+          r => r.id === 101
+        )?.financialGroupCode
+      ).toBe("TEST-RET-02");
+    });
+
     it("seeds 30 credit, 6 debit and every retention idempotently; denies browser access", async () => {
       const before = (
         await client.query('select "activatedAt" from "financialNoteSettings"')

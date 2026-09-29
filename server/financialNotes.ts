@@ -223,9 +223,36 @@ export async function removeNoteConcept(id: number) {
     return { deactivated: !!used };
   });
 }
-export async function syncRetentionConcept(tx: Executor, retentionId: number) {
+export async function syncRetentionConcept(
+  tx: Executor,
+  retentionId: number,
+  financialGroupCode?: string | null
+) {
+  if (financialGroupCode) {
+    const [group] = await noteRows(
+      tx,
+      sql`select 1 from "financialGroups" g
+          where g."financialGroupCode" = ${financialGroupCode}
+            and (g."isActive" or exists (
+              select 1 from "financialNoteConcepts" c
+              where c."retentionCatalogId" = ${retentionId}
+                and c."financialGroupCode" = g."financialGroupCode"
+            ))
+          for share of g`
+    );
+    if (!group) bad("Seleccione un grupo financiero activo");
+  }
+  // Omitted fields preserve existing assignments, including older API clients
+  // and automatic invoice synchronization. Explicit null clears the assignment.
   await tx.execute(
-    sql`insert into "financialNoteConcepts" (type,code,description,applicability,"retentionCatalogId","isActive") select 'credit','NC-' || "taxCode",description,coalesce(note,''),id,"isActive" from "taxRetentions" where id = ${retentionId} on conflict ("retentionCatalogId") do update set code = excluded.code, "updatedAt" = now()`
+    sql`insert into "financialNoteConcepts" (type,code,description,applicability,"retentionCatalogId","isActive","financialGroupCode")
+        select 'credit','NC-' || "taxCode",description,coalesce(note,''),id,"isActive",${financialGroupCode ?? null}
+        from "taxRetentions" where id = ${retentionId}
+        on conflict ("retentionCatalogId") do update set
+          code = excluded.code,
+          "financialGroupCode" = case when ${financialGroupCode !== undefined}
+            then excluded."financialGroupCode" else "financialNoteConcepts"."financialGroupCode" end,
+          "updatedAt" = now()`
   );
 }
 

@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { FinancialGroupCombobox } from "@/components/FinancialGroupCombobox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,6 +33,8 @@ type TaxRetentionRecord = {
   isActive: boolean;
   note?: string | null;
   erpCode?: string | null;
+  financialGroupCode?: string | null;
+  financialGroupDescription?: string | null;
 };
 
 type RetentionForm = {
@@ -41,6 +44,8 @@ type RetentionForm = {
   isActive: boolean;
   note: string;
   erpCode: string;
+  financialGroupCode: string | null;
+  financialGroupDescription: string | null;
 };
 
 const PAGE_SIZE = 25;
@@ -52,6 +57,8 @@ const emptyForm: RetentionForm = {
   isActive: true,
   note: "",
   erpCode: "",
+  financialGroupCode: null,
+  financialGroupDescription: null,
 };
 
 function formatRate(value: string | number | null | undefined) {
@@ -109,8 +116,7 @@ export default function Retenciones() {
   const listInput = useMemo(
     () => ({
       search: debouncedSearch || undefined,
-      isActive:
-        activeFilter === "all" ? undefined : activeFilter === "active",
+      isActive: activeFilter === "all" ? undefined : activeFilter === "active",
       page,
       pageSize: PAGE_SIZE,
     }),
@@ -120,7 +126,7 @@ export default function Retenciones() {
   const { data, isLoading, isFetching, error, refetch } =
     trpc.retentions.list.useQuery(listInput, {
       enabled: canReadRetentions,
-      placeholderData: (previousData) => previousData,
+      placeholderData: previousData => previousData,
     });
 
   useEffect(() => {
@@ -129,14 +135,40 @@ export default function Retenciones() {
     }
   }, [data?.page, page]);
 
+  const [groupSearch, setGroupSearch] = useState("");
+  const [groupTerm, setGroupTerm] = useState("");
+  const [groupPage, setGroupPage] = useState(1);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setGroupTerm(groupSearch.trim());
+      setGroupPage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [groupSearch]);
+  const groups = trpc.financialGroups.activeOptionsPage.useQuery(
+    { search: groupTerm || undefined, page: groupPage, pageSize: 25 },
+    { enabled: canManageRetentions && dialogOpen }
+  );
+  useEffect(() => {
+    if (groups.data?.page && groups.data.page !== groupPage) {
+      setGroupPage(groups.data.page);
+    }
+  }, [groups.data?.page, groupPage]);
+  const resetGroupSearch = () => {
+    setGroupSearch("");
+    setGroupTerm("");
+    setGroupPage(1);
+  };
+
   const createMutation = trpc.retentions.create.useMutation({
     onSuccess: () => {
       toast.success("Retención creada");
       void utils.retentions.list.invalidate();
       void utils.retentions.activeOptions.invalidate();
+      void utils.noteConcepts.invalidate();
       setDialogOpen(false);
     },
-    onError: (e) => toast.error(getFriendlyError(e.message)),
+    onError: e => toast.error(getFriendlyError(e.message)),
   });
 
   const updateMutation = trpc.retentions.update.useMutation({
@@ -144,16 +176,19 @@ export default function Retenciones() {
       toast.success("Retención actualizada");
       void utils.retentions.list.invalidate();
       void utils.retentions.activeOptions.invalidate();
+      void utils.noteConcepts.invalidate();
       setDialogOpen(false);
     },
-    onError: (e) => toast.error(getFriendlyError(e.message)),
+    onError: e => toast.error(getFriendlyError(e.message)),
   });
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
-  const rangeStart = total === 0 ? 0 : ((data?.page ?? page) - 1) * PAGE_SIZE + 1;
-  const rangeEnd = total === 0 ? 0 : Math.min((data?.page ?? page) * PAGE_SIZE, total);
+  const rangeStart =
+    total === 0 ? 0 : ((data?.page ?? page) - 1) * PAGE_SIZE + 1;
+  const rangeEnd =
+    total === 0 ? 0 : Math.min((data?.page ?? page) * PAGE_SIZE, total);
   const saving = createMutation.isPending || updateMutation.isPending;
 
   const readCurrentForm = (fallback: RetentionForm = form): RetentionForm => ({
@@ -163,6 +198,8 @@ export default function Retenciones() {
     isActive: fallback.isActive,
     note: noteTextareaRef.current?.value ?? fallback.note,
     erpCode: erpCodeInputRef.current?.value ?? fallback.erpCode,
+    financialGroupCode: fallback.financialGroupCode,
+    financialGroupDescription: fallback.financialGroupDescription,
   });
 
   const updateForm = (patch: Partial<RetentionForm>) => {
@@ -175,11 +212,13 @@ export default function Retenciones() {
   const openCreateDialog = () => {
     setSelectedRetention(null);
     setForm(emptyForm);
+    resetGroupSearch();
     setDialogOpen(true);
   };
 
   const openEditDialog = (retention: TaxRetentionRecord) => {
     setSelectedRetention(retention);
+    resetGroupSearch();
     setForm({
       taxCode: retention.taxCode,
       description: retention.description,
@@ -187,11 +226,14 @@ export default function Retenciones() {
       isActive: retention.isActive,
       note: retention.note ?? "",
       erpCode: retention.erpCode ?? "",
+      financialGroupCode: retention.financialGroupCode ?? null,
+      financialGroupDescription: retention.financialGroupDescription ?? null,
     });
     setDialogOpen(true);
   };
 
   const submitForm = () => {
+    if (saving) return;
     if (!canManageRetentions) {
       toast.error("No tiene permisos para modificar retenciones");
       return;
@@ -207,6 +249,7 @@ export default function Retenciones() {
       isActive: currentForm.isActive,
       note: currentForm.note.trim() || null,
       erpCode: currentForm.erpCode.trim().toUpperCase() || null,
+      financialGroupCode: currentForm.financialGroupCode || null,
     };
 
     if (!payload.taxCode) {
@@ -217,7 +260,10 @@ export default function Retenciones() {
       toast.error("Ingrese la descripción");
       return;
     }
-    if (!Number.isFinite(Number(payload.ratePercent)) || Number(payload.ratePercent) <= 0) {
+    if (
+      !Number.isFinite(Number(payload.ratePercent)) ||
+      Number(payload.ratePercent) <= 0
+    ) {
       toast.error("Ingrese una tasa mayor que cero");
       return;
     }
@@ -263,9 +309,9 @@ export default function Retenciones() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Buscar por código, descripción, nota o ERP"
+            placeholder="Buscar por código, descripción o grupo financiero"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={event => setSearch(event.target.value)}
             className="pl-9"
           />
         </div>
@@ -295,7 +341,8 @@ export default function Retenciones() {
                 No se pudo cargar el catálogo
               </p>
               <p className="mb-4 text-sm text-muted-foreground">
-                {error.message || "Ocurrió un error consultando la base de datos."}
+                {error.message ||
+                  "Ocurrió un error consultando la base de datos."}
               </p>
               <Button variant="outline" onClick={() => void refetch()}>
                 Reintentar
@@ -331,6 +378,9 @@ export default function Retenciones() {
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Código ERP
+                      </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Código financiero
                       </th>
                       {canManageRetentions ? (
                         <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -372,6 +422,22 @@ export default function Retenciones() {
                         <td className="p-3 font-mono text-xs">
                           {retention.erpCode || "-"}
                         </td>
+                        <td className="max-w-[260px] p-3">
+                          {retention.financialGroupCode ? (
+                            <>
+                              <span className="font-mono text-xs">
+                                {retention.financialGroupCode}
+                              </span>
+                              <p className="text-xs text-muted-foreground">
+                                {retention.financialGroupDescription}
+                              </p>
+                            </>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              Sin asignar
+                            </span>
+                          )}
+                        </td>
                         {canManageRetentions ? (
                           <td className="p-3 text-right">
                             <Button
@@ -401,7 +467,7 @@ export default function Retenciones() {
                   <Button
                     variant="outline"
                     disabled={(data?.page ?? page) <= 1}
-                    onClick={() => setPage((current) => Math.max(current - 1, 1))}
+                    onClick={() => setPage(current => Math.max(current - 1, 1))}
                   >
                     Anterior
                   </Button>
@@ -409,7 +475,7 @@ export default function Retenciones() {
                     variant="outline"
                     disabled={(data?.page ?? page) >= totalPages}
                     onClick={() =>
-                      setPage((current) => Math.min(current + 1, totalPages))
+                      setPage(current => Math.min(current + 1, totalPages))
                     }
                   >
                     Siguiente
@@ -422,117 +488,150 @@ export default function Retenciones() {
       </Card>
 
       {canManageRetentions ? (
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {selectedRetention ? "Editar retención" : "Crear retención"}
-            </DialogTitle>
-          </DialogHeader>
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent className="max-h-[90dvh] grid-cols-1 overflow-y-auto sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>
+                {selectedRetention ? "Editar retención" : "Crear retención"}
+              </DialogTitle>
+            </DialogHeader>
 
-          <div className="space-y-4 pt-2">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="space-y-4 pt-2">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Código</Label>
+                  <Input
+                    ref={taxCodeInputRef}
+                    value={form.taxCode}
+                    autoComplete="off"
+                    onChange={event =>
+                      updateForm({
+                        taxCode: event.target.value.toUpperCase(),
+                      })
+                    }
+                    placeholder="RT125"
+                    autoCapitalize="characters"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Tasa %</Label>
+                  <Input
+                    ref={ratePercentInputRef}
+                    type="number"
+                    min="0"
+                    step="0.0001"
+                    value={form.ratePercent}
+                    autoComplete="off"
+                    onChange={event =>
+                      updateForm({
+                        ratePercent: event.target.value,
+                      })
+                    }
+                    placeholder="12.5"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Código ERP</Label>
+                  <Input
+                    ref={erpCodeInputRef}
+                    value={form.erpCode}
+                    autoComplete="off"
+                    onChange={event =>
+                      updateForm({
+                        erpCode: event.target.value.toUpperCase(),
+                      })
+                    }
+                    placeholder="R12"
+                    autoCapitalize="characters"
+                  />
+                </div>
+              </div>
+
               <div className="space-y-1">
-                <Label className="text-xs">Código</Label>
+                <Label className="text-xs">Descripción</Label>
                 <Input
-                  ref={taxCodeInputRef}
-                  value={form.taxCode}
+                  ref={descriptionInputRef}
+                  value={form.description}
                   autoComplete="off"
-                  onChange={(event) =>
+                  onChange={event =>
                     updateForm({
-                      taxCode: event.target.value.toUpperCase(),
+                      description: event.target.value,
                     })
                   }
-                  placeholder="RT125"
-                  autoCapitalize="characters"
+                  placeholder="Retención 12.5%"
                 />
               </div>
+
               <div className="space-y-1">
-                <Label className="text-xs">Tasa %</Label>
-                <Input
-                  ref={ratePercentInputRef}
-                  type="number"
-                  min="0"
-                  step="0.0001"
-                  value={form.ratePercent}
-                  autoComplete="off"
-                  onChange={(event) =>
+                <Label htmlFor="retention-financial-group" className="text-xs">
+                  Código financiero
+                </Label>
+                <FinancialGroupCombobox
+                  id="retention-financial-group"
+                  showCode
+                  options={groups.data?.items ?? []}
+                  value={form.financialGroupCode}
+                  selectedDescription={form.financialGroupDescription}
+                  disabled={saving}
+                  onChange={(financialGroupCode, description) =>
                     updateForm({
-                      ratePercent: event.target.value,
+                      financialGroupCode,
+                      financialGroupDescription: description ?? null,
                     })
                   }
-                  placeholder="12.5"
+                  remote={{
+                    search: groupSearch,
+                    onSearchChange: setGroupSearch,
+                    page: groupPage,
+                    totalPages: groups.data?.totalPages ?? 1,
+                    onPageChange: setGroupPage,
+                    loading: groups.isFetching,
+                    error: groups.error
+                      ? "No se pudieron cargar los grupos financieros. Intente buscar de nuevo."
+                      : undefined,
+                  }}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Opcional. Busque por código o descripción del grupo
+                  financiero.
+                </p>
               </div>
+
               <div className="space-y-1">
-                <Label className="text-xs">Código ERP</Label>
-                <Input
-                  ref={erpCodeInputRef}
-                  value={form.erpCode}
+                <Label className="text-xs">Nota</Label>
+                <Textarea
+                  ref={noteTextareaRef}
+                  value={form.note}
                   autoComplete="off"
-                  onChange={(event) =>
+                  onChange={event =>
                     updateForm({
-                      erpCode: event.target.value.toUpperCase(),
+                      note: event.target.value,
                     })
                   }
-                  placeholder="R12"
-                  autoCapitalize="characters"
+                  rows={3}
+                  placeholder="Base a ley x y o z"
                 />
               </div>
-            </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs">Descripción</Label>
-              <Input
-                ref={descriptionInputRef}
-                value={form.description}
-                autoComplete="off"
-                onChange={(event) =>
-                  updateForm({
-                    description: event.target.value,
-                  })
-                }
-                placeholder="Retención 12.5%"
-              />
-            </div>
+              <div className="flex items-center justify-between rounded-md border p-3">
+                <Label className="text-sm">Activa</Label>
+                <Switch
+                  checked={form.isActive}
+                  onCheckedChange={isActive => updateForm({ isActive })}
+                />
+              </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs">Nota</Label>
-              <Textarea
-                ref={noteTextareaRef}
-                value={form.note}
-                autoComplete="off"
-                onChange={(event) =>
-                  updateForm({
-                    note: event.target.value,
-                  })
-                }
-                rows={3}
-                placeholder="Base a ley x y o z"
-              />
+              <Button
+                type="button"
+                onClick={submitForm}
+                disabled={saving}
+                className="w-full sm:w-auto"
+              >
+                {saving ? "Guardando..." : "Guardar cambios"}
+              </Button>
             </div>
-
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <Label className="text-sm">Activa</Label>
-              <Switch
-                checked={form.isActive}
-                onCheckedChange={(isActive) =>
-                  updateForm({ isActive })
-                }
-              />
-            </div>
-
-            <Button
-              type="button"
-              onClick={submitForm}
-              disabled={saving}
-              className="w-full sm:w-auto"
-            >
-              {saving ? "Guardando..." : "Guardar cambios"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
       ) : null}
     </div>
   );

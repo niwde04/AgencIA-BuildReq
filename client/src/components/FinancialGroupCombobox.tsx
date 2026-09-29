@@ -38,6 +38,8 @@ type FinancialGroupComboboxProps = {
   };
   selectedDescription?: string | null;
   disabled?: boolean;
+  id?: string;
+  showCode?: boolean;
 };
 
 export function FinancialGroupCombobox({
@@ -46,6 +48,8 @@ export function FinancialGroupCombobox({
   onChange,
   selectedDescription,
   disabled = false,
+  id,
+  showCode = false,
   remote,
 }: FinancialGroupComboboxProps) {
   const [open, setOpen] = useState(false);
@@ -64,6 +68,7 @@ export function FinancialGroupCombobox({
         <Button
           type="button"
           variant="outline"
+          id={id}
           role="combobox"
           aria-expanded={open}
           disabled={disabled}
@@ -71,11 +76,13 @@ export function FinancialGroupCombobox({
         >
           <span
             className={cn(
-              "truncate text-left",
+              "min-w-0 truncate text-left",
               !value && "text-muted-foreground"
             )}
           >
-            {label}
+            {showCode && value
+              ? `${value} · ${selectedOption?.financialGroupDescription || selectedDescription || "Grupo financiero"}`
+              : label}
           </span>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
         </Button>
@@ -137,8 +144,21 @@ export function FinancialGroupCombobox({
                         : "opacity-0"
                     )}
                   />
-                  <span className="truncate">
-                    {option.financialGroupDescription}
+                  <span className="min-w-0">
+                    {showCode ? (
+                      <span className="block font-mono text-xs font-medium">
+                        {option.financialGroupCode}
+                      </span>
+                    ) : null}
+                    <span
+                      className={
+                        showCode
+                          ? "block truncate text-xs text-muted-foreground"
+                          : "block truncate"
+                      }
+                    >
+                      {option.financialGroupDescription}
+                    </span>
                   </span>
                 </CommandItem>
               ))}

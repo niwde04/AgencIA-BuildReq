@@ -75,6 +75,7 @@ const retentionInputSchema = z.object({
   isActive: z.boolean(),
   note: z.string().trim().max(1000).optional().nullable(),
   erpCode: z.string().trim().max(50).optional().nullable(),
+  financialGroupCode: z.string().trim().min(1).max(20).optional().nullable(),
 });
 
 export const retentionsRouter = router({
@@ -109,6 +110,7 @@ export const retentionsRouter = router({
         isActive: input.isActive,
         note: nullableText(input.note),
         erpCode: nullableText(input.erpCode)?.toUpperCase() ?? null,
+        financialGroupCode: input.financialGroupCode,
       });
     }),
 
@@ -127,6 +129,7 @@ export const retentionsRouter = router({
         isActive: input.isActive,
         note: nullableText(input.note),
         erpCode: nullableText(input.erpCode)?.toUpperCase() ?? null,
+        financialGroupCode: input.financialGroupCode,
       });
     }),
 });
