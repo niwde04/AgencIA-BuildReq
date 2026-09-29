@@ -68,6 +68,59 @@ const amount = (
   numFmt: "#,##0.00",
 });
 
+type InvoiceTax = AccountingRow["taxes"][number];
+
+function taxHeader(tax: InvoiceTax) {
+  const label = tax.label.trim() || tax.code;
+  const includesRate = Array.from(
+    label.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)
+  ).some(match => Number(match[1].replace(",", ".")) === tax.ratePercent);
+  return tax.ratePercent === null || includesRate
+    ? label
+    : label + " " + tax.ratePercent + "%";
+}
+
+function buildTaxColumns(rows: AccountingRow[], reservedHeaders: string[]) {
+  const taxes = new Map<string, InvoiceTax>();
+  const totals = new Map<AccountingRow, Map<string, number>>();
+  for (const row of rows) {
+    const amounts = new Map<string, number>();
+    for (const tax of row.taxes) {
+      // Use the historical code and rate, never the current tax catalog.
+      const key = JSON.stringify([
+        tax.code,
+        tax.ratePercent,
+        tax.code === "invoice-adjustment" ? tax.label : null,
+      ]);
+      if (!taxes.has(key)) taxes.set(key, tax);
+      amounts.set(key, (amounts.get(key) ?? 0) + tax.amount);
+    }
+    totals.set(row, amounts);
+  }
+  const headerCounts = new Map<string, number>();
+  for (const tax of Array.from(taxes.values())) {
+    const header = taxHeader(tax);
+    headerCounts.set(header, (headerCounts.get(header) ?? 0) + 1);
+  }
+  const usedHeaders = new Set(reservedHeaders);
+  return Array.from(taxes, ([key, tax]) => {
+    const label = taxHeader(tax);
+    const base =
+      usedHeaders.has(label) || headerCounts.get(label)! > 1
+        ? label + " (" + tax.code + ")"
+        : label;
+    let header = base;
+    for (let suffix = 2; usedHeaders.has(header); suffix += 1) {
+      header = base + " (" + suffix + ")";
+    }
+    usedHeaders.add(header);
+    return {
+      ...amount(header, row => totals.get(row)?.get(key) ?? 0),
+      width: Math.min(Math.max(header.length + 2, 21), 48),
+    };
+  });
+}
+
 export function buildInvoiceAccountingWorksheets(
   rows: AccountingRow[]
 ): ExcelWorksheet[] {
@@ -117,38 +170,14 @@ export function buildInvoiceAccountingWorksheets(
       width: 40,
     },
   ];
-  const taxes = rows.flatMap(row =>
-    row.taxes.map(tax => ({
-      document: row.document,
-      number: row.number,
-      currency: row.currency,
-      ...tax,
-    }))
+  const taxColumns = buildTaxColumns(
+    rows,
+    columns.map(column => column.header)
   );
-  return [
-    { sheetName: "Facturas por contabilizar", columns, rows },
-    {
-      sheetName: "Desglose ISV",
-      rows: taxes,
-      columns: [
-        { header: "Documento", value: row => row.document, width: 23 },
-        { header: "Nro. Factura", value: row => row.number, width: 25 },
-        { header: "Moneda", value: row => row.currency, width: 10 },
-        { header: "Código impuesto", value: row => row.code, width: 20 },
-        { header: "Descripción", value: row => row.label, width: 40 },
-        {
-          header: "Tasa %",
-          value: row => row.ratePercent,
-          numFmt: "0.00",
-          width: 12,
-        },
-        {
-          header: "Importe",
-          value: row => row.amount,
-          numFmt: "#,##0.00",
-          width: 21,
-        },
-      ],
-    },
-  ];
+  columns.splice(
+    columns.findIndex(column => column.header === "ISV") + 1,
+    0,
+    ...taxColumns
+  );
+  return [{ sheetName: "Facturas por contabilizar", columns, rows }];
 }

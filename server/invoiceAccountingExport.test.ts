@@ -119,7 +119,7 @@ describe("accounting queue Excel export", () => {
     );
     expect(fetch).toHaveBeenCalledTimes(1);
   });
-  it("writes real XLSX numbers, preserves fiscal text, and includes the saved ISV breakdown", () => {
+  it("writes real XLSX numbers, preserves fiscal text, and includes the saved ISV breakdown as columns in one sheet", () => {
     const workbook = buildWorkbook(
       XLSX,
       buildInvoiceAccountingWorksheets([
@@ -147,6 +147,8 @@ describe("accounting queue Excel export", () => {
       Moneda: "HNL",
       Subtotal: 1000.1234,
       ISV: 190,
+      "ISV 15%": 150,
+      "Turismo 4%": 40,
       "Neto a Pagar": 1165.1234,
       "Saldo Pendiente": 865.1234,
       "Estado de pago": "Parcial",
@@ -162,16 +164,107 @@ describe("accounting queue Excel export", () => {
     expect(sheet.C2.f).toBeUndefined();
     expect(sheet.H2).toMatchObject({ t: "n", v: 1000.1234, z: "#,##0.00" });
     expect(Object.keys(rows[0])).not.toContain("Acciones");
-    const taxes = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-      result.Sheets["Desglose ISV"]
+    expect(result.SheetNames).toEqual(["Facturas por contabilizar"]);
+    expect(sheet.J2).toMatchObject({ t: "n", v: 150, z: "#,##0.00" });
+    expect(sheet.K2).toMatchObject({ t: "n", v: 40, z: "#,##0.00" });
+    expect(Object.keys(rows[0]).slice(8, 12)).toEqual([
+      "ISV",
+      "ISV 15%",
+      "Turismo 4%",
+      "Otros Cargos",
+    ]);
+  });
+  it("adds taxes from any invoice, sums saved amounts and keeps adjustments and zeros", () => {
+    const second: Row = {
+      ...row,
+      id: 2,
+      tax: 185,
+      taxes: [
+        { code: "isv_18", label: "ISV", ratePercent: 18, amount: 100 },
+        { code: "isv_18", label: "ISV", ratePercent: 18, amount: 80 },
+        { code: "tips", label: "Propinas", ratePercent: 10, amount: 10 },
+        {
+          code: "invoice-adjustment",
+          label: "Ajuste / exoneración del documento",
+          ratePercent: null,
+          amount: -5,
+        },
+      ],
+    };
+    const third: Row = {
+      ...row,
+      id: 3,
+      tax: 25,
+      taxes: [
+        {
+          code: "invoice-adjustment",
+          label: "Impuesto registrado sin desglose",
+          ratePercent: null,
+          amount: 25,
+        },
+      ],
+    };
+    const sheets = buildInvoiceAccountingWorksheets([
+      row,
+      second,
+      third,
+      { ...row, id: 4, tax: 0, taxes: [] },
+    ]);
+    const workbook = buildWorkbook(XLSX, sheets);
+    const exported = XLSX.utils.sheet_to_json<Record<string, number>>(
+      workbook.Sheets[workbook.SheetNames[0]]
     );
-    expect(taxes).toHaveLength(4);
-    expect(taxes[1]).toMatchObject({
-      Documento: row.document,
-      "Código impuesto": "isv_4",
-      Descripción: "Turismo",
-      "Tasa %": 4,
-      Importe: 40,
+    expect(exported[0]).toMatchObject({
+      "ISV 15%": 150,
+      "Turismo 4%": 40,
+      "ISV 18%": 0,
+      "Propinas 10%": 0,
+    });
+    expect(exported[1]).toMatchObject({
+      ISV: 185,
+      "ISV 15%": 0,
+      "Turismo 4%": 0,
+      "ISV 18%": 180,
+      "Propinas 10%": 10,
+      "Ajuste / exoneración del documento": -5,
+    });
+    expect(exported[2]["Impuesto registrado sin desglose"]).toBe(25);
+    expect(exported[2]["Ajuste / exoneración del documento"]).toBe(0);
+    const headers = sheets[0].columns.map(column => column.header);
+    const taxHeaders = headers.slice(
+      headers.indexOf("ISV") + 1,
+      headers.indexOf("Otros Cargos")
+    );
+    for (const invoice of exported) {
+      expect(taxHeaders.reduce((sum, header) => sum + invoice[header], 0)).toBe(
+        invoice.ISV
+      );
+    }
+  });
+  it("keeps distinct codes/rates in uniquely named columns even when labels collide", () => {
+    const invoice: Row = {
+      ...row,
+      tax: 10,
+      taxes: [
+        { code: "service_a", label: "Servicio", ratePercent: 12.5, amount: 1 },
+        { code: "service_b", label: "Servicio", ratePercent: 12.5, amount: 2 },
+        { code: "service_a", label: "Servicio", ratePercent: 15, amount: 3 },
+        { code: "old", label: "ISV", ratePercent: null, amount: 4 },
+      ],
+    };
+    const [sheet] = buildInvoiceAccountingWorksheets([invoice]);
+    const headers = sheet.columns.map(column => column.header);
+    expect(new Set(headers).size).toBe(headers.length);
+    const workbook = buildWorkbook(XLSX, [sheet]);
+    const [exported] = XLSX.utils.sheet_to_json(
+      workbook.Sheets[workbook.SheetNames[0]]
+    );
+    expect(exported).toMatchObject({
+      ISV: 10,
+      "Servicio 12.5% (service_a)": 1,
+      "Servicio 12.5% (service_b)": 2,
+      "Servicio 15%": 3,
+      "ISV (old)": 4,
     });
   });
 });

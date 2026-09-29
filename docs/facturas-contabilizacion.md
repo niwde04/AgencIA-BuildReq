@@ -7,7 +7,7 @@ Flujo: borrador/rechazada → revisada → pendiente_contabilizar → registrada
 - La bandeja inicia en pendientes. El filtro de estado permite consultar documentos enviados y luego contabilizados, rechazados o anulados. Los históricos nunca enviados no se incluyen. Una corrección y nuevo envío a revisión limpian los datos del envío anterior.
 - La consulta reutiliza la búsqueda de Facturas (factura, OC, recepción, REQ, artículo, requiriente, creador, proveedor y proyecto), fecha del documento, proyecto y moneda. Pagina en SQL y carga impuestos/retenciones/pagos/anticipos solamente para los documentos de esa página.
 - Moneda también filtra Facturas, su libro interno y el Reporte de Facturas existente (vista y exportaciones).
-- **Exportar Excel** descarga todas las páginas con los filtros visibles al pulsar el botón. Incluye moneda, importes numéricos, estado de pago/rechazo y una hoja adicional de desglose ISV; conserva RTN y número de factura como texto. Carga 50 documentos por petición, muestra progreso y admite hasta 10,000 por archivo; superar el límite exige acotar filtros, sin truncar resultados. Si falla una página o se detectan cambios en el conjunto, no descarga un archivo parcial. No requiere migración ni cambia permisos.
+- **Exportar Excel** descarga todas las páginas con los filtros visibles al pulsar el botón. Incluye moneda, importes numéricos, estado de pago/rechazo y el total ISV seguido de columnas por impuesto (código/tasa históricos) en la misma hoja; los impuestos ausentes en una factura muestran cero, y los ajustes o importes sin desglose se conservan. Mantiene RTN y número de factura como texto. Carga 50 documentos por petición, muestra progreso y admite hasta 10,000 por archivo; superar el límite exige acotar filtros, sin truncar resultados. Si falla una página o se detectan cambios en el conjunto, no descarga un archivo parcial. No requiere migración ni cambia permisos.
 
 ## Importes y concurrencia
 
@@ -28,7 +28,7 @@ Código preparado en demo, sin push ni despliegue de aplicación. Al desplegar, 
 ## Verificación
 
 - TypeScript y compilación de producción.
-- Exportación Excel: 7 pruebas de paginación, fallos y contenido XLSX; descarga real local de 123 facturas y 61 filtradas en USD, con 246 líneas de desglose ISV; filtros, archivo incompleto y botón móvil/oscuro verificados.
+- Exportación Excel: 9 pruebas de paginación, fallos y contenido XLSX, incluidas columnas por código/tasa, nombres repetidos, ceros y ajustes históricos. Descarga real local de 123 facturas y 61 filtradas en USD, en una sola hoja con columnas de ISV 15% y turismo 4%; filtros, archivo incompleto y botón móvil/oscuro verificados. Evidencia local: output/invoice-accounting-tax-columns/visual-result.json.
 - Pruebas focalizadas de flujo, roles, proyectos, fechas, moneda, exportaciones, desglose histórico y saldos; regresiones de facturas, Tesorería, DMC y CPC.
 - 28 pruebas PostgreSQL en una base temporal local: migración aplicada dos veces, envío sin movimientos, contabilización con anticipo real, doble envío/contabilización, contabilización frente a rechazo simultáneo y corrección con reenvío obligatorio.
 - UI local con API simulada: botón de envío, pendiente de solo lectura, confirmación contable, rechazo con motivo, filtro por moneda y paginación, historial, estado vacío, desglose ISV y anchos 1440/768/390/320 px, incluido tema oscuro. No se crearon movimientos de prueba en producción.
