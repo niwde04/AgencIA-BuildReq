@@ -101,6 +101,8 @@ describe("purchase order advance balances", () => {
       reservedAmount: 250,
       bankPaidPendingAmount: 0,
       appliedAmount: 150,
+      directAppliedAmount: 150,
+      contractualAmortizationAmount: 0,
       availableToPayAmount: 350,
       unappliedAmount: 250,
       status: "en_lote",
@@ -170,6 +172,8 @@ describe("purchase order advance balances", () => {
       reservedAmount: 300,
       bankPaidPendingAmount: 0,
       appliedAmount: 150,
+      directAppliedAmount: 150,
+      contractualAmortizationAmount: 0,
       availableToPayAmount: 300,
       unappliedAmount: 250,
     });

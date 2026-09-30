@@ -10,7 +10,7 @@ export function invoiceCommittedMoneySql(invoiceId: SQL): SQL {
       from "treasuryPaymentItems" payment
       where payment."invoiceId" = ${invoiceId} and payment."sourceType" = 'invoice'), 0)
     + coalesce((select sum(round(advance.amount, 2))
-      from "purchaseOrderAdvanceApplications" advance where advance."invoiceId" = ${invoiceId}), 0)
+      from "purchaseOrderAdvanceApplications" advance where advance."invoiceId" = ${invoiceId} and advance."applicationMode" = 'direct'), 0)
   )`;
 }
 

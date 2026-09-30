@@ -22,6 +22,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { prepareDocumentAttachment } from "@/lib/document-attachments";
 import { trpc } from "@/lib/trpc";
+import { roundDecimalAmount } from "@shared/money";
 import { hasAtMostDecimalPlaces } from "@shared/money";
 import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
 
@@ -53,6 +54,20 @@ export function PurchaseOrderAdvanceDialog({
   const [search, setSearch] = useState("");
   const [purchaseOrderId, setPurchaseOrderId] = useState("");
   const [requestedAmount, setRequestedAmount] = useState("");
+  const [applicationMode, setApplicationMode] = useState<
+    "direct" | "contractual"
+  >("direct");
+  const [requestMode, setRequestMode] = useState<"amount" | "percentage">(
+    "amount"
+  );
+  const [requestPercent, setRequestPercent] = useState("");
+  const [amortizationMode, setAmortizationMode] = useState<
+    "percentage" | "amount"
+  >("percentage");
+  const [amortizationValue, setAmortizationValue] = useState("");
+  const [amortizationBase, setAmortizationBase] = useState<
+    "subtotal" | "total"
+  >("subtotal");
   const [requestedPaymentDate, setRequestedPaymentDate] = useState("");
   const [notes, setNotes] = useState("");
   const [support, setSupport] = useState<File>();
@@ -72,6 +87,12 @@ export function PurchaseOrderAdvanceDialog({
     setSearch("");
     setPurchaseOrderId(purchaseOrder ? String(purchaseOrder.id) : "");
     setRequestedAmount("");
+    setRequestMode("amount");
+    setRequestPercent("");
+    setApplicationMode("direct");
+    setAmortizationMode("percentage");
+    setAmortizationValue("");
+    setAmortizationBase("subtotal");
     setRequestedPaymentDate(new Date().toISOString().slice(0, 10));
     setNotes("");
     setSupport(undefined);
@@ -83,6 +104,27 @@ export function PurchaseOrderAdvanceDialog({
       (row: any) => row.purchaseOrder.id === selectedId
     );
   }, [eligibleQuery.data, purchaseOrder, purchaseOrderId]);
+
+  const existingRule = (selected as any)?.existingRule;
+  useEffect(() => {
+    if (!selected) return;
+    const rule = (selected as any).existingRule;
+    setApplicationMode(rule?.applicationMode ?? "direct");
+    setAmortizationMode(rule?.amortizationMode ?? "percentage");
+    setAmortizationValue(rule?.amortizationValue ?? "");
+    setAmortizationBase(rule?.amortizationBase ?? "subtotal");
+  }, [selected?.purchaseOrder.id]);
+  useEffect(() => {
+    if (requestMode === "percentage" && selected)
+      setRequestedAmount(
+        Number.isFinite(Number(requestPercent)) && requestPercent
+          ? roundDecimalAmount(
+              (Number(selected.total) * Number(requestPercent)) / 100,
+              2
+            ).toFixed(2)
+          : ""
+      );
+  }, [requestMode, requestPercent, selected?.total]);
 
   async function save() {
     const parsedAmount = Number(requestedAmount);
@@ -100,10 +142,30 @@ export function PurchaseOrderAdvanceDialog({
       toast.error("El importe supera el saldo disponible de la OC.");
       return;
     }
+    if (
+      applicationMode === "contractual" &&
+      (!amortizationValue ||
+        Number(amortizationValue) <= 0 ||
+        (amortizationMode === "percentage" && Number(amortizationValue) > 100))
+    ) {
+      toast.error("Defina el porcentaje o monto de amortización contractual.");
+      return;
+    }
     try {
       const created = await createMutation.mutateAsync({
         purchaseOrderId: selected.purchaseOrder.id,
         requestedAmount: amount,
+        applicationMode,
+        requestedPercentage:
+          requestMode === "percentage" ? Number(requestPercent) : undefined,
+        amortizationMode:
+          applicationMode === "contractual" ? amortizationMode : undefined,
+        amortizationValue:
+          applicationMode === "contractual"
+            ? Number(amortizationValue)
+            : undefined,
+        amortizationBase:
+          applicationMode === "contractual" ? amortizationBase : undefined,
         requestedPaymentDate,
         notes: notes || undefined,
       });
@@ -142,7 +204,7 @@ export function PurchaseOrderAdvanceDialog({
   const pending = createMutation.isPending || uploadMutation.isPending;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100vh-2rem)] !w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] overflow-y-auto sm:!w-[calc(100vw-3rem)] sm:!max-w-[calc(100vw-3rem)] lg:!max-w-5xl">
+      <DialogContent className="grid-cols-1 [&_[data-slot=select-trigger]]:w-full [&_[data-slot=select-trigger]]:min-w-0 [&_[data-slot=select-value]]:block [&_[data-slot=select-value]]:truncate max-h-[calc(100vh-2rem)] !w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] overflow-y-auto sm:!w-[calc(100vw-3rem)] sm:!max-w-[calc(100vw-3rem)] lg:!max-w-5xl">
         <DialogHeader>
           <DialogTitle>Solicitar anticipo a proveedor</DialogTitle>
           <DialogDescription>
@@ -150,7 +212,7 @@ export function PurchaseOrderAdvanceDialog({
             a proveedores en Tesorería.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {purchaseOrder ? (
             <div className="rounded-md border bg-muted/30 p-3 text-sm">
               <div className="font-medium">{purchaseOrder.orderNumber}</div>
@@ -186,11 +248,8 @@ export function PurchaseOrderAdvanceDialog({
                     const row = (eligibleQuery.data ?? []).find(
                       (entry: any) => entry.purchaseOrder.id === Number(value)
                     ) as any;
-                    if (row) {
-                      setRequestedAmount(
-                        Number(row.availableAdvanceRequestAmount).toFixed(2)
-                      );
-                    }
+                    setRequestedAmount("");
+                    setRequestPercent("");
                   }}
                 >
                   <SelectTrigger className="w-full min-w-0">
@@ -214,6 +273,142 @@ export function PurchaseOrderAdvanceDialog({
               </div>
             </>
           )}
+          <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
+            <div className="min-w-0 space-y-1">
+              <Label htmlFor="advance-treatment">
+                Tratamiento del anticipo
+              </Label>
+              <Select
+                value={applicationMode}
+                disabled={Boolean(existingRule)}
+                onValueChange={value =>
+                  setApplicationMode(value as "direct" | "contractual")
+                }
+              >
+                <SelectTrigger id="advance-treatment">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="direct">Aplicación directa</SelectItem>
+                  <SelectItem
+                    value="contractual"
+                    disabled={(selected as any)?.contractualEnabled === false}
+                  >
+                    Contractual · por avances
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="min-w-0 space-y-1">
+              <Label htmlFor="advance-request-mode">
+                Calcular importe solicitado
+              </Label>
+              <Select
+                value={requestMode}
+                onValueChange={value =>
+                  setRequestMode(value as "amount" | "percentage")
+                }
+              >
+                <SelectTrigger id="advance-request-mode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="amount">Monto fijo</SelectItem>
+                  <SelectItem value="percentage">
+                    Porcentaje del total de la orden
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {requestMode === "percentage" ? (
+              <div className="min-w-0 space-y-1">
+                <Label htmlFor="advance-request-percent">
+                  Porcentaje para entregar el anticipo
+                </Label>
+                <Input
+                  id="advance-request-percent"
+                  type="number"
+                  min="0.01"
+                  max="100"
+                  step="0.01"
+                  value={requestPercent}
+                  onChange={e => setRequestPercent(e.target.value)}
+                />
+              </div>
+            ) : null}
+            {applicationMode === "contractual" ? (
+              <>
+                <div className="min-w-0 space-y-1">
+                  <Label htmlFor="advance-amortization-mode">
+                    Amortización por factura
+                  </Label>
+                  <Select
+                    value={amortizationMode}
+                    disabled={Boolean(existingRule)}
+                    onValueChange={value =>
+                      setAmortizationMode(value as "percentage" | "amount")
+                    }
+                  >
+                    <SelectTrigger id="advance-amortization-mode">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="percentage">Porcentaje</SelectItem>
+                      <SelectItem value="amount">Monto fijo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <Label htmlFor="advance-amortization-value">
+                    {amortizationMode === "percentage"
+                      ? "Porcentaje a amortizar por factura"
+                      : "Monto a amortizar por factura"}
+                  </Label>
+                  <Input
+                    id="advance-amortization-value"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    disabled={Boolean(existingRule)}
+                    value={amortizationValue}
+                    onChange={e => setAmortizationValue(e.target.value)}
+                  />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <Label htmlFor="advance-amortization-base">
+                    Base de amortización
+                  </Label>
+                  <Select
+                    value={amortizationBase}
+                    disabled={Boolean(existingRule)}
+                    onValueChange={value =>
+                      setAmortizationBase(value as "subtotal" | "total")
+                    }
+                  >
+                    <SelectTrigger id="advance-amortization-base">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="subtotal">
+                        Subtotal sin impuestos
+                      </SelectItem>
+                      <SelectItem value="total">Total con impuestos</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                  La amortización recupera el anticipo por cada factura. La
+                  garantía de calidad se retiene y se libera por separado.
+                </p>
+              </>
+            ) : null}
+            {existingRule ? (
+              <p className="text-xs text-muted-foreground sm:col-span-2">
+                Se heredan las condiciones de los anticipos activos de esta
+                orden.
+              </p>
+            ) : null}
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Importe solicitado</Label>
@@ -226,6 +421,7 @@ export function PurchaseOrderAdvanceDialog({
                     ? Number(selected.availableAdvanceRequestAmount)
                     : undefined
                 }
+                readOnly={requestMode === "percentage"}
                 value={requestedAmount}
                 onChange={event => setRequestedAmount(event.target.value)}
               />

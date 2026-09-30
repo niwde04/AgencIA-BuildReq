@@ -1678,6 +1678,8 @@ export default function Facturas() {
   const retentionDraftsDirtyRef = useRef(false);
   const [retentionDrafts, setRetentionDrafts] = useState<RetentionDraft[]>([]);
   const [retentionsDirty, setRetentionsDirty] = useState(false);
+  const [amortizationOverrideReason, setAmortizationOverrideReason] =
+    useState("");
   const [documentAdjustmentDraft, setDocumentAdjustmentDraft] =
     useState<DocumentAdjustmentDraft>({
       qualityRetentionPercent: "",
@@ -1790,11 +1792,10 @@ export default function Facturas() {
       { enabled: selectedId !== null }
     );
   const replacementReceiptId = detail?.receipt?.replacementReceiptId ?? null;
-  const { data: replacementReceiptDetail } =
-    trpc.receipts.getById.useQuery(
-      { id: replacementReceiptId ?? 0 },
-      { enabled: replacementReceiptId !== null }
-    );
+  const { data: replacementReceiptDetail } = trpc.receipts.getById.useQuery(
+    { id: replacementReceiptId ?? 0 },
+    { enabled: replacementReceiptId !== null }
+  );
   const { data: qualityReleaseOverview } =
     trpc.qualityRetentionReleases.byInvoice.useQuery(
       { invoiceId: selectedId ?? 0 },
@@ -2225,7 +2226,13 @@ export default function Facturas() {
     const qualityRetentionInputMode =
       qualityRetention?.inputMode === "amount" ? "amount" : "percentage";
     const advanceAmortizationInputMode =
-      advanceAmortization?.inputMode === "amount" ? "amount" : "percentage";
+      detail.contractualAmortization ||
+      advanceAmortization?.inputMode === "amount"
+        ? "amount"
+        : "percentage";
+    setAmortizationOverrideReason(
+      detail.contractualAmortization?.saved?.overrideReason ?? ""
+    );
     const promptPaymentInputMode =
       promptPayment?.inputMode === "amount" ? "amount" : "percentage";
     setDocumentAdjustmentDraft({
@@ -2240,7 +2247,9 @@ export default function Facturas() {
         advanceAmortization?.percentage
       ),
       advanceAmortizationAmount: formatDocumentAdjustmentAmount(
-        advanceAmortization?.amount
+        advanceAmortization?.amount ??
+          detail.contractualAmortization?.saved?.amount ??
+          detail.contractualAmortization?.amount
       ),
       advanceAmortizationInputMode,
       promptPaymentPercent: formatDocumentAdjustmentPercent(
@@ -2436,6 +2445,7 @@ export default function Facturas() {
   const documentAdjustmentPreview = calculateInvoiceDocumentAdjustments({
     subtotal: detail?.invoice.subtotal,
     baseIsvAmount: documentBaseIsvAmount,
+    advanceAmortizationBaseAmount: detail?.contractualAmortization?.baseAmount,
     input: {
       qualityRetentionPercent:
         documentAdjustmentDraft.qualityRetentionInputMode === "percentage"
@@ -2605,8 +2615,9 @@ export default function Facturas() {
     invoiceStatus: detail?.invoice.status ?? "borrador",
     netPayable: adjustedNetPayable,
     appliedAdvanceAmount,
-    availableAccountedAdvanceAmount:
-      detail?.purchaseOrderAdvanceSummary?.unappliedAmount,
+    availableAccountedAdvanceAmount: detail?.contractualAmortization
+      ? 0
+      : detail?.purchaseOrderAdvanceSummary?.unappliedAmount,
   });
   const displayedAppliedAdvanceAmount =
     invoiceAdvanceBalance.displayedAppliedAmount;
@@ -2645,8 +2656,9 @@ export default function Facturas() {
     invoiceStatus: detail?.invoice.status ?? "borrador",
     netPayable: adjustedNetPayable,
     appliedAdvanceAmount,
-    availableAccountedAdvanceAmount:
-      detail?.purchaseOrderAdvanceSummary?.unappliedAmount,
+    availableAccountedAdvanceAmount: detail?.contractualAmortization
+      ? 0
+      : detail?.purchaseOrderAdvanceSummary?.unappliedAmount,
   });
   const handlePrintInvoiceDetail = () => {
     if (!detail?.invoice) return;
@@ -3795,7 +3807,7 @@ export default function Facturas() {
         ? parseDocumentAdjustmentAmount(
             documentAdjustmentDraft.advanceAmortizationAmount,
             "El monto de amortización de anticipo",
-            subtotal
+            detail?.contractualAmortization?.baseAmount ?? subtotal
           )
         : undefined;
     if (
@@ -3823,6 +3835,8 @@ export default function Facturas() {
     const calculated = calculateInvoiceDocumentAdjustments({
       subtotal,
       baseIsvAmount: documentBaseIsvAmount,
+      advanceAmortizationBaseAmount:
+        detail?.contractualAmortization?.baseAmount,
       input: {
         qualityRetentionPercent,
         qualityRetentionAmount,
@@ -3854,6 +3868,8 @@ export default function Facturas() {
     }));
     replaceDocumentAdjustmentsMutation.mutate({
       id: selectedId,
+      advanceAmortizationOverrideReason:
+        amortizationOverrideReason || undefined,
       qualityRetentionPercent,
       qualityRetentionAmount,
       advanceAmortizationPercent,
@@ -5262,7 +5278,9 @@ export default function Facturas() {
                     <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                       <div className="space-y-2">
                         <Label>Número documento</Label>
-                        <FiscalDocumentInput format="number" fiscal={invoiceDraft.isFiscalDocument}
+                        <FiscalDocumentInput
+                          format="number"
+                          fiscal={invoiceDraft.isFiscalDocument}
                           value={invoiceDraft.invoiceNumber}
                           readOnly={!canEditSelectedInvoice}
                           aria-readonly={!canEditSelectedInvoice}
@@ -5295,7 +5313,9 @@ export default function Facturas() {
                             ? "CAI"
                             : "CAI / referencia"}
                         </Label>
-                        <FiscalDocumentInput format="cai" fiscal={invoiceDraft.isFiscalDocument}
+                        <FiscalDocumentInput
+                          format="cai"
+                          fiscal={invoiceDraft.isFiscalDocument}
                           value={invoiceDraft.cai}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
@@ -5321,7 +5341,9 @@ export default function Facturas() {
                       </div>
                       <div className="space-y-2">
                         <Label>Rango autorizado inicial</Label>
-                        <FiscalDocumentInput format="number" fiscal={invoiceDraft.isFiscalDocument}
+                        <FiscalDocumentInput
+                          format="number"
+                          fiscal={invoiceDraft.isFiscalDocument}
                           value={invoiceDraft.documentRangeStart}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
@@ -5349,7 +5371,9 @@ export default function Facturas() {
                       </div>
                       <div className="space-y-2">
                         <Label>Rango autorizado final</Label>
-                        <FiscalDocumentInput format="number" fiscal={invoiceDraft.isFiscalDocument}
+                        <FiscalDocumentInput
+                          format="number"
+                          fiscal={invoiceDraft.isFiscalDocument}
                           value={invoiceDraft.documentRangeEnd}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
@@ -5638,8 +5662,9 @@ export default function Facturas() {
                             Retenciones y descuentos por documento
                           </h3>
                           <p className="mt-1 text-xs font-normal text-muted-foreground">
-                            Cálculos independientes de las retenciones fiscales
-                            y del anticipo aplicado por Tesorería.
+                            La amortización contractual y la calidad se
+                            descuentan una sola vez. La calidad se libera por
+                            separado.
                           </p>
                         </div>
                         <div className="text-right text-sm">
@@ -5822,10 +5847,25 @@ export default function Facturas() {
                             ) : null}
                           </div>
                         ) : null}
+                        {detail.advanceReconciliationReason ? (
+                          <p
+                            role="alert"
+                            className="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-100"
+                          >
+                            {detail.advanceReconciliationReason}
+                          </p>
+                        ) : null}
                         <DocumentAdjustmentPercentageRow
                           label="Amortización de anticipo"
-                          description="Deducción documental independiente del anticipo real de Tesorería."
-                          baseAmount={toMoneyNumber(detail.invoice.subtotal)}
+                          description={
+                            detail.contractualAmortization
+                              ? "Recuperación del anticipo contractual, descontada una sola vez del neto."
+                              : "Requiere un anticipo contractual vinculado a esta orden."
+                          }
+                          baseAmount={
+                            detail.contractualAmortization?.baseAmount ??
+                            toMoneyNumber(detail.invoice.subtotal)
+                          }
                           percentage={
                             documentAdjustmentDraft.advanceAmortizationInputMode ===
                             "amount"
@@ -5847,7 +5887,10 @@ export default function Facturas() {
                           currencySymbol={getPurchaseCurrencySymbol(
                             selectedInvoiceCurrency
                           )}
-                          disabled={!canEditDocumentAdjustments}
+                          disabled={
+                            !canEditDocumentAdjustments ||
+                            !detail.contractualAmortization
+                          }
                           onPercentageChange={value =>
                             updateDocumentAdjustmentDraft(current => ({
                               ...current,
@@ -5863,6 +5906,63 @@ export default function Facturas() {
                             }))
                           }
                         />
+                        {detail.contractualAmortization ? (
+                          <div className="space-y-2 rounded-md border bg-muted/30 p-3 text-xs">
+                            <p>
+                              Base:{" "}
+                              {detail.contractualAmortization
+                                .amortizationBase === "total"
+                                ? "total con impuestos"
+                                : "subtotal sin impuestos"}
+                              . Propuesta:{" "}
+                              {formatSelectedInvoiceCurrency(
+                                detail.contractualAmortization.amount
+                              )}
+                              . Disponible para esta factura:{" "}
+                              {formatSelectedInvoiceCurrency(
+                                detail.contractualAmortization.remainingAmount
+                              )}
+                              .
+                            </p>
+                            <p>
+                              Anticipo pendiente de entregar:{" "}
+                              {formatSelectedInvoiceCurrency(
+                                detail.contractualAmortization
+                                  .pendingFundingAmount
+                              )}
+                              . Pendiente de amortizar del anticipo cubierto:{" "}
+                              {formatSelectedInvoiceCurrency(
+                                detail.contractualAmortization
+                                  .pendingAmortizationAmount
+                              )}
+                              .
+                            </p>
+                            {canEditDocumentAdjustments ? (
+                              <>
+                                <Label htmlFor="amortization-override-reason">
+                                  Motivo del ajuste (si cambia la propuesta)
+                                </Label>
+                                <Textarea
+                                  id="amortization-override-reason"
+                                  value={amortizationOverrideReason}
+                                  onChange={event =>
+                                    setAmortizationOverrideReason(
+                                      event.target.value
+                                    )
+                                  }
+                                  maxLength={2000}
+                                />
+                              </>
+                            ) : null}
+                            {!detail.contractualAmortization.saved &&
+                            canEditDocumentAdjustments ? (
+                              <p>
+                                Guarde las retenciones y descuentos para
+                                confirmar esta propuesta antes de contabilizar.
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
 
                       <div className="space-y-3 border-t border-border/70 pt-5">
@@ -6654,6 +6754,26 @@ export default function Facturas() {
                         {formatSelectedInvoiceCurrency(otherRetentionTotal)}
                       </span>
                     </div>
+                    {Number(advanceAmortizationAdjustment?.amount ?? 0) > 0 ? (
+                      <div className="flex justify-between gap-3 pl-3 text-xs text-muted-foreground">
+                        <span>Amortización del anticipo (incluida)</span>
+                        <span>
+                          {formatSelectedInvoiceCurrency(
+                            advanceAmortizationAdjustment?.amount
+                          )}
+                        </span>
+                      </div>
+                    ) : null}
+                    {Number(qualityRetentionAdjustment?.amount ?? 0) > 0 ? (
+                      <div className="flex justify-between gap-3 pl-3 text-xs text-muted-foreground">
+                        <span>Retención de calidad (incluida)</span>
+                        <span>
+                          {formatSelectedInvoiceCurrency(
+                            qualityRetentionAdjustment?.amount
+                          )}
+                        </span>
+                      </div>
+                    ) : null}
                     <div className="flex justify-between gap-3 text-sm">
                       <span className="font-medium text-amber-700">
                         (-) Descuentos por documento
@@ -6701,15 +6821,17 @@ export default function Facturas() {
                           </span>
                         </div>
                         <p className="mt-1 text-xs">
-                          {isPendingAdvanceApplication
-                            ? "El monto contabilizado disponible ya está incluido en el saldo pendiente mostrado y se aplicará definitivamente al contabilizar la factura."
-                            : "Dato informativo de la orden de compra. Solo el monto contabilizado y aplicado reduce el saldo pendiente."}
+                          {detail.contractualAmortization
+                            ? "Anticipo contractual: la amortización de esta factura ya está incluida en las deducciones. El saldo restante se recuperará en futuras planillas."
+                            : isPendingAdvanceApplication
+                              ? "El monto contabilizado disponible ya está incluido en el saldo pendiente mostrado y se aplicará definitivamente al contabilizar la factura."
+                              : "Dato informativo de la orden de compra. Solo el monto contabilizado y aplicado reduce el saldo pendiente."}
                         </p>
                       </div>
                     ) : null}
                     <div className="flex justify-between gap-3 text-sm">
                       <span className="font-medium text-blue-700">
-                        (-) Anticipo aplicado
+                        (-) Aplicación directa de anticipo
                         {isPendingAdvanceApplication ? " al contabilizar" : ""}
                       </span>
                       <span className="font-semibold text-blue-700">

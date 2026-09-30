@@ -20,6 +20,7 @@ services:
       TZ: America/Tegucigalpa
       PORT: 4000
       RUN_DB_PUSH: ${RUN_DB_PUSH:-false}
+      CONTRACTUAL_ADVANCES_ENABLED: ${CONTRACTUAL_ADVANCES_ENABLED:-true}
       DATABASE_URL: ${DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
       SUPABASE_URL: ${SUPABASE_URL}

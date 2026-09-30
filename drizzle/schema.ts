@@ -1123,6 +1123,11 @@ export const purchaseOrderAdvances = pgTable(
       precision: 14,
       scale: 4,
     }).notNull(),
+    applicationMode: varchar("applicationMode", { length: 20 }).$type<"direct" | "contractual">().default("direct").notNull(),
+    requestedPercentage: decimal("requestedPercentage", { precision: 5, scale: 2 }),
+    amortizationMode: varchar("amortizationMode", { length: 20 }).$type<"percentage" | "amount">(),
+    amortizationValue: decimal("amortizationValue", { precision: 14, scale: 4 }),
+    amortizationBase: varchar("amortizationBase", { length: 20 }).$type<"subtotal" | "total">(),
     requestedPaymentDate: date("requestedPaymentDate", {
       mode: "date",
     }).notNull(),
@@ -1156,6 +1161,7 @@ export const purchaseOrderAdvances = pgTable(
       "po_advance_currency_check",
       sql`${table.currency} in ('HNL', 'USD')`
     ),
+    treatmentCheck: check("po_advance_treatment_check", sql`(${table.applicationMode} = 'direct' and ${table.amortizationMode} is null and ${table.amortizationValue} is null and ${table.amortizationBase} is null) or (${table.applicationMode} = 'contractual' and ${table.amortizationMode} is not null and ${table.amortizationMode} in ('percentage','amount') and ${table.amortizationValue} is not null and ${table.amortizationValue} > 0 and ${table.amortizationBase} is not null and ${table.amortizationBase} in ('subtotal','total') and (${table.amortizationMode} <> 'percentage' or ${table.amortizationValue} <= 100))`),
     amountCheck: check(
       "po_advance_amount_check",
       sql`${table.requestedAmount} > 0`
@@ -1661,6 +1667,8 @@ export const purchaseOrderAdvanceApplications = pgTable(
       .notNull()
       .references(() => invoices.id, { onDelete: "restrict" }),
     amount: decimal("amount", { precision: 14, scale: 4 }).notNull(),
+    applicationMode: varchar("applicationMode", { length: 20 }).$type<"direct" | "contractual">().default("direct").notNull(),
+    invoiceDocumentAdjustmentId: integer("invoiceDocumentAdjustmentId").references(() => invoiceDocumentAdjustments.id, { onDelete: "restrict" }),
     appliedById: integer("appliedById")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
@@ -1675,6 +1683,7 @@ export const purchaseOrderAdvanceApplications = pgTable(
     advanceInvoiceUnique: uniqueIndex(
       "po_advance_application_advance_invoice_unique"
     ).on(table.purchaseOrderAdvanceId, table.invoiceId),
+    treatmentCheck: check("po_advance_application_treatment_check", sql`(${table.applicationMode} = 'direct' and ${table.invoiceDocumentAdjustmentId} is null) or (${table.applicationMode} = 'contractual' and ${table.invoiceDocumentAdjustmentId} is not null)`),
     amountCheck: check(
       "po_advance_application_amount_check",
       sql`${table.amount} > 0`
@@ -1861,6 +1870,7 @@ export const treasuryPaymentItems = pgTable(
       precision: 14,
       scale: 4,
     }).notNull(),
+    contractualAmortizationAmount: decimal("contractualAmortizationAmount", { precision: 14, scale: 4 }).default("0").notNull(),
     approvedAmount: decimal("approvedAmount", { precision: 14, scale: 4 }),
     bankPaidAmount: decimal("bankPaidAmount", { precision: 14, scale: 4 }),
     status: treasuryItemStatusEnum("status")
@@ -3189,3 +3199,37 @@ export const supplierDocuments = pgTable(
 
 export type SupplierDocument = typeof supplierDocuments.$inferSelect;
 export type InsertSupplierDocument = typeof supplierDocuments.$inferInsert;
+
+// Contractual snapshots also preserve an explicitly approved zero amortization.
+export const invoiceContractualAmortizations = pgTable("invoiceContractualAmortizations", {
+  invoiceId: integer("invoiceId").primaryKey().references(() => invoices.id, { onDelete: "restrict" }),
+  purchaseOrderId: integer("purchaseOrderId").notNull().references(() => purchaseOrders.id, { onDelete: "restrict" }),
+  invoiceDocumentAdjustmentId: integer("invoiceDocumentAdjustmentId").references(() => invoiceDocumentAdjustments.id, { onDelete: "set null" }),
+  inputMode: varchar("inputMode", { length: 20 }).$type<"percentage" | "amount">().notNull(),
+  inputValue: decimal("inputValue", { precision: 14, scale: 4 }).notNull(),
+  baseKind: varchar("baseKind", { length: 20 }).$type<"subtotal" | "total">().notNull(),
+  baseAmount: decimal("baseAmount", { precision: 14, scale: 4 }).notNull(),
+  proposedAmount: decimal("proposedAmount", { precision: 14, scale: 4 }).notNull(),
+  amount: decimal("amount", { precision: 14, scale: 4 }).notNull(),
+  overrideReason: text("overrideReason"),
+  updatedById: integer("updatedById").references(() => users.id, { onDelete: "restrict" }),
+  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
+}, t => ({
+  orderIdx: index("invoice_contractual_order_idx").on(t.purchaseOrderId),
+  amountCheck: check("invoice_contractual_amount_check", sql`${t.amount} >= 0 and ${t.amount} <= ${t.baseAmount} and ${t.inputValue} >= 0 and ${t.proposedAmount} >= 0`),
+  modeCheck: check("invoice_contractual_mode_check", sql`${t.inputMode} in ('percentage','amount') and ${t.baseKind} in ('subtotal','total') and (${t.inputMode} <> 'percentage' or ${t.inputValue} <= 100)`),
+}));
+
+export const advanceFinancialEvents = pgTable("advanceFinancialEvents", {
+  id: serial("id").primaryKey(),
+  purchaseOrderId: integer("purchaseOrderId").notNull().references(() => purchaseOrders.id, { onDelete: "restrict" }),
+  invoiceId: integer("invoiceId").references(() => invoices.id, { onDelete: "restrict" }),
+  actorId: integer("actorId").references(() => users.id, { onDelete: "restrict" }),
+  actorLabel: varchar("actorLabel", { length: 200 }).notNull(),
+  action: varchar("action", { length: 60 }).notNull(),
+  reason: text("reason").notNull(),
+  before: jsonb("before"),
+  after: jsonb("after"),
+  operationKey: varchar("operationKey", { length: 200 }).unique(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+}, t => ({ orderIdx: index("advance_events_order_idx").on(t.purchaseOrderId, t.id) }));

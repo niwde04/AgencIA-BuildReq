@@ -161,6 +161,11 @@ export const purchaseOrderAdvancesRouter = router({
           .refine(value => hasAtMostDecimalPlaces(value, 2), {
             message: "El importe debe tener como máximo dos decimales.",
           }),
+        applicationMode: z.enum(["direct", "contractual"]).optional(),
+        requestedPercentage: z.number().positive().max(100).optional(),
+        amortizationMode: z.enum(["percentage", "amount"]).optional(),
+        amortizationValue: z.number().positive().max(999_999_999).optional(),
+        amortizationBase: z.enum(["subtotal", "total"]).optional(),
         requestedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         notes: z.string().trim().max(2000).optional(),
       })
@@ -195,6 +200,11 @@ export const purchaseOrderAdvancesRouter = router({
           requestedAmount: input.requestedAmount,
           requestedPaymentDate: parseDate(input.requestedPaymentDate),
           notes: input.notes,
+          applicationMode: input.applicationMode,
+          requestedPercentage: input.requestedPercentage,
+          amortizationMode: input.amortizationMode,
+          amortizationValue: input.amortizationValue,
+          amortizationBase: input.amortizationBase,
         });
       } catch (error) {
         rethrowAdvanceError(error);

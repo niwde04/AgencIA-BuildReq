@@ -1,3 +1,7 @@
+import {
+  contractualAdvancesEnabled,
+  lockAdvanceOrder,
+} from "./contractualAdvances";
 import { randomUUID } from "node:crypto";
 import {
   and,
@@ -13,6 +17,8 @@ import {
 } from "drizzle-orm";
 import {
   invoices,
+  invoiceContractualAmortizations,
+  advanceFinancialEvents,
   projects,
   purchaseOrderAdvanceApplications,
   purchaseOrderAdvances,
@@ -73,7 +79,10 @@ export type PurchaseOrderAdvanceMoneySummary = {
   accountedAmount: number;
   reservedAmount: number;
   bankPaidPendingAmount: number;
+  /** Total consumed by both treatments. */
   appliedAmount: number;
+  directAppliedAmount: number;
+  contractualAmortizationAmount: number;
   availableToPayAmount: number;
   unappliedAmount: number;
   status:
@@ -93,7 +102,10 @@ export type PurchaseOrderAdvancesSummary = {
   accountedAmount: number;
   reservedAmount: number;
   bankPaidPendingAmount: number;
+  /** Total consumed by both treatments. */
   appliedAmount: number;
+  directAppliedAmount: number;
+  contractualAmortizationAmount: number;
   availableToPayAmount: number;
   unappliedAmount: number;
 };
@@ -104,6 +116,7 @@ export function buildPurchaseOrderAdvanceMoneySummary(input: {
   reservedAmount?: string | number | null;
   bankPaidPendingAmount?: string | number | null;
   appliedAmount?: string | number | null;
+  applicationMode?: "direct" | "contractual";
   cancelled?: boolean;
 }): PurchaseOrderAdvanceMoneySummary {
   const requestedAmount = money(input.requestedAmount);
@@ -134,6 +147,10 @@ export function buildPurchaseOrderAdvanceMoneySummary(input: {
     reservedAmount,
     bankPaidPendingAmount,
     appliedAmount,
+    directAppliedAmount:
+      input.applicationMode === "contractual" ? 0 : appliedAmount,
+    contractualAmortizationAmount:
+      input.applicationMode === "contractual" ? appliedAmount : 0,
     availableToPayAmount,
     unappliedAmount,
     status,
@@ -151,6 +168,11 @@ export function buildPurchaseOrderAdvancesSummary(
       bankPaidPendingAmount:
         result.bankPaidPendingAmount + summary.bankPaidPendingAmount,
       appliedAmount: result.appliedAmount + summary.appliedAmount,
+      directAppliedAmount:
+        result.directAppliedAmount + summary.directAppliedAmount,
+      contractualAmortizationAmount:
+        result.contractualAmortizationAmount +
+        summary.contractualAmortizationAmount,
       availableToPayAmount:
         result.availableToPayAmount + summary.availableToPayAmount,
       unappliedAmount: result.unappliedAmount + summary.unappliedAmount,
@@ -161,6 +183,8 @@ export function buildPurchaseOrderAdvancesSummary(
       reservedAmount: 0,
       bankPaidPendingAmount: 0,
       appliedAmount: 0,
+      directAppliedAmount: 0,
+      contractualAmortizationAmount: 0,
       availableToPayAmount: 0,
       unappliedAmount: 0,
     }
@@ -173,6 +197,8 @@ export function buildPurchaseOrderAdvancesSummary(
     reservedAmount: money(totals.reservedAmount),
     bankPaidPendingAmount: money(totals.bankPaidPendingAmount),
     appliedAmount: money(totals.appliedAmount),
+    directAppliedAmount: money(totals.directAppliedAmount),
+    contractualAmortizationAmount: money(totals.contractualAmortizationAmount),
     availableToPayAmount: money(totals.availableToPayAmount),
     unappliedAmount: money(totals.unappliedAmount),
   };
@@ -251,6 +277,7 @@ async function getAdvanceFinancialMap(
         reservedAmount,
         bankPaidPendingAmount,
         appliedAmount,
+        applicationMode: advance.applicationMode,
         cancelled: Boolean(advance.cancelledAt),
       })
     );
@@ -301,7 +328,12 @@ export async function getInvoiceAppliedAdvanceMap(
       amount: purchaseOrderAdvanceApplications.amount,
     })
     .from(purchaseOrderAdvanceApplications)
-    .where(inArray(purchaseOrderAdvanceApplications.invoiceId, uniqueIds));
+    .where(
+      and(
+        inArray(purchaseOrderAdvanceApplications.invoiceId, uniqueIds),
+        eq(purchaseOrderAdvanceApplications.applicationMode, "direct")
+      )
+    );
   for (const row of rows) {
     result.set(
       row.invoiceId,
@@ -531,6 +563,11 @@ export async function listEligiblePurchaseOrdersForAdvance(filters?: {
         ...row,
         total,
         requestedAdvanceAmount,
+        existingRule:
+          advances.find(
+            (a: any) => a.purchaseOrderId === row.purchaseOrder.id
+          ) ?? null,
+        contractualEnabled: contractualAdvancesEnabled(),
         availableAdvanceRequestAmount:
           calculatePurchaseOrderAdvanceAvailableAmount(
             total,
@@ -547,6 +584,11 @@ export async function createPurchaseOrderAdvance(input: {
   requestedAmount: number;
   requestedPaymentDate: Date;
   notes?: string | null;
+  applicationMode?: "direct" | "contractual";
+  requestedPercentage?: number;
+  amortizationMode?: "percentage" | "amount";
+  amortizationValue?: number;
+  amortizationBase?: "subtotal" | "total";
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -555,6 +597,15 @@ export async function createPurchaseOrderAdvance(input: {
       "El importe del anticipo debe tener como máximo dos decimales."
     );
   }
+  if (
+    (input.requestedPercentage !== undefined &&
+      !hasAtMostDecimalPlaces(input.requestedPercentage, 2)) ||
+    (input.amortizationValue !== undefined &&
+      !hasAtMostDecimalPlaces(input.amortizationValue, 2))
+  )
+    throw new PurchaseOrderAdvanceRuleError(
+      "Los porcentajes e importes contractuales aceptan como máximo dos decimales."
+    );
   const requestedAmount = money(input.requestedAmount);
   if (requestedAmount <= 0) {
     throw new PurchaseOrderAdvanceRuleError(
@@ -618,6 +669,58 @@ export async function createPurchaseOrderAdvance(input: {
       .from(purchaseOrderAdvances)
       .where(eq(purchaseOrderAdvances.purchaseOrderId, purchaseOrder.id))
       .for("update");
+    const active = existingAdvances.filter((row: any) => !row.cancelledAt);
+    const first = active[0];
+    const applicationMode =
+      input.applicationMode ?? first?.applicationMode ?? "direct";
+    const amortizationMode =
+      applicationMode === "contractual"
+        ? (input.amortizationMode ?? first?.amortizationMode)
+        : null;
+    const amortizationValue =
+      applicationMode === "contractual"
+        ? (input.amortizationValue ?? Number(first?.amortizationValue))
+        : null;
+    const amortizationBase =
+      applicationMode === "contractual"
+        ? (input.amortizationBase ?? first?.amortizationBase ?? "subtotal")
+        : null;
+    if (applicationMode === "contractual" && !contractualAdvancesEnabled())
+      throw new PurchaseOrderAdvanceRuleError(
+        "Los nuevos anticipos contractuales están temporalmente deshabilitados."
+      );
+    if (
+      applicationMode === "contractual" &&
+      (!amortizationMode ||
+        !Number.isFinite(amortizationValue) ||
+        Number(amortizationValue) <= 0 ||
+        (amortizationMode === "percentage" && Number(amortizationValue) > 100))
+    )
+      throw new PurchaseOrderAdvanceRuleError(
+        "Defina una regla de amortización válida."
+      );
+    if (
+      active.some(
+        (row: any) =>
+          row.applicationMode !== applicationMode ||
+          row.amortizationMode !== amortizationMode ||
+          Number(row.amortizationValue) !== Number(amortizationValue) ||
+          row.amortizationBase !== amortizationBase
+      )
+    )
+      throw new PurchaseOrderAdvanceRuleError(
+        "La solicitud debe heredar el tratamiento y la regla de los anticipos activos de esta orden."
+      );
+    if (
+      input.requestedPercentage !== undefined &&
+      (input.requestedPercentage <= 0 ||
+        input.requestedPercentage > 100 ||
+        decimalToMinorUnits((total * input.requestedPercentage) / 100) !==
+          decimalToMinorUnits(requestedAmount))
+    )
+      throw new PurchaseOrderAdvanceRuleError(
+        "El importe no coincide con el porcentaje del total oficial de la orden."
+      );
     const alreadyRequested = money(
       existingAdvances
         .filter((advance: any) => !advance.cancelledAt)
@@ -645,6 +748,15 @@ export async function createPurchaseOrderAdvance(input: {
         supplierId: purchaseOrder.supplierId,
         currency: purchaseOrder.currency,
         requestedAmount: moneyString(requestedAmount),
+        applicationMode,
+        amortizationMode,
+        amortizationValue:
+          amortizationValue == null ? null : String(amortizationValue),
+        amortizationBase,
+        requestedPercentage:
+          input.requestedPercentage == null
+            ? null
+            : String(input.requestedPercentage),
         requestedPaymentDate: input.requestedPaymentDate,
         notes: input.notes?.trim() || null,
         createdById: input.actor.id,
@@ -658,6 +770,14 @@ export async function createPurchaseOrderAdvance(input: {
       .set({ advanceNumber, updatedAt: new Date() })
       .where(eq(purchaseOrderAdvances.id, created.id))
       .returning();
+    await tx.insert(advanceFinancialEvents).values({
+      purchaseOrderId: purchaseOrder.id,
+      actorId: input.actor.id,
+      actorLabel: `user:${input.actor.id}`,
+      action: "create_advance",
+      reason: "Solicitud de anticipo",
+      after: updated,
+    });
     return {
       ...updated,
       purchaseOrderTotal: total,
@@ -808,6 +928,11 @@ export async function cancelPurchaseOrderAdvance(input: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   return db.transaction(async tx => {
+    const [source] = await tx
+      .select({ purchaseOrderId: purchaseOrderAdvances.purchaseOrderId })
+      .from(purchaseOrderAdvances)
+      .where(eq(purchaseOrderAdvances.id, input.advanceId));
+    if (source) await lockAdvanceOrder(tx, source.purchaseOrderId);
     const [advance] = await tx
       .select()
       .from(purchaseOrderAdvances)
@@ -818,6 +943,22 @@ export async function cancelPurchaseOrderAdvance(input: {
       throw new PurchaseOrderAdvanceRuleError("Anticipo no encontrado.");
     }
     if (advance.cancelledAt) return advance;
+    if (advance.applicationMode === "contractual") {
+      const [commitment] = await tx
+        .select({ invoiceId: invoiceContractualAmortizations.invoiceId })
+        .from(invoiceContractualAmortizations)
+        .where(
+          eq(
+            invoiceContractualAmortizations.purchaseOrderId,
+            advance.purchaseOrderId
+          )
+        )
+        .limit(1);
+      if (commitment)
+        throw new PurchaseOrderAdvanceRuleError(
+          "La orden tiene amortizaciones registradas; concilie sus facturas antes de anular el anticipo."
+        );
+    }
     const financials = await getAdvanceFinancialMap(tx, [advance.id]);
     const summary = financials.get(advance.id)!;
     if (
@@ -896,6 +1037,7 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
   purchaseOrderId: number;
   actorId: number;
 }) {
+  await lockAdvanceOrder(input.executor, input.purchaseOrderId);
   const advances = await input.executor
     .select()
     .from(purchaseOrderAdvances)
@@ -976,6 +1118,13 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
         )
       ),
   ]);
+  const contractualRows = await input.executor
+    .select()
+    .from(invoiceContractualAmortizations)
+    .where(inArray(invoiceContractualAmortizations.invoiceId, invoiceIds));
+  const contractualByInvoice = new Map<number, any>(
+    contractualRows.map((row: any) => [row.invoiceId, row])
+  );
   const invoiceApplied = new Map<number, number>();
   const invoiceSettled = new Map<number, number>();
   for (const row of applicationRows) {
@@ -1013,11 +1162,30 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
     );
     if (advanceAvailable <= 0) continue;
     for (const invoice of invoiceRows) {
-      // Round the invoice payable once to cents, just like Treasury settlement.
+      if (
+        advance.supplierId !== invoice.supplierId ||
+        advance.projectId !== invoice.projectId ||
+        advance.currency !== invoice.currency
+      )
+        throw new PurchaseOrderAdvanceRuleError(
+          "El anticipo y la factura no corresponden a la misma operación."
+        );
+      const contractual = advance.applicationMode === "contractual";
+      const snapshot = contractualByInvoice.get(invoice.id);
+      if (contractual && (!snapshot || Number(snapshot.amount) <= 0)) continue;
+      if (!contractual && snapshot)
+        throw new PurchaseOrderAdvanceRuleError(
+          "La orden tiene tratamientos incompatibles; requiere conciliación."
+        );
+      // Contractual consumption is already deducted inside invoice.netPayable.
       const remainingCents =
-        decimalToMinorUnits(invoice.netPayable) -
+        decimalToMinorUnits(
+          contractual ? snapshot.amount : invoice.netPayable
+        ) -
         decimalToMinorUnits(invoiceApplied.get(invoice.id) ?? 0) -
-        decimalToMinorUnits(invoiceSettled.get(invoice.id) ?? 0);
+        (contractual
+          ? 0
+          : decimalToMinorUnits(invoiceSettled.get(invoice.id) ?? 0));
       const invoiceRemaining = Math.max(0, remainingCents / 100);
       if (invoiceRemaining <= 0) continue;
       const amount = money(Math.min(advanceAvailable, invoiceRemaining));
@@ -1027,6 +1195,14 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
           row.purchaseOrderAdvanceId === advance.id &&
           row.invoiceId === invoice.id
       );
+      if (
+        existing &&
+        (existing.applicationMode ?? "direct") !==
+          (contractual ? "contractual" : "direct")
+      )
+        throw new PurchaseOrderAdvanceRuleError(
+          "La aplicación existente requiere conciliación."
+        );
       if (existing) {
         await input.executor
           .update(purchaseOrderAdvanceApplications)
@@ -1040,6 +1216,10 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
             purchaseOrderAdvanceId: advance.id,
             invoiceId: invoice.id,
             amount: moneyString(amount),
+            applicationMode: contractual ? "contractual" : "direct",
+            invoiceDocumentAdjustmentId: contractual
+              ? snapshot.invoiceDocumentAdjustmentId
+              : null,
             appliedById: input.actorId,
             appliedAt: new Date(),
           })

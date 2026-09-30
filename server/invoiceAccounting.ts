@@ -1,8 +1,10 @@
+import { getInvoiceContractualAmortizationMap } from "./contractualAdvances";
 import { inArray } from "drizzle-orm";
 import {
   invoiceItems,
   invoiceRetentions,
   invoiceOtherCharges,
+  invoiceDocumentAdjustments,
 } from "../drizzle/schema";
 import { getDb } from "./db";
 import { listInvoicesPage, type InvoicePageFilters } from "./paginatedLists";
@@ -58,6 +60,20 @@ export async function listInvoiceAccountingQueue(filters: InvoicePageFilters) {
         new Map<number, number>(),
         new Map<number, { amount: number }[]>(),
       ];
+  const amortizations = await getInvoiceContractualAmortizationMap(
+    database,
+    ids
+  );
+  const qualities = ids.length
+    ? await database
+        .select({
+          invoiceId: invoiceDocumentAdjustments.invoiceId,
+          type: invoiceDocumentAdjustments.adjustmentType,
+          amount: invoiceDocumentAdjustments.amount,
+        })
+        .from(invoiceDocumentAdjustments)
+        .where(inArray(invoiceDocumentAdjustments.invoiceId, ids))
+    : [];
   return {
     ...page,
     items: page.items.map(({ invoice, project, supplier }) => {
@@ -93,6 +109,12 @@ export async function listInvoiceAccountingQueue(filters: InvoicePageFilters) {
         discount: Number(invoice.documentDiscountTotal),
         net: Number(invoice.netPayable),
         appliedAdvance,
+        contractualAmortization: amortizations.get(invoice.id) ?? 0,
+        qualityRetention: Number(
+          qualities.find(
+            q => q.invoiceId === invoice.id && q.type === "quality_retention"
+          )?.amount ?? 0
+        ),
         balance: invoiceAccountingBalance(
           Number(invoice.netPayable),
           appliedAdvance,

@@ -146,9 +146,17 @@ export function buildInvoiceAccountingWorksheets(
     amount("Retención 15%", row => row.retentions.fifteen),
     amount("Retención 25%", row => row.retentions.twentyFive),
     amount("Otras Retenciones", row => row.retentions.other),
+    amount(
+      "Calidad (incluida en otras retenciones)",
+      row => row.qualityRetention ?? 0
+    ),
+    amount(
+      "Amortización (incluida en otras retenciones)",
+      row => row.contractualAmortization ?? 0
+    ),
     amount("Descuento por documento", row => row.discount),
     amount("Neto a Pagar", row => row.net),
-    amount("Anticipo Aplicado", row => row.appliedAdvance),
+    amount("Aplicación directa de anticipo", row => row.appliedAdvance),
     amount("Saldo Pendiente", row => row.balance),
     {
       header: "Estado de pago",

@@ -10,3 +10,8 @@ dev.stderr.log
 docs
 todo.md
 *.md
+
+# Local evidence, database fixtures and operator tools must not enter images.
+output/
+.codex-dev/
+tools/

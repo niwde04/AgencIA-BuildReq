@@ -1,3 +1,4 @@
+import { assertContractualInvoiceReady, getContractualInvoiceContext, getInvoiceAdvanceReconciliationMap, lockInvoiceAdvanceOrder, prepareContractualAmortization, saveContractualSnapshot } from "./contractualAdvances";
 import { TRPCError } from "@trpc/server";
 import { createHash, randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -14868,7 +14869,7 @@ export async function listDmcReportSourceInvoices(filters?: {
         amount: purchaseOrderAdvanceApplications.amount,
       })
       .from(purchaseOrderAdvanceApplications)
-      .where(inArray(purchaseOrderAdvanceApplications.invoiceId, invoiceIds)),
+      .where(and(inArray(purchaseOrderAdvanceApplications.invoiceId, invoiceIds), eq(purchaseOrderAdvanceApplications.applicationMode, "direct"))),
   ]);
 
   const itemsByInvoiceId = new Map<number, typeof itemRows>();
@@ -15548,6 +15549,8 @@ export async function getInvoiceById(id: number) {
   return {
     ...rows[0],
     items: itemsWithFixedAssetArticles,
+    contractualAmortization: await getContractualInvoiceContext(db, id),
+    advanceReconciliationReason: (await getInvoiceAdvanceReconciliationMap(db, [id])).get(id) ?? null,
     retentions,
     otherCharges,
     documentAdjustments,
@@ -15558,7 +15561,7 @@ export async function getInvoiceById(id: number) {
       isTreasuryItemBlockingInvoiceReview
     ),
     appliedAdvanceAmount: toMoneyString4(
-      advanceApplications.reduce(
+      advanceApplications.filter(application => application.applicationMode === "direct").reduce(
         (sum, application) => sum + parseDecimal(application.amount),
         0
       )
@@ -15852,6 +15855,8 @@ export async function reviewInvoice(id: number, reviewedById: number) {
 
   const now = new Date();
   return db.transaction(async tx => {
+    await lockInvoiceAdvanceOrder(tx, id);
+    await assertContractualInvoiceReady(tx, id);
     await tx.execute(buildDraftInvoiceItemTaxWithholdingSync(id));
 
     const [updated] = await tx
@@ -16008,6 +16013,8 @@ export async function accountInvoice(params: {
   if (!db) throw new Error("DB not available");
 
   return db.transaction(async tx => {
+    await lockInvoiceAdvanceOrder(tx, params.id);
+    await assertContractualInvoiceReady(tx, params.id);
     const now = new Date();
     const [currentInvoice] = await tx
       .select({ purchaseOrderId: invoices.purchaseOrderId })
@@ -16818,12 +16825,14 @@ export async function replaceInvoiceRetentions(
 
 export async function replaceInvoiceDocumentAdjustments(
   invoiceId: number,
-  input: InvoiceDocumentAdjustmentInput
+  input: InvoiceDocumentAdjustmentInput,
+  actorId?: number
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
   return db.transaction(async tx => {
+    await lockInvoiceAdvanceOrder(tx, invoiceId);
     await tx.execute(
       sql`select ${invoices.id} from ${invoices} where ${invoices.id} = ${invoiceId} for update`
     );
@@ -16840,6 +16849,7 @@ export async function replaceInvoiceDocumentAdjustments(
       );
     }
 
+    const contractual = await prepareContractualAmortization(tx, invoiceId, input);
     const percentageInputs = [
       input.qualityRetentionPercent,
       input.advanceAmortizationPercent,
@@ -16857,11 +16867,11 @@ export async function replaceInvoiceDocumentAdjustments(
 
     const subtotal = parseDecimal(invoice.subtotal);
     const amountInputs = [
-      input.qualityRetentionAmount,
-      input.advanceAmortizationAmount,
-      input.promptPaymentAmount,
+      { value: input.qualityRetentionAmount, base: subtotal },
+      { value: input.advanceAmortizationAmount, base: contractual?.context.baseAmount ?? subtotal },
+      { value: input.promptPaymentAmount, base: subtotal },
     ];
-    for (const rawValue of amountInputs) {
+    for (const { value: rawValue, base: amountBase } of amountInputs) {
       if (
         rawValue === undefined ||
         rawValue === null ||
@@ -16876,7 +16886,7 @@ export async function replaceInvoiceDocumentAdjustments(
       if (Math.abs(value * 10000 - Math.round(value * 10000)) > 0.000001) {
         throw new Error("Los montos aceptan como máximo cuatro decimales");
       }
-      if (value - subtotal > 0.000001) {
+      if (value - amountBase > 0.000001) {
         throw new Error("El monto no puede exceder el subtotal de la factura");
       }
     }
@@ -16893,7 +16903,8 @@ export async function replaceInvoiceDocumentAdjustments(
     const calculated = calculateInvoiceDocumentAdjustments({
       subtotal: invoice.subtotal,
       baseIsvAmount,
-      input,
+      input: contractual ? { ...input, advanceAmortizationAmount: contractual.snapshot.amount, advanceAmortizationPercent: undefined } : input,
+      advanceAmortizationBaseAmount: contractual?.context.baseAmount,
     });
     const netPayable = calculateInvoiceNetPayable({
       total: invoice.total,
@@ -16927,6 +16938,7 @@ export async function replaceInvoiceDocumentAdjustments(
       values.length > 0
         ? await tx.insert(invoiceDocumentAdjustments).values(values).returning()
         : [];
+    if (contractual) await saveContractualSnapshot(tx, contractual, documentAdjustments.find(a => a.adjustmentType === "advance_amortization")?.id ?? null, actorId);
     const [updatedInvoice] = await tx
       .update(invoices)
       .set({

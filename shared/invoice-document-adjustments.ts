@@ -1,3 +1,4 @@
+import { roundDecimalAmount } from "./money";
 import { parsePurchaseOrderTaxBreakdown } from "./purchase-orders";
 
 export const INVOICE_DOCUMENT_ADJUSTMENT_TYPES = [
@@ -11,6 +12,7 @@ export type InvoiceDocumentAdjustmentType =
   (typeof INVOICE_DOCUMENT_ADJUSTMENT_TYPES)[number];
 
 export type InvoiceDocumentAdjustmentInput = {
+  advanceAmortizationOverrideReason?: string | null;
   qualityRetentionPercent?: string | number | null;
   qualityRetentionAmount?: string | number | null;
   advanceAmortizationPercent?: string | number | null;
@@ -91,6 +93,7 @@ export function calculateInvoiceDocumentAdjustments(params: {
   subtotal: string | number | null | undefined;
   baseIsvAmount: string | number | null | undefined;
   input: InvoiceDocumentAdjustmentInput;
+  advanceAmortizationBaseAmount?: number;
 }) {
   const subtotal = roundInvoiceAdjustmentMoney(
     Math.max(0, numberValue(params.subtotal))
@@ -105,16 +108,25 @@ export function calculateInvoiceDocumentAdjustments(params: {
     percentageValue: string | number | null | undefined,
     amountValue: string | number | null | undefined
   ) => {
+    const roundEditable = (value: number) =>
+      adjustmentType === "advance_amortization" &&
+      params.advanceAmortizationBaseAmount !== undefined
+        ? roundDecimalAmount(value, 2)
+        : roundInvoiceAdjustmentMoney(value);
+    const editableBase =
+      adjustmentType === "advance_amortization"
+        ? (params.advanceAmortizationBaseAmount ?? subtotal)
+        : subtotal;
     if (hasInputValue(amountValue)) {
-      const amount = roundInvoiceAdjustmentMoney(numberValue(amountValue));
-      if (amount <= 0 || subtotal <= 0) return;
+      const amount = roundEditable(numberValue(amountValue));
+      if (amount <= 0 || editableBase <= 0) return;
       calculations.push({
         adjustmentType,
         inputMode: "amount",
         percentage: roundInvoiceAdjustmentDerivedPercent(
-          (amount * 100) / subtotal
+          (amount * 100) / editableBase
         ),
-        baseAmount: subtotal,
+        baseAmount: editableBase,
         amount,
       });
       return;
@@ -128,8 +140,8 @@ export function calculateInvoiceDocumentAdjustments(params: {
       adjustmentType,
       inputMode: "percentage",
       percentage,
-      baseAmount: subtotal,
-      amount: roundInvoiceAdjustmentMoney((subtotal * percentage) / 100),
+      baseAmount: editableBase,
+      amount: roundEditable((editableBase * percentage) / 100),
     });
   };
 

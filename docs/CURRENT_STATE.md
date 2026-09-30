@@ -1,6 +1,8 @@
 # Estado actual
 
-Actualizado: 2026-09-29 (Honduras).
+Actualizado: 2026-09-30 (Honduras).
+
+Anticipos contractuales (30/09/2026): implementación general y migración aditiva preparadas; 147 pruebas focalizadas y 62 PostgreSQL aprobadas, tipos/build y revisión visual local. SSH tiene lectores compatibles y migración instalada, HTTP 200, nuevas capturas contractuales deshabilitadas. GEO NO regularizado: SSH tiene únicamente TES-000140 y TES-000392; falta TES-000501/L130,490.39. Cloud sí tiene los tres TES; el usuario confirmó que el dominio público está en Cloud Dokploy y se encargará de su despliegue. Cloud permanece sin cambios. Se entregan seis casos adicionales Cloud para revisión individual. Entrega en commit local, sin push; los archivos ya desplegados en SSH se identifican mediante manifiesto sobre b134474. Detalle y recuperación: [anticipos-contractuales.md](anticipos-contractuales.md); [conciliación por entorno](anticipos-contractuales-conciliacion.md). Este estado reemplaza las referencias antiguas de versión SSH para esta entrega.
 
 Pagos efectuados: el Excel de Tesorería agrega Nivel 1–4, con código y descripción, después de COD DE JOB. Resuelve la matriz activa por código financiero y utiliza codN2 para códigos repetidos; conserva job, renglones, importes y permisos. Validación: 32 pruebas focalizadas, 28 PostgreSQL, tipos y build. Consultas de solo lectura confirman cobertura de SSH y Cloud; un codN2 desactualizado de Cloud se resuelve por su código financiero único. Preparado en demo, sin push ni despliegue. Detalles: [tesoreria-pagos-niveles.md](tesoreria-pagos-niveles.md).
 

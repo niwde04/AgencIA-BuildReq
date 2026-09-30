@@ -854,7 +854,7 @@ function BatchFormDialog({
                   <TableHead className="text-right">Descuentos</TableHead>
                   <TableHead className="text-right">Neto a pagar</TableHead>
                   <TableHead className="text-right">
-                    Anticipo aplicado
+                    Aplicación directa de anticipo
                   </TableHead>
                   <TableHead className="text-right">
                     Abonos anteriores
@@ -928,6 +928,20 @@ function BatchFormDialog({
                             row.invoice.otherRetentionTotal,
                             currency
                           )}
+                          <div className="text-xs text-muted-foreground">
+                            Calidad:{" "}
+                            {formatMoney(
+                              row.money.qualityRetentionAmount ?? 0,
+                              currency
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Amortización:{" "}
+                            {formatMoney(
+                              row.money.contractualAmortizationAmount ?? 0,
+                              currency
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {formatMoney(
@@ -2523,7 +2537,7 @@ function BatchDetailDialog({
                           : "Neto a pagar"}
                     </TableHead>
                     <TableHead className="text-right">
-                      Anticipo aplicado
+                      Aplicación directa de anticipo
                     </TableHead>
                     <TableHead className="text-right">
                       {isAdvanceBatch || isQualityReleaseBatch

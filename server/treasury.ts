@@ -1,3 +1,4 @@
+import { getInvoiceAdvanceReconciliationMap, getInvoiceContractualAmortizationMap, lockAdvanceOrder } from "./contractualAdvances";
 import { loadTreasuryPaymentCostMatrixEntries } from "./treasuryPaymentCostLevels";
 import { invoiceCommittedMoneySql } from "./invoiceMoney";
 import { randomUUID } from "node:crypto";
@@ -712,6 +713,9 @@ async function getInvoiceFinancialMap(
     uniqueIds
   );
 
+  const amortizations = await getInvoiceContractualAmortizationMap(executor, uniqueIds);
+  const qualities = await executor.select({ invoiceId: invoiceDocumentAdjustments.invoiceId, amount: invoiceDocumentAdjustments.amount }).from(invoiceDocumentAdjustments).where(and(inArray(invoiceDocumentAdjustments.invoiceId, uniqueIds), eq(invoiceDocumentAdjustments.adjustmentType, "quality_retention")));
+  const qualityByInvoice = new Map<number, number>(qualities.map((q:any) => [q.invoiceId,Number(q.amount)]));
   for (const invoice of invoiceRows) {
     let paidAmount = 0;
     let reservedAmount = 0;
@@ -740,6 +744,8 @@ async function getInvoiceFinancialMap(
         paidAmount,
         reservedAmount,
         appliedAdvanceAmount: appliedAdvanceByInvoice.get(invoice.id) ?? 0,
+        contractualAmortizationAmount: amortizations.get(invoice.id) ?? 0,
+        qualityRetentionAmount: qualityByInvoice.get(invoice.id) ?? 0,
       })
     );
   }
@@ -945,6 +951,8 @@ async function getInvoiceSnapshots(
     throw new TreasuryRuleError("Seleccione al menos una factura.");
   }
 
+  const orderRows = await executor.select({ purchaseOrderId: invoices.purchaseOrderId }).from(invoices).where(inArray(invoices.id, uniqueIds));
+  for (const orderId of Array.from(new Set<number>(orderRows.map((r: any) => r.purchaseOrderId))).sort((a,b) => a-b)) await lockAdvanceOrder(executor, orderId);
   const rows = await executor
     .select({
       invoice: invoices,
@@ -968,7 +976,9 @@ async function getInvoiceSnapshots(
     uniqueIds,
     excludeBatchId
   );
+  const reconciliation = await getInvoiceAdvanceReconciliationMap(executor, uniqueIds);
   return rows.map((row: any) => ({
+    reconciliationReason: reconciliation.get(row.invoice.id),
     ...row,
     money: financials.get(row.invoice.id)!,
   }));
@@ -1252,11 +1262,12 @@ export async function listEligibleTreasuryInvoices(filters?: {
     db,
     rows.map(row => row.purchaseOrder.id)
   );
+  const reconciliation = await getInvoiceAdvanceReconciliationMap(db, rows.map(row => row.invoice.id));
   return rows
     .map(row => ({ ...row, money: financials.get(row.invoice.id)! }))
     .filter(
       row =>
-        !blockedPurchaseOrders.has(row.purchaseOrder.id) &&
+        !blockedPurchaseOrders.has(row.purchaseOrder.id) && !reconciliation.has(row.invoice.id) &&
         row.money.availableAmount > 0 &&
         row.money.reservedAmount <= 0
     );
@@ -2165,6 +2176,8 @@ async function getTreasuryDraftSourceSnapshots(
       targetAmount: row.invoice.netPayable,
       previousPaidAmount: row.money.paidAmount,
       appliedAdvanceAmount: row.money.appliedAdvanceAmount,
+      contractualAmortizationAmount: row.money.contractualAmortizationAmount ?? 0,
+      reconciliationReason: row.reconciliationReason,
       availableAmount: row.money.availableAmount,
       isEligible: row.invoice.status === "registrada",
       purchaseOrderId: row.invoice.purchaseOrderId,
@@ -2180,6 +2193,7 @@ function validateTreasuryDraftSnapshots(input: {
   currency: PurchaseCurrency;
 }) {
   for (const row of input.snapshots) {
+    if (row.reconciliationReason) throw new TreasuryRuleError(`${row.documentNumber}: ${row.reconciliationReason}`);
     const sourceLabel =
       input.paymentKind === "purchase_order_advance"
         ? "Los anticipos"
@@ -2247,6 +2261,7 @@ function buildTreasuryItemValues(
     invoiceNetPayable: row.targetAmount,
     previousPaidAmount: toMoneyString(row.previousPaidAmount),
     appliedAdvanceAmount: toMoneyString(row.appliedAdvanceAmount),
+    contractualAmortizationAmount: toMoneyString(row.contractualAmortizationAmount ?? 0),
     requestedAmount: toMoneyString(requestedAmount),
   };
 }
@@ -2852,6 +2867,7 @@ export async function consolidateTreasuryBatchesForApproval(input: {
           invoiceNetPayable: item.invoiceNetPayable,
           previousPaidAmount: item.previousPaidAmount,
           appliedAdvanceAmount: item.appliedAdvanceAmount,
+          contractualAmortizationAmount: item.contractualAmortizationAmount,
           requestedAmount: item.requestedAmount,
           approvedAmount: routing.approvalBypassed
             ? item.requestedAmount
@@ -3929,6 +3945,11 @@ export async function accountTreasuryItems(input: {
       throw new TreasuryRuleError(
         "Solo se pueden contabilizar líneas pagadas por el banco."
       );
+    }
+    const advanceIds = items.filter((i: any) => i.sourceType === "purchase_order_advance").map((i: any) => i.purchaseOrderAdvanceId).filter(Boolean);
+    if (advanceIds.length) {
+      const orders = await tx.select({ purchaseOrderId: purchaseOrderAdvances.purchaseOrderId }).from(purchaseOrderAdvances).where(inArray(purchaseOrderAdvances.id, advanceIds));
+      for (const orderId of Array.from(new Set(orders.map(r => r.purchaseOrderId))).sort((a,b) => a-b)) await lockAdvanceOrder(tx, orderId);
     }
     const lockedInvoiceIds=await lockTreasuryInvoiceBalances(tx,items);
     const now = new Date();

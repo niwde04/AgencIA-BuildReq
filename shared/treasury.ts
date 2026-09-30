@@ -166,6 +166,8 @@ export type TreasuryMoneySummary = {
   currency: PurchaseCurrency;
   invoiceNetPayable: number;
   appliedAdvanceAmount: number;
+  contractualAmortizationAmount?: number;
+  qualityRetentionAmount?: number;
   payableAfterAdvance: number;
   paidAmount: number;
   reservedAmount: number;
@@ -249,6 +251,8 @@ export function buildTreasuryMoneySummary(input: {
   currency: PurchaseCurrency;
   invoiceNetPayable: string | number;
   appliedAdvanceAmount?: string | number | null;
+  contractualAmortizationAmount?: string | number | null;
+  qualityRetentionAmount?: string | number | null;
   paidAmount?: string | number | null;
   reservedAmount?: string | number | null;
 }): TreasuryMoneySummary {
@@ -263,6 +267,12 @@ export function buildTreasuryMoneySummary(input: {
   const reservedAmount = roundTreasuryMoney(Number(input.reservedAmount ?? 0));
   return {
     currency: input.currency,
+    qualityRetentionAmount: roundTreasuryMoney(
+      Number(input.qualityRetentionAmount ?? 0)
+    ),
+    contractualAmortizationAmount: roundTreasuryMoney(
+      Number(input.contractualAmortizationAmount ?? 0)
+    ),
     invoiceNetPayable,
     appliedAdvanceAmount,
     payableAfterAdvance,

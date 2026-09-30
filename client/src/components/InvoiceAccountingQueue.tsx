@@ -438,9 +438,11 @@ export function InvoiceAccountingQueue({
                               "Retención 15%",
                               "Retención 25%",
                               "Otras Retenciones",
+                              "Calidad (incluida)",
+                              "Amortización (incluida)",
                               "Descuento por documento",
                               "Neto a Pagar",
-                              "Anticipo Aplicado",
+                              "Aplicación directa",
                               "Saldo Pendiente",
                               "Estatus",
                               "Acciones",
@@ -518,6 +520,8 @@ export function InvoiceAccountingQueue({
                                     row.retentions.fifteen,
                                     row.retentions.twentyFive,
                                     row.retentions.other,
+                                    row.qualityRetention,
+                                    row.contractualAmortization,
                                     row.discount,
                                     row.net,
                                     row.appliedAdvance,
@@ -596,7 +600,7 @@ export function InvoiceAccountingQueue({
                           ) : (
                             <TableRow>
                               <TableCell
-                                colSpan={22}
+                                colSpan={24}
                                 className="h-24 text-left text-muted-foreground"
                               >
                                 No hay facturas con estos filtros.

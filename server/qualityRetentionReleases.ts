@@ -1,3 +1,5 @@
+import { getPurchaseOrderAdvanceBlockingSet } from "./purchaseOrderAdvances";
+import { queryRows } from "./contractualAdvances";
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   invoiceDocumentAdjustments,
@@ -55,7 +57,11 @@ async function getOrdinaryInvoicePaymentMap(
 
   const [invoiceRows, paymentRows, advanceRows] = await Promise.all([
     executor
-      .select({ id: invoices.id, netPayable: invoices.netPayable })
+      .select({
+        id: invoices.id,
+        netPayable: invoices.netPayable,
+        purchaseOrderId: invoices.purchaseOrderId,
+      })
       .from(invoices)
       .where(inArray(invoices.id, ids)),
     executor
@@ -77,9 +83,26 @@ async function getOrdinaryInvoicePaymentMap(
         amount: purchaseOrderAdvanceApplications.amount,
       })
       .from(purchaseOrderAdvanceApplications)
-      .where(inArray(purchaseOrderAdvanceApplications.invoiceId, ids)),
+      .where(
+        and(
+          inArray(purchaseOrderAdvanceApplications.invoiceId, ids),
+          eq(purchaseOrderAdvanceApplications.applicationMode, "direct")
+        )
+      ),
   ]);
 
+  const fundingBlocked = await getPurchaseOrderAdvanceBlockingSet(
+    executor,
+    invoiceRows.map((i: any) => i.purchaseOrderId)
+  );
+  const incomplete = await queryRows<{ invoiceId: number }>(
+    executor,
+    sql`select c."invoiceId" from "invoiceContractualAmortizations" c where c."invoiceId" in (${sql.join(
+      ids.map(id => sql`${id}`),
+      sql`, `
+    )}) and round(c.amount,2) > coalesce((select sum(round(a.amount,2)) from "purchaseOrderAdvanceApplications" a where a."invoiceId"=c."invoiceId" and a."applicationMode"='contractual'),0)`
+  );
+  const incompleteIds = new Set(incomplete.map(row => row.invoiceId));
   for (const invoice of invoiceRows) {
     const paid = paymentRows
       .filter((row: any) => row.invoiceId === invoice.id)
@@ -92,7 +115,10 @@ async function getOrdinaryInvoicePaymentMap(
     result.set(invoice.id, {
       netPayable,
       settledAmount,
-      isPaid: settledAmount + 0.0001 >= netPayable,
+      isPaid:
+        settledAmount + 0.0001 >= netPayable &&
+        !fundingBlocked.has(invoice.purchaseOrderId) &&
+        !incompleteIds.has(invoice.id),
     });
   }
   return result;

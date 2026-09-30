@@ -364,6 +364,8 @@ describe("treasury partial-payment math", () => {
         invoiceNetPayable: "1250.5000",
       })
     ).toEqual({
+      contractualAmortizationAmount: 0,
+      qualityRetentionAmount: 0,
       currency: "HNL",
       invoiceNetPayable: 1250.5,
       appliedAdvanceAmount: 0,

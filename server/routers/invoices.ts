@@ -1512,6 +1512,11 @@ export const invoicesRouter = router({
         id: z.number().int().positive(),
         qualityRetentionPercent: documentAdjustmentPercentageSchema,
         qualityRetentionAmount: documentAdjustmentAmountSchema,
+        advanceAmortizationOverrideReason: z
+          .string()
+          .trim()
+          .max(2000)
+          .optional(),
         advanceAmortizationPercent: documentAdjustmentPercentageSchema,
         advanceAmortizationAmount: documentAdjustmentAmountSchema,
         promptPaymentPercent: documentAdjustmentPercentageSchema,
@@ -1537,21 +1542,27 @@ export const invoicesRouter = router({
       }
 
       try {
-        return await db.replaceInvoiceDocumentAdjustments(input.id, {
-          qualityRetentionPercent: input.qualityRetentionPercent,
-          ...(input.qualityRetentionAmount !== undefined
-            ? { qualityRetentionAmount: input.qualityRetentionAmount }
-            : {}),
-          advanceAmortizationPercent: input.advanceAmortizationPercent,
-          ...(input.advanceAmortizationAmount !== undefined
-            ? { advanceAmortizationAmount: input.advanceAmortizationAmount }
-            : {}),
-          promptPaymentPercent: input.promptPaymentPercent,
-          ...(input.promptPaymentAmount !== undefined
-            ? { promptPaymentAmount: input.promptPaymentAmount }
-            : {}),
-          tcEnabled: input.tcEnabled,
-        });
+        return await db.replaceInvoiceDocumentAdjustments(
+          input.id,
+          {
+            qualityRetentionPercent: input.qualityRetentionPercent,
+            ...(input.qualityRetentionAmount !== undefined
+              ? { qualityRetentionAmount: input.qualityRetentionAmount }
+              : {}),
+            advanceAmortizationOverrideReason:
+              input.advanceAmortizationOverrideReason,
+            advanceAmortizationPercent: input.advanceAmortizationPercent,
+            ...(input.advanceAmortizationAmount !== undefined
+              ? { advanceAmortizationAmount: input.advanceAmortizationAmount }
+              : {}),
+            promptPaymentPercent: input.promptPaymentPercent,
+            ...(input.promptPaymentAmount !== undefined
+              ? { promptPaymentAmount: input.promptPaymentAmount }
+              : {}),
+            tcEnabled: input.tcEnabled,
+          },
+          ctx.user.id
+        );
       } catch (error) {
         throw new TRPCError({
           code: "BAD_REQUEST",
