@@ -1,3 +1,4 @@
+import { canManageCostMatrix } from "@shared/cost-matrix";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -164,6 +165,12 @@ const allMenuItems: MenuItem[] = [
     roles: ["admin", "administracion_central"],
   },
   {
+    icon: FileSpreadsheet,
+    label: "Matriz de costos",
+    path: "/matriz-costos",
+    roles: ["admin", "administracion_central"],
+  },
+  {
     icon: KeyRound,
     label: "Activos fijos pendientes",
     path: "/activos-fijos-pendientes",
@@ -283,10 +290,58 @@ const allMenuItems: MenuItem[] = [
       "admin",
     ],
   },
-  {icon: FileMinus2, label: "Notas de crédito", path: "/notas-credito", roles: ["administracion_central", "administrador_proyecto", "contable", "jefe_bodega_central", "bodeguero_proyecto", "admin"]},
-  {icon: FilePlus2, label: "Notas de débito", path: "/notas-debito", roles: ["administracion_central", "administrador_proyecto", "contable", "jefe_bodega_central", "bodeguero_proyecto", "admin"]},
-  {icon: ListMinus, label: "Conceptos de notas de crédito", path: "/conceptos-notas-credito", roles: ["administracion_central", "administrador_proyecto", "contable", "jefe_bodega_central", "bodeguero_proyecto", "admin"]},
-  {icon: ListPlus, label: "Conceptos de notas de débito", path: "/conceptos-notas-debito", roles: ["administracion_central", "administrador_proyecto", "contable", "jefe_bodega_central", "bodeguero_proyecto", "admin"]},
+  {
+    icon: FileMinus2,
+    label: "Notas de crédito",
+    path: "/notas-credito",
+    roles: [
+      "administracion_central",
+      "administrador_proyecto",
+      "contable",
+      "jefe_bodega_central",
+      "bodeguero_proyecto",
+      "admin",
+    ],
+  },
+  {
+    icon: FilePlus2,
+    label: "Notas de débito",
+    path: "/notas-debito",
+    roles: [
+      "administracion_central",
+      "administrador_proyecto",
+      "contable",
+      "jefe_bodega_central",
+      "bodeguero_proyecto",
+      "admin",
+    ],
+  },
+  {
+    icon: ListMinus,
+    label: "Conceptos de notas de crédito",
+    path: "/conceptos-notas-credito",
+    roles: [
+      "administracion_central",
+      "administrador_proyecto",
+      "contable",
+      "jefe_bodega_central",
+      "bodeguero_proyecto",
+      "admin",
+    ],
+  },
+  {
+    icon: ListPlus,
+    label: "Conceptos de notas de débito",
+    path: "/conceptos-notas-debito",
+    roles: [
+      "administracion_central",
+      "administrador_proyecto",
+      "contable",
+      "jefe_bodega_central",
+      "bodeguero_proyecto",
+      "admin",
+    ],
+  },
   {
     icon: WalletCards,
     label: "Tesorería",
@@ -429,6 +484,7 @@ const MAIN_MENU_SECTIONS = [
       "/impuestos",
       "/retenciones",
       "/grupos-financieros",
+      "/matriz-costos",
       "/activos-fijos-pendientes",
     ],
   },
@@ -577,6 +633,11 @@ function DashboardLayoutContent({
 
   const menuItems = useMemo(() => {
     return allMenuItems.filter(item => {
+      if (item.path === "/matriz-costos")
+        return canManageCostMatrix({
+          role: isAdmin ? "admin" : "user",
+          buildreqRole: userRole,
+        });
       if (userRole === "superintendente") {
         return (
           item.path === "/" ||
@@ -630,7 +691,10 @@ function DashboardLayoutContent({
     if (item.path === "/") return location === "/";
     return location.startsWith(item.path);
   });
+  const isAllowedCostMatrixPath =
+    location === "/matriz-costos" && canManageCostMatrix(user);
   const shouldRedirectContable =
+    !isAllowedCostMatrixPath &&
     userRole === "contable" &&
     location !== "/articulos" &&
     location !== "/activos-fijos-pendientes" &&
@@ -655,7 +719,9 @@ function DashboardLayoutContent({
     location === "/notificaciones" ||
     /^\/solicitudes\/\d+$/.test(location);
   const shouldRedirectSuperintendent =
-    userRole === "superintendente" && !isSuperintendentAllowedPath;
+    !isAllowedCostMatrixPath &&
+    userRole === "superintendente" &&
+    !isSuperintendentAllowedPath;
   const isProcurementApproverAllowedPath =
     location === "/" ||
     location === "/articulos" ||
@@ -667,6 +733,7 @@ function DashboardLayoutContent({
   const shouldRedirectProcurementApprover =
     isProcurementApproverRole(userRole) && !isProcurementApproverAllowedPath;
   const shouldRedirectFinancial =
+    !isAllowedCostMatrixPath &&
     userRole === "financiero" &&
     location !== "/tesoreria" &&
     location !== "/notificaciones";

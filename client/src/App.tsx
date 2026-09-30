@@ -1,3 +1,4 @@
+import MatrizCostos from "./pages/MatrizCostos";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
@@ -185,6 +186,7 @@ function DashboardRoutes() {
       <Route path="/inventario" component={Inventario} />
       <Route path="/articulos" component={Articulos} />
       <Route path="/grupos-financieros" component={GruposFinancieros} />
+      <Route path="/matriz-costos" component={MatrizCostos} />
       <Route path="/activos-fijos-pendientes" component={Articulos} />
       <Route path="/proveedores" component={Proveedores} />
       <Route path="/almacenes" component={Almacenes} />

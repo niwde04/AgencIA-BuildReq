@@ -1,0 +1,19 @@
+/* Scoped to this catalog and its portals; other application screens retain their theme. */
+.dark .cost-matrix-surface {
+  color-scheme: dark;
+  --background: oklch(0.18 0.012 260);
+  --foreground: oklch(0.96 0.005 260);
+  --card: oklch(0.21 0.012 260);
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  --secondary: oklch(0.3 0.016 260);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.27 0.012 260);
+  --muted-foreground: oklch(0.78 0.015 260);
+  --accent: oklch(0.32 0.016 260);
+  --accent-foreground: var(--foreground);
+  --border: oklch(0.38 0.012 260);
+  --input: var(--border);
+  --destructive: oklch(0.75 0.16 25);
+}

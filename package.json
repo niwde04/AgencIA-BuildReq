@@ -18,7 +18,10 @@
     "test:financial-notes:db": "tsx scripts/test-financial-notes-db.ts",
     "db:migrate-sales-tax-financial-groups": "tsx scripts/migrate-sales-tax-financial-groups.ts",
     "test:sales-taxes:db": "tsx scripts/test-sales-taxes-db.ts",
-    "db:migrate-invoice-accounting": "tsx scripts/migrate-invoice-accounting.ts"
+    "db:migrate-invoice-accounting": "tsx scripts/migrate-invoice-accounting.ts",
+    "db:migrate-cost-matrix": "tsx scripts/migrate-cost-matrix.ts",
+    "cost-matrix:normalize": "tsx scripts/normalize-cost-matrix.ts",
+    "test:cost-matrix:db": "tsx scripts/test-cost-matrix-db.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",

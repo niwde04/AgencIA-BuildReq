@@ -1,0 +1,742 @@
+{
+  "sourceFile": "MATRIZ DE COSTOS COMPARTIDA BR (1).xlsx",
+  "sourceSha256": "d666534a9f5f41e5ce0f171798731ad222316183dc22260f480c083d2cd8eab0",
+  "sheet": "Hoja1",
+  "sourceRows": 584,
+  "uniqueRecords": 539,
+  "removedDuplicates": 45,
+  "correctedLabels": 99,
+  "jobs": {
+    "999": 208,
+    "001": 331
+  },
+  "seedSha256": "52368a1bd5f17881cabe0a429b5a39cddd9038933e02488d92f8d3d048162ead",
+  "duplicates": [
+    {
+      "matrixCode": "001-07-0701-070101-17010101",
+      "sourceRows": [
+        366,
+        367,
+        368,
+        369,
+        370,
+        371,
+        372,
+        373,
+        374,
+        375,
+        376,
+        377
+      ],
+      "removed": [
+        367,
+        368,
+        369,
+        370,
+        371,
+        372,
+        373,
+        374,
+        375,
+        376,
+        377
+      ]
+    },
+    {
+      "matrixCode": "001-12-1201-120101-12010101",
+      "sourceRows": [
+        548,
+        549,
+        550,
+        551,
+        552,
+        553,
+        554,
+        555,
+        556,
+        557,
+        558,
+        559
+      ],
+      "removed": [
+        549,
+        550,
+        551,
+        552,
+        553,
+        554,
+        555,
+        556,
+        557,
+        558,
+        559
+      ]
+    },
+    {
+      "matrixCode": "001-12-1201-120101-12010102",
+      "sourceRows": [
+        560,
+        561,
+        562,
+        563,
+        564,
+        565,
+        566,
+        567,
+        568,
+        569,
+        570,
+        571
+      ],
+      "removed": [
+        561,
+        562,
+        563,
+        564,
+        565,
+        566,
+        567,
+        568,
+        569,
+        570,
+        571
+      ]
+    },
+    {
+      "matrixCode": "001-13-1401-140101-14010101",
+      "sourceRows": [
+        572,
+        573,
+        574,
+        575,
+        576,
+        577,
+        578,
+        579,
+        580,
+        581,
+        582,
+        583
+      ],
+      "removed": [
+        573,
+        574,
+        575,
+        576,
+        577,
+        578,
+        579,
+        580,
+        581,
+        582,
+        583
+      ]
+    },
+    {
+      "matrixCode": "001-13-1402-140202-14020201",
+      "sourceRows": [
+        584,
+        585
+      ],
+      "removed": [
+        585
+      ]
+    }
+  ],
+  "corrections": [
+    {
+      "row": 256,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "010504 Suministros de oficina"
+    },
+    {
+      "row": 256,
+      "field": "flujo.n5",
+      "previous": "",
+      "corrected": "11050401 Suministros de oficina"
+    },
+    {
+      "row": 257,
+      "field": "flujo.n4",
+      "previous": "010505 Suministros de oficina",
+      "corrected": "010505 Capacitaciones"
+    },
+    {
+      "row": 257,
+      "field": "flujo.n5",
+      "previous": "11050501 Suministros de oficina",
+      "corrected": "11050501 Capacitaciones"
+    },
+    {
+      "row": 258,
+      "field": "flujo.n4",
+      "previous": "010506 Capacitaciones",
+      "corrected": "010506 Relaciones públicas y responsabilidad social"
+    },
+    {
+      "row": 258,
+      "field": "flujo.n5",
+      "previous": "11050601 Capacitaciones",
+      "corrected": "11050601 Relaciones públicas y responsabilidad social"
+    },
+    {
+      "row": 259,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "010507 Gastos legales, certificaciones  y notariales"
+    },
+    {
+      "row": 259,
+      "field": "flujo.n5",
+      "previous": "",
+      "corrected": "11050701 Gastos legales, certificaciones  y notariales"
+    },
+    {
+      "row": 260,
+      "field": "flujo.n4",
+      "previous": "010508 Relaciones públicas y responsabilidad social",
+      "corrected": "010508 Directorios y cónclaves"
+    },
+    {
+      "row": 260,
+      "field": "flujo.n5",
+      "previous": "11050801 Relaciones públicas y responsabilidad social",
+      "corrected": "11050801 Directorios y cónclaves"
+    },
+    {
+      "row": 261,
+      "field": "flujo.n4",
+      "previous": "010509 Gastos legales, certificaciones  y notariales",
+      "corrected": "010509 Inscripciones y certificaciones organismos colegiados"
+    },
+    {
+      "row": 261,
+      "field": "flujo.n5",
+      "previous": "11050901 Gastos legales, certificaciones  y notariales",
+      "corrected": "11050901 Inscripciones y certificaciones organismos colegiados"
+    },
+    {
+      "row": 262,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "010510 Olimpiadas"
+    },
+    {
+      "row": 262,
+      "field": "flujo.n5",
+      "previous": "",
+      "corrected": "11051001 Olimpiadas"
+    },
+    {
+      "row": 263,
+      "field": "flujo.n4",
+      "previous": "010511 Directorios y cónclaves",
+      "corrected": "010511 Suministros de aseo"
+    },
+    {
+      "row": 263,
+      "field": "flujo.n5",
+      "previous": "11051101 Directorios y cónclaves",
+      "corrected": "11051101 Suministros de aseo"
+    },
+    {
+      "row": 264,
+      "field": "flujo.n4",
+      "previous": "010512 Inscripciones y certificaciones organismos colegiados",
+      "corrected": "010512 Fletes"
+    },
+    {
+      "row": 264,
+      "field": "flujo.n5",
+      "previous": "11051201 Inscripciones y certificaciones organismos colegiados",
+      "corrected": "11051201 Fletes"
+    },
+    {
+      "row": 265,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "010513 Suministros de cocina y habitaciones"
+    },
+    {
+      "row": 265,
+      "field": "flujo.n5",
+      "previous": "",
+      "corrected": "11051301 Suministros de cocina y habitaciones"
+    },
+    {
+      "row": 266,
+      "field": "flujo.n4",
+      "previous": "010514 Olimpiadas",
+      "corrected": "010514 Servicios de laboratorio y análisis de calidad"
+    },
+    {
+      "row": 266,
+      "field": "flujo.n5",
+      "previous": "11051401 Olimpiadas",
+      "corrected": "11051401 Servicios de laboratorio y análisis de calidad"
+    },
+    {
+      "row": 267,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "010515 Suministros de campamentos"
+    },
+    {
+      "row": 267,
+      "field": "flujo.n5",
+      "previous": "",
+      "corrected": "11051501 Suministros de campamentos"
+    },
+    {
+      "row": 268,
+      "field": "flujo.n4",
+      "previous": "010516 Suministros de aseo",
+      "corrected": "010516 Transporte y descargas de desechos"
+    },
+    {
+      "row": 268,
+      "field": "flujo.n5",
+      "previous": "11051601 Suministros de aseo",
+      "corrected": "11051601 Transporte y descargas de desechos"
+    },
+    {
+      "row": 269,
+      "field": "flujo.n4",
+      "previous": "010517 Fletes",
+      "corrected": "010517 Gastos de representación"
+    },
+    {
+      "row": 269,
+      "field": "flujo.n5",
+      "previous": "11051701 Fletes",
+      "corrected": "11051701 Gastos de representación"
+    },
+    {
+      "row": 270,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "010518 Publicidad"
+    },
+    {
+      "row": 270,
+      "field": "flujo.n5",
+      "previous": "",
+      "corrected": "11051801 Publicidad"
+    },
+    {
+      "row": 271,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "010519 Mantenimientos equipo computación y oficina"
+    },
+    {
+      "row": 271,
+      "field": "flujo.n5",
+      "previous": "",
+      "corrected": "11051901 Mantenimientos equipo computación y oficina"
+    },
+    {
+      "row": 272,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "010520 Mantenimientos vehículos oficina central"
+    },
+    {
+      "row": 272,
+      "field": "flujo.n5",
+      "previous": "",
+      "corrected": "11052001 Mantenimientos vehículos oficina central"
+    },
+    {
+      "row": 273,
+      "field": "flujo.n4",
+      "previous": "010521 Suministros de cocina y habitaciones",
+      "corrected": "010521 Combustibles oficina central"
+    },
+    {
+      "row": 273,
+      "field": "flujo.n5",
+      "previous": "11052101 Suministros de cocina y habitaciones",
+      "corrected": "11052101 Combustibles oficina central"
+    },
+    {
+      "row": 274,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "010522 Lubricantes oficina central"
+    },
+    {
+      "row": 274,
+      "field": "flujo.n5",
+      "previous": "",
+      "corrected": "11052201 Lubricantes oficina central"
+    },
+    {
+      "row": 275,
+      "field": "flujo.n4",
+      "previous": "010523 Gastos de representación",
+      "corrected": "010523 Llantas oficina central"
+    },
+    {
+      "row": 276,
+      "field": "flujo.n4",
+      "previous": "010524 Publicidad",
+      "corrected": "010524 Mantenimientos generales instalaciones"
+    },
+    {
+      "row": 292,
+      "field": "flujo.n4",
+      "previous": "010903 Peajes y parqueaderos",
+      "corrected": "010903 Viáticos"
+    },
+    {
+      "row": 293,
+      "field": "flujo.n4",
+      "previous": "010904 Hospedajes",
+      "corrected": "010904 Peajes y parqueaderos"
+    },
+    {
+      "row": 294,
+      "field": "flujo.n4",
+      "previous": "010905 Alquiler transporte movilización",
+      "corrected": "010905 Hospedajes"
+    },
+    {
+      "row": 295,
+      "field": "flujo.n4",
+      "previous": "010906 Sueldos y salarios",
+      "corrected": "010906 Alquiler transporte movilización"
+    },
+    {
+      "row": 296,
+      "field": "flujo.n4",
+      "previous": "010907 Suministros de oficina",
+      "corrected": "010907 Sueldos y salarios"
+    },
+    {
+      "row": 297,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "010908 Suministros de oficina"
+    },
+    {
+      "row": 331,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "050102 Retenciones ISR"
+    },
+    {
+      "row": 331,
+      "field": "flujo.n5",
+      "previous": "",
+      "corrected": "15010201 Retención ISR 1%"
+    },
+    {
+      "row": 332,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "050102 Retenciones ISR"
+    },
+    {
+      "row": 332,
+      "field": "flujo.n5",
+      "previous": "",
+      "corrected": "15010202 Retención ISR Dividendos 10%"
+    },
+    {
+      "row": 333,
+      "field": "flujo.n5",
+      "previous": "15010203 Retención ISR 1%",
+      "corrected": "15010203 Retención ISR Ganancias de Capital 10%"
+    },
+    {
+      "row": 447,
+      "field": "flujo.n4",
+      "previous": "080118 Opece Zambrano",
+      "corrected": "080118 Construcciones Saturno"
+    },
+    {
+      "row": 448,
+      "field": "flujo.n4",
+      "previous": "080118 Opece Zambrano",
+      "corrected": "080118 Construcciones Saturno"
+    },
+    {
+      "row": 449,
+      "field": "flujo.n4",
+      "previous": "080118 Opece Zambrano",
+      "corrected": "080118 Construcciones Saturno"
+    },
+    {
+      "row": 450,
+      "field": "flujo.n4",
+      "previous": "080118 Opece Zambrano",
+      "corrected": "080118 Construcciones Saturno"
+    },
+    {
+      "row": 451,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "080119 Construcciones Mercurio"
+    },
+    {
+      "row": 452,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "080119 Construcciones Mercurio"
+    },
+    {
+      "row": 453,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "080119 Construcciones Mercurio"
+    },
+    {
+      "row": 454,
+      "field": "flujo.n4",
+      "previous": "",
+      "corrected": "080119 Construcciones Mercurio"
+    },
+    {
+      "row": 455,
+      "field": "flujo.n4",
+      "previous": "080120 HeH Sucursal Rep. Domincana",
+      "corrected": "080120 Construcciones Luna"
+    },
+    {
+      "row": 456,
+      "field": "flujo.n4",
+      "previous": "080120 HeH Sucursal Rep. Domincana",
+      "corrected": "080120 Construcciones Luna"
+    },
+    {
+      "row": 457,
+      "field": "flujo.n4",
+      "previous": "080120 HeH Sucursal Rep. Domincana",
+      "corrected": "080120 Construcciones Luna"
+    },
+    {
+      "row": 458,
+      "field": "flujo.n4",
+      "previous": "080120 HeH Sucursal Rep. Domincana",
+      "corrected": "080120 Construcciones Luna"
+    },
+    {
+      "row": 459,
+      "field": "flujo.n4",
+      "previous": "080121 Construcciones Mercurio",
+      "corrected": "080121 Construcciones Constelación"
+    },
+    {
+      "row": 460,
+      "field": "flujo.n4",
+      "previous": "080121 Construcciones Mercurio",
+      "corrected": "080121 Construcciones Constelación"
+    },
+    {
+      "row": 461,
+      "field": "flujo.n4",
+      "previous": "080121 Construcciones Mercurio",
+      "corrected": "080121 Construcciones Constelación"
+    },
+    {
+      "row": 462,
+      "field": "flujo.n4",
+      "previous": "080121 Construcciones Mercurio",
+      "corrected": "080121 Construcciones Constelación"
+    },
+    {
+      "row": 463,
+      "field": "flujo.n4",
+      "previous": "080122 Construcciones Luna",
+      "corrected": "080122 Constructora Polaris"
+    },
+    {
+      "row": 464,
+      "field": "flujo.n4",
+      "previous": "080122 Construcciones Luna",
+      "corrected": "080122 Constructora Polaris"
+    },
+    {
+      "row": 465,
+      "field": "flujo.n4",
+      "previous": "080122 Construcciones Luna",
+      "corrected": "080122 Constructora Polaris"
+    },
+    {
+      "row": 466,
+      "field": "flujo.n4",
+      "previous": "080122 Construcciones Luna",
+      "corrected": "080122 Constructora Polaris"
+    },
+    {
+      "row": 467,
+      "field": "flujo.n4",
+      "previous": "080123 Construcciones Constelación",
+      "corrected": "080123 Construcciones Neptuno"
+    },
+    {
+      "row": 468,
+      "field": "flujo.n4",
+      "previous": "080123 Construcciones Constelación",
+      "corrected": "080123 Construcciones Neptuno"
+    },
+    {
+      "row": 469,
+      "field": "flujo.n4",
+      "previous": "080123 Construcciones Constelación",
+      "corrected": "080123 Construcciones Neptuno"
+    },
+    {
+      "row": 470,
+      "field": "flujo.n4",
+      "previous": "080123 Construcciones Constelación",
+      "corrected": "080123 Construcciones Neptuno"
+    },
+    {
+      "row": 471,
+      "field": "flujo.n4",
+      "previous": "080124 Constructora Polaris",
+      "corrected": "080124 Construcciones Urano"
+    },
+    {
+      "row": 472,
+      "field": "flujo.n4",
+      "previous": "080124 Constructora Polaris",
+      "corrected": "080124 Construcciones Urano"
+    },
+    {
+      "row": 473,
+      "field": "flujo.n4",
+      "previous": "080124 Constructora Polaris",
+      "corrected": "080124 Construcciones Urano"
+    },
+    {
+      "row": 474,
+      "field": "flujo.n4",
+      "previous": "080124 Constructora Polaris",
+      "corrected": "080124 Construcciones Urano"
+    },
+    {
+      "row": 475,
+      "field": "flujo.n4",
+      "previous": "080125 Construcciones Neptuno",
+      "corrected": "080125 Construcciones Orion"
+    },
+    {
+      "row": 476,
+      "field": "flujo.n4",
+      "previous": "080125 Construcciones Neptuno",
+      "corrected": "080125 Construcciones Orion"
+    },
+    {
+      "row": 477,
+      "field": "flujo.n4",
+      "previous": "080125 Construcciones Neptuno",
+      "corrected": "080125 Construcciones Orion"
+    },
+    {
+      "row": 478,
+      "field": "flujo.n4",
+      "previous": "080125 Construcciones Neptuno",
+      "corrected": "080125 Construcciones Orion"
+    },
+    {
+      "row": 479,
+      "field": "flujo.n4",
+      "previous": "080126 Construcciones Urano",
+      "corrected": "080126 Construcciones Jupiter"
+    },
+    {
+      "row": 480,
+      "field": "flujo.n4",
+      "previous": "080126 Construcciones Urano",
+      "corrected": "080126 Construcciones Jupiter"
+    },
+    {
+      "row": 481,
+      "field": "flujo.n4",
+      "previous": "080126 Construcciones Urano",
+      "corrected": "080126 Construcciones Jupiter"
+    },
+    {
+      "row": 482,
+      "field": "flujo.n4",
+      "previous": "080126 Construcciones Urano",
+      "corrected": "080126 Construcciones Jupiter"
+    },
+    {
+      "row": 483,
+      "field": "flujo.n4",
+      "previous": "080127 Construcciones Orion",
+      "corrected": "080127 Constructora Austral"
+    },
+    {
+      "row": 484,
+      "field": "flujo.n4",
+      "previous": "080127 Construcciones Orion",
+      "corrected": "080127 Constructora Austral"
+    },
+    {
+      "row": 485,
+      "field": "flujo.n4",
+      "previous": "080127 Construcciones Orion",
+      "corrected": "080127 Constructora Austral"
+    },
+    {
+      "row": 486,
+      "field": "flujo.n4",
+      "previous": "080127 Construcciones Orion",
+      "corrected": "080127 Constructora Austral"
+    },
+    {
+      "row": 487,
+      "field": "flujo.n4",
+      "previous": "080128 Construcciones Jupiter",
+      "corrected": "080128 Opece Zambrano"
+    },
+    {
+      "row": 488,
+      "field": "flujo.n4",
+      "previous": "080128 Construcciones Jupiter",
+      "corrected": "080128 Opece Zambrano"
+    },
+    {
+      "row": 489,
+      "field": "flujo.n4",
+      "previous": "080128 Construcciones Jupiter",
+      "corrected": "080128 Opece Zambrano"
+    },
+    {
+      "row": 490,
+      "field": "flujo.n4",
+      "previous": "080128 Construcciones Jupiter",
+      "corrected": "080128 Opece Zambrano"
+    },
+    {
+      "row": 491,
+      "field": "flujo.n4",
+      "previous": "080129 Constructora Austral",
+      "corrected": "080129 HeH Sucursal Rep. Domincana"
+    },
+    {
+      "row": 492,
+      "field": "flujo.n4",
+      "previous": "080129 Constructora Austral",
+      "corrected": "080129 HeH Sucursal Rep. Domincana"
+    },
+    {
+      "row": 493,
+      "field": "flujo.n4",
+      "previous": "080129 Constructora Austral",
+      "corrected": "080129 HeH Sucursal Rep. Domincana"
+    },
+    {
+      "row": 494,
+      "field": "flujo.n4",
+      "previous": "080129 Constructora Austral",
+      "corrected": "080129 HeH Sucursal Rep. Domincana"
+    }
+  ]
+}

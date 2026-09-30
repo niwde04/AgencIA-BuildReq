@@ -1,6 +1,10 @@
 # Estado actual
 
-Actualizado: 2026-09-28.
+Actualizado: 2026-09-29 (Honduras).
+
+Matriz de costos: CRUD independiente preparado localmente en /matriz-costos, con permisos compartidos entre menú/página/servidor, filtros y paginación en backend, auditoría y desactivación reversible. Migración aditiva y carga inicial aplicadas individualmente en Cloud y SSH: 539 registros activos en cada base (208 job 999 y 331 job 001), códigos únicos, etiquetas recalculadas y RLS sin acceso de navegador. Repetición: 0 inserciones; Excel original intacto. Sin push ni despliegue de aplicación.
+
+Validación de matriz: 26 pruebas focalizadas/PostgreSQL temporal, tipos y build; revisión visual local con API simulada en escritorio/tableta/móvil, claro/oscuro. Esquemas y permisos previos intactos; datos de 66/66 tablas idénticos en SSH y 65/66 en Cloud (variación concurrente en notifications sin cambio de cantidad). Procedimiento, evidencia y límites: [matriz-costos.md](matriz-costos.md).
 
 Facturas ahora envía a una bandeja de Tesorería antes de contabilizar. La bandeja está encima del reporte existente, incluye moneda y las columnas financieras solicitadas; ISV abre el desglose guardado. Contabilizar/rechazar es atómico y enviar no genera notas ni aplica anticipos. Código preparado en demo, sin push ni despliegue. Migración aditiva aplicada en Cloud y SSH, con once tablas financieras y permisos intactos; salud de ambas aplicaciones verificada. Detalles y recuperación: [facturas-contabilizacion.md](facturas-contabilizacion.md).
 

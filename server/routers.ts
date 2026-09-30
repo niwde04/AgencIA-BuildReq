@@ -1,3 +1,4 @@
+import { costMatrixRouter } from "./routers/costMatrix";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -95,6 +96,7 @@ export const appRouter = router({
   warehouseExits: warehouseExitsRouter,
   articles: articlesRouter,
   financialGroups: financialGroupsRouter,
+  costMatrix: costMatrixRouter,
   suppliers: suppliersRouter,
   retentions: retentionsRouter,
   taxes: taxesRouter,

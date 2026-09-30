@@ -6,7 +6,11 @@ if (!connectionString) {
 }
 
 export default defineConfig({
-  schema: ["./drizzle/schema.ts", "./drizzle/financial-notes-schema.ts"],
+  schema: [
+    "./drizzle/schema.ts",
+    "./drizzle/financial-notes-schema.ts",
+    "./drizzle/cost-matrix-schema.ts",
+  ],
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: {

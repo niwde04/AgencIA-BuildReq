@@ -1,0 +1,2 @@
+# Preserve the checksum of the reproducible cost-matrix seed across platforms.
+data/cost-matrix/*.json text eol=lf
