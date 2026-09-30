@@ -21,11 +21,20 @@ Las secuencias se identifican por proyecto y tipo, no por el código visible del
 
 ## Retenciones
 
-`accountInvoice` genera una NC en borrador dentro de su propia transacción. Solo aplica a facturas creadas desde `financialNoteSettings.activatedAt`. Agrupa importes persistidos de `invoiceRetentions` por `retentionCatalogId`, sin recalcular porcentajes ni agregar ISV. Calidad, amortización, pronto pago y descuento TC pertenecen a otro catálogo y no participan.
+`accountInvoice` genera una NC en borrador dentro de su propia transacción. Aplica a facturas de cualquier fecha de creación con retenciones fiscales válidas y el módulo habilitado. `financialNoteSettings.activatedAt` conserva la fecha histórica de activación, pero no limita la generación. Agrupa importes persistidos de `invoiceRetentions` por `retentionCatalogId`, sin recalcular porcentajes ni agregar ISV. Calidad, amortización, pronto pago y descuento TC pertenecen a otro catálogo y no participan.
 
 El origen automático no se acepta desde el cliente. Una restricción única permite una sola NC de retenciones vigente por factura. Correcciones sincronizan la pendiente y la devuelven a borrador; una NC contabilizada obliga a anularla primero. Anulación por corrección de recepción también invalida la NC pendiente. Sustituciones conservan las notas anuladas y eventos.
 
 **La NC de retenciones tiene efecto adicional cero sobre el saldo.** Su registro fiscal documenta una deducción ya incluida en la factura.
+
+
+### Recuperación puntual de una NC omitida
+
+La eliminación del límite por fecha no genera notas retroactivas en lote. La recuperación de FT-018-00000443 en SSH usa `scripts/recover-invoice-retention-note.ts --dry-run` y después `--apply`, ejecutados con el entorno de la aplicación SSH. El script está limitado a su ID 1837, RT15 y L 4,568.4000; rechaza otro destino, estado o importe.
+
+El procedimiento bloquea la factura, usa su responsable original de contabilización y reutiliza la generación normal. Si encuentra una NC de retenciones vigente, devuelve `already_exists` sin modificarla. Compara huellas de la factura, retenciones, pagos y anticipos antes/después y registra un evento de recuperación técnica. No ejecuta `accountInvoice`, no reaplica anticipos ni descuenta otra vez la retención.
+
+La imagen actual incluye el código de servidor pero no los scripts ni `tsconfig.json`. Para ejecutar este mantenimiento con `tsx`, copiar únicamente ese script a `/app/scripts/` y `tsconfig.json` a `/app/` desde el checkout del mismo commit desplegado. Ambos archivos quedan disponibles en Git para reproducir el procedimiento. La recuperación crea un borrador; conserva el flujo fiscal normal de revisión y contabilización.
 
 ## Devoluciones
 

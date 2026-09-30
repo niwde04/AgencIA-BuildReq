@@ -1046,13 +1046,11 @@ export async function syncInvoiceRetentionNote(
   }
   const [settings] = await noteRows(
     tx,
-    sql`select *, (select "createdAt" from invoices where id=${invoiceId}) >= "activatedAt"::timestamp "invoiceEligible" from "financialNoteSettings" where id=1`
+    sql`select "enabled" from "financialNoteSettings" where id=1`
   );
   if (
     !existing &&
-    ((!options.create && !replacingPending) ||
-      !settings?.enabled ||
-      !settings.invoiceEligible)
+    ((!options.create && !replacingPending) || !settings?.enabled)
   )
     return;
   const retentions = await noteRows<{

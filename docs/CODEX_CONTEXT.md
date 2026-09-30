@@ -19,4 +19,6 @@ Reglas críticas: no duplicar deducción de retenciones al contabilizar su NC; c
 
 Comandos: `pnpm check`, `pnpm test`, `pnpm build`. Migración explícita de notas: `pnpm db:migrate-financial-notes`; pruebas PostgreSQL aisladas: `pnpm test:financial-notes:db`. Si pnpm no está en PATH, usar `node node_modules/pnpm/bin/pnpm.cjs`.
 
-Detalles de reglas, corte de activación y recuperación: [notas-fiscales.md](notas-fiscales.md). Estado de entrega: [CURRENT_STATE.md](CURRENT_STATE.md). Consultar código y migraciones si difieren de esta guía.
+Las NC automáticas de retención aplican a facturas de cualquier fecha de creación al contabilizar definitivamente en Tesorería; la activación histórica no es un filtro. La recuperación de faltantes ya contabilizadas es explícita y no vuelve a descontar retenciones.
+
+Detalles de reglas, activación y recuperación: [notas-fiscales.md](notas-fiscales.md). Estado de entrega: [CURRENT_STATE.md](CURRENT_STATE.md). Consultar código y migraciones si difieren de esta guía.
