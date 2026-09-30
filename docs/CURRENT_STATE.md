@@ -2,6 +2,8 @@
 
 Actualizado: 2026-09-29 (Honduras).
 
+Pagos efectuados: el Excel de Tesorería agrega Nivel 1–4, con código y descripción, después de COD DE JOB. Resuelve la matriz activa por código financiero y utiliza codN2 para códigos repetidos; conserva job, renglones, importes y permisos. Validación: 32 pruebas focalizadas, 28 PostgreSQL, tipos y build. Consultas de solo lectura confirman cobertura de SSH y Cloud; un codN2 desactualizado de Cloud se resuelve por su código financiero único. Preparado en demo, sin push ni despliegue. Detalles: [tesoreria-pagos-niveles.md](tesoreria-pagos-niveles.md).
+
 Matriz de costos: CRUD independiente preparado localmente en /matriz-costos, con permisos compartidos entre menú/página/servidor, filtros y paginación en backend, auditoría y desactivación reversible. Migración aditiva y carga inicial aplicadas individualmente en Cloud y SSH: 539 registros activos en cada base (208 job 999 y 331 job 001), códigos únicos, etiquetas recalculadas y RLS sin acceso de navegador. Repetición: 0 inserciones; Excel original intacto. Sin push ni despliegue de aplicación.
 
 Validación de matriz: 26 pruebas focalizadas/PostgreSQL temporal, tipos y build; revisión visual local con API simulada en escritorio/tableta/móvil, claro/oscuro. Esquemas y permisos previos intactos; datos de 66/66 tablas idénticos en SSH y 65/66 en Cloud (variación concurrente en notifications sin cambio de cantidad). Procedimiento, evidencia y límites: [matriz-costos.md](matriz-costos.md).

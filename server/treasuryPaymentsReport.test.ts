@@ -1,3 +1,4 @@
+import matrixSeed from "../data/cost-matrix/initial.json";
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import { buildWorkbook } from "../client/src/lib/excel-export";
@@ -34,7 +35,7 @@ const payment: TreasuryPaymentsSourcePayment = {
 };
 
 describe("treasury Payments report", () => {
-  it("keeps the complete 48-column Payments layout", () => {
+  it("keeps the complete 52-column Payments layout", () => {
     expect(TREASURY_PAYMENTS_HEADERS).toEqual([
       "Lote",
       "Referencia Bancaria",
@@ -66,6 +67,10 @@ describe("treasury Payments report", () => {
       "Total retención fiscal",
       "Neto a pagar línea",
       "COD DE JOB",
+      "NIVEL 1",
+      "NIVEL 2",
+      "NIVEL 3",
+      "NIVEL 4",
       "COD FINANCIERO",
       "GRUPO FINANCIERO",
       "Moneda",
@@ -111,6 +116,7 @@ describe("treasury Payments report", () => {
       itemCode: "SAP-NUEVO",
       financialCode: "02019901",
       financialGroupDescription: "Materiales de construcción",
+      financialGroupLevel2Code: "",
     });
   });
 
@@ -254,6 +260,7 @@ describe("treasury Payments report", () => {
     const payments: TreasuryPaymentsReportRow[] =
       buildTreasuryPaymentsReportRows({
         payments: [payment],
+        costMatrixEntries: matrixSeed,
         products: [
           {
             id: 1,
@@ -297,19 +304,28 @@ describe("treasury Payments report", () => {
       { header: 1, defval: "" }
     );
     expect(paymentRows[0]).toEqual([...TREASURY_PAYMENTS_HEADERS]);
-    expect(paymentRows[0]).toHaveLength(48);
+    expect(paymentRows[0]).toHaveLength(52);
     expect(paymentRows[1]?.[6]).toBe("SAP-001");
     expect(paymentRows[1]?.[10]).toBe(50);
     expect(paymentRows[1]?.[14]).toBe(90);
     expect(paymentRows[1]?.[19]).toBe(10);
     expect(paymentRows[1]?.[28]).toBe(140);
-    expect(paymentRows[1]?.[30]).toBe("02019901");
-    expect(paymentRows[1]?.[31]).toBe("Materiales de construcción");
-    expect(paymentRows[1]?.[47]).toBe(60);
+    expect(paymentRows[1]?.[29]).toBe("018_003");
+    expect(paymentRows[1]?.slice(30, 34)).toEqual([
+      "02 · Costos operativos",
+      "0201 · Mano de obra",
+      "020199 · Otros beneficios",
+      "02019901 · Alimentación",
+    ]);
+    expect(paymentRows[1]?.[34]).toBe("02019901");
+    expect(paymentRows[1]?.[35]).toBe("Materiales de construcción");
+    expect(paymentRows[1]?.[51]).toBe(60);
+    expect(roundTrip.Sheets.Payments?.AE2?.t).toBe("s");
+    expect(roundTrip.Sheets.Payments?.AI2?.t).toBe("s");
     expect(roundTrip.Sheets.Payments?.C2?.z).toBe("dd/mm/yyyy");
     expect(roundTrip.Sheets.Payments?.K2?.z).toBe("#,##0.00");
     expect(roundTrip.Sheets.Payments?.O2?.z).toBe("#,##0.00");
     expect(roundTrip.Sheets.Payments?.AC2?.z).toBe("#,##0.00");
-    expect(roundTrip.Sheets.Payments?.AV2?.z).toBe("#,##0.00");
+    expect(roundTrip.Sheets.Payments?.AZ2?.z).toBe("#,##0.00");
   });
 });

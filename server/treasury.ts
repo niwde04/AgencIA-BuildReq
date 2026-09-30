@@ -1,3 +1,4 @@
+import { loadTreasuryPaymentCostMatrixEntries } from "./treasuryPaymentCostLevels";
 import { invoiceCommittedMoneySql } from "./invoiceMoney";
 import { randomUUID } from "node:crypto";
 import {
@@ -1598,6 +1599,7 @@ export async function getTreasuryPaymentsReport(
         .select({
           itemCode: sapCatalog.itemCode,
           financialCode: sapCatalog.financialGroupCode,
+          financialGroupLevel2Code: financialGroups.codN2,
           financialGroupDescription: financialGroups.financialGroupDescription,
         })
         .from(sapCatalog)
@@ -1613,6 +1615,7 @@ export async function getTreasuryPaymentsReport(
       {
         itemCode: row.itemCode,
         financialCode: row.financialCode?.trim() ?? "",
+        financialGroupLevel2Code: row.financialGroupLevel2Code?.trim() ?? "",
         financialGroupDescription: row.financialGroupDescription?.trim() ?? "",
       },
     ])
@@ -1640,13 +1643,18 @@ export async function getTreasuryPaymentsReport(
       taxCode: item.taxCode?.trim() || "exe",
       taxBreakdown: item.taxBreakdown,
       financialCode: financialGroup.financialCode,
+      financialGroupLevel2Code: financialGroup.financialGroupLevel2Code,
       financialGroupDescription: financialGroup.financialGroupDescription,
     };
   });
 
+  const costMatrixEntries = await loadTreasuryPaymentCostMatrixEntries(
+    products.map(product => product.financialCode)
+  );
   return {
     generatedAt: new Date(),
     payments: buildTreasuryPaymentsReportRows({
+      costMatrixEntries,
       payments: paymentRows.map(row => ({
         paymentItemId: row.paymentItemId,
         batchNumber: row.batchNumber,

@@ -1,4 +1,10 @@
 import {
+  createTreasuryPaymentCostLevelResolver,
+  emptyTreasuryPaymentCostLevels,
+  type TreasuryPaymentCostMatrixEntry,
+  type TreasuryPaymentCostLevels,
+} from "./treasury-payment-cost-levels";
+import {
   buildDmcReportPayload,
   type DmcReportSourceDocumentAdjustment,
   type DmcReportSourceItem,
@@ -41,6 +47,10 @@ export const TREASURY_PAYMENTS_HEADERS = [
   "Total retención fiscal",
   "Neto a pagar línea",
   "COD DE JOB",
+  "NIVEL 1",
+  "NIVEL 2",
+  "NIVEL 3",
+  "NIVEL 4",
   "COD FINANCIERO",
   "GRUPO FINANCIERO",
   "Moneda",
@@ -66,7 +76,7 @@ export type TreasuryPaymentDetailType =
   | "OTRO CARGO"
   | "SIN DETALLE";
 
-export type TreasuryPaymentsReportRow = {
+export type TreasuryPaymentsReportRow = TreasuryPaymentCostLevels & {
   batchNumber: string;
   bankReference: string;
   invoiceDate: Date | string | null;
@@ -161,6 +171,7 @@ export type TreasuryPaymentsSourceProduct = {
   taxBreakdown: PurchaseOrderTaxBreakdownEntry[] | string | null;
   financialCode: string;
   financialGroupDescription: string;
+  financialGroupLevel2Code?: string;
 };
 
 export type TreasuryPaymentsSourceOtherCharge = {
@@ -174,6 +185,7 @@ export type TreasuryPaymentCatalogFinancialGroup = {
   itemCode: string;
   financialCode: string;
   financialGroupDescription: string;
+  financialGroupLevel2Code?: string;
 };
 
 export type TreasuryPaymentsSourceRetention = DmcReportSourceRetention & {
@@ -185,20 +197,21 @@ export type TreasuryPaymentsSourceDocumentAdjustment =
     invoiceId: number;
   };
 
-type TreasuryPaymentResolvedDetail = Pick<
-  TreasuryPaymentsReportRow,
-  | "detailType"
-  | "itemCode"
-  | "description"
-  | "quantity"
-  | "unit"
-  | "unitCost"
-  | "itemSubtotal"
-  | "itemTax"
-  | "itemTotal"
-  | "financialCode"
-  | "financialGroupDescription"
->;
+type TreasuryPaymentResolvedDetail = TreasuryPaymentCostLevels &
+  Pick<
+    TreasuryPaymentsReportRow,
+    | "detailType"
+    | "itemCode"
+    | "description"
+    | "quantity"
+    | "unit"
+    | "unitCost"
+    | "itemSubtotal"
+    | "itemTax"
+    | "itemTotal"
+    | "financialCode"
+    | "financialGroupDescription"
+  >;
 
 type TreasuryPaymentPreparedDetail = {
   report: TreasuryPaymentResolvedDetail;
@@ -241,6 +254,7 @@ export function resolveTreasuryPaymentFinancialGroup(
   return {
     itemCode: currentCode || originalCode,
     financialCode: resolved?.financialCode ?? "",
+    financialGroupLevel2Code: resolved?.financialGroupLevel2Code ?? "",
     financialGroupDescription:
       resolved?.financialGroupDescription || "SIN ASIGNAR",
   };
@@ -252,7 +266,11 @@ export function buildTreasuryPaymentsReportRows(input: {
   otherCharges: TreasuryPaymentsSourceOtherCharge[];
   retentions?: TreasuryPaymentsSourceRetention[];
   documentAdjustments?: TreasuryPaymentsSourceDocumentAdjustment[];
+  costMatrixEntries?: TreasuryPaymentCostMatrixEntry[];
 }) {
+  const resolveCostLevels = createTreasuryPaymentCostLevelResolver(
+    input.costMatrixEntries ?? []
+  );
   const productsByInvoiceId = groupTreasuryPaymentRowsByInvoiceId(
     input.products
   );
@@ -280,6 +298,10 @@ export function buildTreasuryPaymentsReportRows(input: {
           product.financialGroupDescription || "SIN ASIGNAR";
         return {
           report: {
+            ...resolveCostLevels(
+              product.financialCode,
+              product.financialGroupLevel2Code
+            ),
             detailType: "PRODUCTO" as const,
             itemCode,
             description: product.itemName.trim(),
@@ -314,6 +336,7 @@ export function buildTreasuryPaymentsReportRows(input: {
       .sort((left, right) => left.id - right.id)
       .map(charge => ({
         report: {
+          ...emptyTreasuryPaymentCostLevels(),
           detailType: "OTRO CARGO" as const,
           itemCode: "",
           description: charge.concept.trim(),
@@ -339,6 +362,7 @@ export function buildTreasuryPaymentsReportRows(input: {
     if (!details.length) {
       details.push({
         report: {
+          ...emptyTreasuryPaymentCostLevels(),
           detailType: "SIN DETALLE",
           itemCode: "",
           description: "FACTURA SIN DETALLE",

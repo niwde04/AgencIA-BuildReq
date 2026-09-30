@@ -1,3 +1,5 @@
+import { loadTreasuryPaymentCostMatrixEntries } from "./treasuryPaymentCostLevels";
+import { createTreasuryPaymentCostLevelResolver } from "../shared/treasury-payment-cost-levels";
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from "vitest";
 import { Client } from "pg";
 import { costMatrixRouter } from "./routers/costMatrix";
@@ -243,11 +245,62 @@ suite("Matriz: PostgreSQL aislado y router real", () => {
         message:
           "No se pudo completar la operación de matriz de costos. Intente nuevamente.",
       });
+      await expect(
+        loadTreasuryPaymentCostMatrixEntries(["02020201"])
+      ).rejects.toThrow(
+        "No se pudieron consultar los niveles de la matriz de costos. Intente nuevamente."
+      );
     } finally {
       await client.query(
         'ALTER TABLE "costMatrixEntries_fault_fixture" RENAME TO "costMatrixEntries"'
       );
     }
+  });
+  it("consulta en lote solo los niveles requeridos por Payments y resuelve códigos repetidos", async () => {
+    await importCostMatrix(client, seed, true);
+    const candidates = await loadTreasuryPaymentCostMatrixEntries([
+      "02020201",
+      "11060101",
+      "02020201",
+      " ",
+    ]);
+    expect(candidates).toHaveLength(3);
+    expect(
+      candidates.every(row => ["02020201", "11060101"].includes(row.n4))
+    ).toBe(true);
+    expect(Object.keys(candidates[0]).sort()).toEqual(
+      ["n1", "n2", "n3", "n4", "nivel1", "nivel2", "nivel3", "nivel4"].sort()
+    );
+    const resolve = createTreasuryPaymentCostLevelResolver(candidates);
+    expect(resolve("11060101", "0106").level4).toBe(
+      "11060101 · Gastos de asesoría legal"
+    );
+    expect(resolve("11060101", "1106").level4).toBe(
+      "11060101 · Inventario de materiales asfálticos"
+    );
+  });
+  it("Payments consulta la matriz vigente y refleja edición, desactivación y reactivación", async () => {
+    const source = seed.find(row => row.n4 === "02020201")!;
+    const entry = await api.create(costMatrixFields.parse(source));
+    await api.update({
+      id: entry.id,
+      data: {
+        ...costMatrixFields.parse(source),
+        nivel4: "Descripción actualizada",
+      },
+    });
+    expect(
+      (await loadTreasuryPaymentCostMatrixEntries(["02020201"]))[0].nivel4
+    ).toBe("Descripción actualizada");
+    await api.setActive({ id: entry.id, isActive: false });
+    expect(await loadTreasuryPaymentCostMatrixEntries(["02020201"])).toEqual(
+      []
+    );
+    await api.setActive({ id: entry.id, isActive: true });
+    expect(
+      await loadTreasuryPaymentCostMatrixEntries(["02020201"])
+    ).toHaveLength(1);
+    expect(await loadTreasuryPaymentCostMatrixEntries([])).toEqual([]);
   });
   it("mantiene RLS y niega acceso directo a roles del navegador sin modificar tablas operativas", async () => {
     expect(
