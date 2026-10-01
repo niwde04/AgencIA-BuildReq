@@ -15,3 +15,7 @@ Para repetir la revisión visual desde la raíz: instalar Playwright en `.tmp/re
 ## Preparación de despliegue SSH
 
 Se restauró el respaldo completo en un PostgreSQL 17 temporal sin red: 1.988 facturas. Se verificó la excepción histórica autorizada mediante integración: conserva fechas, muestra el aviso, se repite sin duplicados y mantiene estrictas las nuevas contabilizaciones.
+
+## Verificación Cloud — 01/10/2026 (Honduras)
+
+Migración confirmada: 317 comprobantes, 3 antecedentes, 2.039 facturas y 21 tablas originales intactas; repetición sin duplicados. Roles permitidos y denegados comprobados con perfiles existentes, seis accesos SQL de anon/authenticated rechazados, importes coincidentes, tres enlaces antiguos resueltos y tres soportes descargados correctamente. Servidor y rutas HTTP 200; API sin sesión 401. Detalle del respaldo y método de bloqueo transaccional en [retenciones.md](retenciones.md).

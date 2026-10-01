@@ -18,7 +18,7 @@ Aplicar la migración con la aplicación detenida, después de respaldo verifica
 
 TypeScript y compilaciones de cliente/servidor aprobados. 66 pruebas en PostgreSQL 17 aislado: 17 del módulo, 35 de notas/Tesorería y 14 de anticipos contractuales. Revisión visual con API simulada en Chrome a 1440, 768, 390 y 320 px, incluyendo estado vacío, error y acceso denegado. La aplicación usa tema claro fijo.
 
-La suite general tiene 1.025 pruebas aprobadas, 11 omitidas y 4 fallos previos, reproducidos también sobre HEAD sin estos cambios. Detalle, límites y capturas: [informe de verificación](retenciones-verificacion.md). Migración aplicada en SSH; Cloud permanece sin esta migración.
+La suite general tiene 1.025 pruebas aprobadas, 11 omitidas y 4 fallos previos, reproducidos también sobre HEAD sin estos cambios. Detalle, límites y capturas: [informe de verificación](retenciones-verificacion.md). Migración aplicada y verificada en SSH y Cloud.
 
 ## Despliegue SSH — 30/09/2026 (Honduras)
 
@@ -35,3 +35,17 @@ La suite general tiene 1.025 pruebas aprobadas, 11 omitidas y 4 fallos previos, 
 Directorio protegido del servidor: `/etc/dokploy/compose/covi-buildreq-cwn1lc/retention-documents-20261001T045723Z/`. Contiene `database.frozen.dump` (respaldo con app detenida), su SHA-256 e índice de restauración; configuración previa; código previo; informes `production.migration.json`, `production.repeat.json`, `production.before.json`, `production.after.json` y `production.smoke.json`.
 
 Imagen anterior conservada: `covi-buildreq-cwn1lc-buildreq:before-retention-documents-20261001T045723Z`. Si la migración aborta antes de confirmar, es posible volver a esa imagen. Después de confirmar, preferir corrección compatible: volver solo al código anterior no revierte los cierres de documentos. Una restauración exige detener escrituras y evaluar las operaciones posteriores; no borrar comprobantes ni sobrescribir datos nuevos automáticamente.
+
+## Despliegue Cloud — 01/10/2026 (Honduras)
+
+- Main publicado por el usuario: ed5832a. La nueva aplicación y su endpoint protegido de Retenciones se verificaron antes de migrar.
+- La aplicación nueva ya estaba desplegada. Se aplicó la migración con bloqueos de escritura de las 21 tablas origen dentro de una sola transacción, sin pausa manual de Dokploy. Si la validación o la comparación fallaba, la transacción revertía todo.
+- Resultado confirmado: **317 comprobantes, 3 notas originales vinculadas como antecedentes, 2.039 facturas comparadas; saldos y 21 tablas originales intactos**. Repetición dentro de la misma transacción: cero documentos o antecedentes nuevos. No se reclasificaron notas manuales.
+- Se conservaron exactamente las cinco fechas históricas señaladas en el despliegue SSH, con aviso de revisión. Las contabilizaciones nuevas conservan validación estricta.
+- Listado y detalle consultados con perfiles existentes de Superusuario, Contabilidad y Administración Central; perfiles ajenos y consultas sin sesión rechazados. Tres redirecciones antiguas correctas y todos los importes de líneas iguales a la factura.
+- Las tres tablas tienen RLS y carecen de permisos anon/authenticated. Se probaron seis accesos directos con esas identidades y todos fueron rechazados.
+- Salud y rutas `/retenciones` y `/tipos-retencion`: HTTP 200. API sin sesión: 401. Tres soportes de Cloud muestreados descargaron mediante enlaces firmados (206); la incidencia de archivos ausentes detectada en SSH no apareció en esta muestra.
+
+Respaldo lógico completo verificado, sin binarios de Storage. Los respaldos y los informes operativos se conservaron localmente fuera de Git. Los esquemas de la aplicación de un respaldo previo se restauraron en PostgreSQL 17 local aislado y la migración se ensayó dos veces: 317 comprobantes, 3 antecedentes y 21 tablas originales intactas.
+
+La evidencia incluye comparación dentro de la transacción y comprobaciones de roles, rutas, RLS, importes y soportes. Como en SSH, volver únicamente al código anterior después de migrar requiere evaluar su compatibilidad con los cierres; preferir una corrección compatible y no eliminar comprobantes ni sobrescribir operaciones posteriores automáticamente.
