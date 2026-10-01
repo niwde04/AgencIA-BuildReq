@@ -1072,7 +1072,8 @@ export const attachmentsRouter = router({
         await storageDelete(deleted.fileKey);
         return { success: true };
       }
+      const deleted = await db.deleteAttachment(input.id);
       await storageDelete(attachment.fileKey);
-      return db.deleteAttachment(input.id);
+      return deleted;
     }),
 });

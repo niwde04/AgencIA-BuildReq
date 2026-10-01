@@ -1,5 +1,7 @@
 # Notas de crédito y débito
 
+> Cambio local pendiente de despliegue: las retenciones fiscales pasan a comprobantes independientes y las NC automáticas quedan como antecedentes cerrados. El procedimiento vigente para esa versión está en [retenciones.md](retenciones.md). Los detalles de NC automáticas siguientes documentan el flujo anterior.
+
 Implementado el 22 de septiembre de 2026. Las rutas son `/notas-credito`, `/notas-debito`, `/conceptos-notas-credito` y `/conceptos-notas-debito`.
 
 ## Flujo

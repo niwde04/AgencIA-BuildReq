@@ -121,6 +121,7 @@ export function InvoiceAccountingQueue({
       utils.invoices.invalidate(),
       utils.treasury.invalidate(),
       utils.financialNotes.invalidate(),
+      utils.retentionDocuments.invalidate(),
       utils.dashboard.sidebarCounts.invalidate(),
     ]);
   };
@@ -704,7 +705,7 @@ export function InvoiceAccountingQueue({
             </DialogTitle>
             <DialogDescription>
               {decision?.action === "account"
-                ? "Segunda validación: se registrará la contabilización y se aplicarán los anticipos disponibles correspondientes."
+                ? "La contabilización cierra definitivamente la factura, registra su comprobante si tiene retenciones fiscales y aplica los anticipos disponibles. No podrá regresar a revisión."
                 : "La factura volverá a Facturas para corregirla, enviarla a revisión y pasar nuevamente por ambas validaciones."}
             </DialogDescription>
           </DialogHeader>

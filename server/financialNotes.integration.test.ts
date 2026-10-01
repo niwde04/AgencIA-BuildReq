@@ -248,47 +248,6 @@ describeDb(
         0
       );
     });
-    it("uses the retention group for new note lines and preserves accounted financial snapshots", async () => {
-      await retentionGroups();
-      await database.updateTaxRetention(101, {
-        financialGroupCode: "TEST-RET-01",
-      });
-      await setupRetentions();
-      const note = (await sync())!;
-      const detail = await service.getFinancialNote(note.id, admin);
-      expect(detail.lines[0]).toMatchObject({
-        financialGroupCode: "TEST-RET-01",
-        financialGroupDescription: "Retención financiera uno",
-      });
-      await prepare(
-        note.id,
-        noteDraftSchema.parse({
-          type: "credit",
-          lines: detail.lines.map(l => ({ ...l, notes: l.notes ?? undefined })),
-          allocations: detail.allocations,
-        })
-      );
-      await service.transitionFinancialNote(
-        note.id,
-        "account",
-        undefined,
-        accountant
-      );
-      await database.updateTaxRetention(101, {
-        financialGroupCode: "TEST-RET-02",
-      });
-      const after = await service.getFinancialNote(note.id, admin);
-      expect(after.lines[0]).toMatchObject({
-        financialGroupCode: "TEST-RET-01",
-        financialGroupDescription: "Retención financiera uno",
-      });
-      expect(
-        (await database.listTaxRetentions({ search: "RT01" })).items.find(
-          r => r.id === 101
-        )?.financialGroupCode
-      ).toBe("TEST-RET-02");
-    });
-
     it("seeds 30 credit, 6 debit and every retention idempotently; denies browser access", async () => {
       const before = (
         await client.query('select "activatedAt" from "financialNoteSettings"')
@@ -439,32 +398,11 @@ describeDb(
         deactivated: true,
       });
     });
-    it("retention concepts follow the same delete-or-deactivate rule", async () => {
-      const rows = (
-        await client.query(
-          `select * from "financialNoteConcepts" where "retentionCatalogId" in (101,102) order by "retentionCatalogId"`
-        )
-      ).rows;
-      await expect(service.removeNoteConcept(rows[1].id)).resolves.toEqual({
-        deactivated: false,
-      });
+    it("rejects retention concepts for new manual notes", async () => {
+      const concept = (await client.query('select id from "financialNoteConcepts" where "retentionCatalogId"=101')).rows[0];
       const input = draft();
-      input.lines[0].conceptId = rows[0].id;
-      await create(input);
-      await expect(service.removeNoteConcept(rows[0].id)).resolves.toEqual({
-        deactivated: true,
-      });
-      await (await database.getDb())!.transaction(tx =>
-        service.syncRetentionConcept(tx, 101)
-      );
-      expect(
-        (
-          await client.query(
-            'select "isActive" from "financialNoteConcepts" where id=$1',
-            [rows[0].id]
-          )
-        ).rows[0].isActive
-      ).toBe(false);
+      input.lines[0].conceptId = concept.id;
+      await expect(create(input)).rejects.toThrow(/desde Facturas/);
     });
     it("keeps sequences after deletion and project rename and starts after historic return references", async () => {
       await client.query(
@@ -584,30 +522,23 @@ describeDb(
       await post(draft("credit", "300"));
       expect(await balance()).toBe("0.0000");
     });
-    it("generates the retention draft within invoice posting and rejects double posting", async () => {
+    async function setupRetentions() {
+      await client.query(`insert into "invoiceRetentions" ("invoiceId","retentionCatalogId","retentionType",description,"baseAmount",percentage,amount) values (1,101,'percentage','Retención fiscal',1000,10,100),(1,101,'percentage','Retención fiscal',1000,15,150);
+        update suppliers set rtn='08011999000001' where id=1;
+        update invoices set "retentionTotal"=250,"otherRetentionTotal"=30,"documentDiscountTotal"=20,"netPayable"=700,
+        "retentionReceiptNumber"='001-001-01-00000001',"retentionCai"='338827-15203E-A419E0-63BE03-0909A6-53',
+        "retentionDocumentRangeStart"='001-001-01-00000001',"retentionDocumentRangeEnd"='001-001-01-99999999',
+        "retentionDocumentDate"='2026-09-22',"retentionEmissionDeadline"='2027-12-31' where id=1`);
+    }
+    it("generates the retention document within posting and rejects double posting and returning to review", async () => {
       await setupRetentions();
-      await client.query(`update invoices set status='revisada' where id=1`);
-      await database.submitInvoiceForAccounting({ id: 1, submittedById: 1 });
-      await database.accountInvoice({ id: 1, accountedById: 1 });
-      await expect(
-        database.accountInvoice({ id: 1, accountedById: 1 })
-      ).rejects.toThrow(/cambió de estado/);
-      const notes = (
-        await service.listFinancialNotes(
-          { type: "credit", invoiceId: 1 },
-          admin
-        )
-      ).items;
-      expect(notes).toHaveLength(1);
-      expect(notes[0]).toMatchObject({
-        origin: "retentions",
-        status: "borrador",
-        total: "250.0000",
-      });
-      await database.returnAccountedInvoiceToReview(1, 1);
-      expect(
-        (await service.getFinancialNote(notes[0].id, admin)).note.status
-      ).toBe("borrador");
+      await client.query("update invoices set status='revisada' where id=1");
+      await database.submitInvoiceForAccounting({ id:1, submittedById:1 });
+      await database.accountInvoice({ id:1, accountedById:1 });
+      await expect(database.accountInvoice({ id:1, accountedById:1 })).rejects.toThrow(/cambió de estado/);
+      expect((await service.listFinancialNotes({type:"credit",invoiceId:1},admin)).items).toHaveLength(0);
+      expect((await client.query('select status,total from "retentionDocuments" where "invoiceId"=1')).rows).toEqual([{status:"registrada",total:"250.0000"}]);
+      await expect(database.returnAccountedInvoiceToReview(1,1)).rejects.toThrow(/cerrada/);
     });
     it("queues without notes or advances, then posts and applies the paid advance once", async () => {
       await setupRetentions();
@@ -629,7 +560,7 @@ describeDb(
       expect(sent.submittedForAccountingAt).toBeInstanceOf(Date);
       expect(sent.accountedAt).toBeNull();
       expect(
-        (await client.query('select count(*)::int n from "financialNotes"'))
+        (await client.query('select count(*)::int n from "retentionDocuments"'))
           .rows[0].n
       ).toBe(0);
       expect(
@@ -658,7 +589,7 @@ describeDb(
         ).rows
       ).toEqual([{ amount: "300.0000" }]);
       expect(
-        (await client.query('select count(*)::int n from "financialNotes"'))
+        (await client.query('select count(*)::int n from "retentionDocuments"'))
           .rows[0].n
       ).toBe(1);
       const { listInvoiceAccountingQueue } = await import(
@@ -706,7 +637,7 @@ describeDb(
         )
       ).rows[0];
       const noteCount = (
-        await client.query('select count(*)::int n from "financialNotes"')
+        await client.query('select count(*)::int n from "retentionDocuments"')
       ).rows[0].n;
       if (invoice.status === "registrada") {
         expect(invoice.accountedAt).toBeInstanceOf(Date);
@@ -739,7 +670,7 @@ describeDb(
         (await listInvoiceAccountingQueue({ status: "rechazada" })).items
       ).toHaveLength(0);
       expect(
-        (await client.query('select count(*)::int n from "financialNotes"'))
+        (await client.query('select count(*)::int n from "retentionDocuments"'))
           .rows[0].n
       ).toBe(0);
       expect(
@@ -758,7 +689,7 @@ describeDb(
       await database.submitInvoiceForAccounting({ id: 1, submittedById: 1 });
       await database.accountInvoice({ id: 1, accountedById: 1 });
       expect(
-        (await client.query('select count(*)::int n from "financialNotes"'))
+        (await client.query('select count(*)::int n from "retentionDocuments"'))
           .rows[0].n
       ).toBe(1);
     });
@@ -816,7 +747,7 @@ describeDb(
       expect(["pendiente_contabilizar", "rechazada"]).toContain(invoice.status);
       expect(invoice.accountedAt).toBeNull();
       expect(
-        (await client.query('select count(*)::int n from "financialNotes"'))
+        (await client.query('select count(*)::int n from "retentionDocuments"'))
           .rows[0].n
       ).toBe(0);
     });
@@ -887,294 +818,11 @@ describeDb(
       ).toBe(0);
     });
 
-    async function setupRetentions() {
-      await client.query(
-        `insert into "invoiceRetentions" ("invoiceId","retentionCatalogId","retentionType",description,amount) values (1,101,'amount','Retención fiscal',100),(1,101,'amount','Retención fiscal',150); update invoices set "retentionTotal"=250,"otherRetentionTotal"=30,"documentDiscountTotal"=20,"netPayable"=700 where id=1;`
-      );
-    }
-    async function sync(invoiceId = 1, create = true) {
-      return (await database.getDb())!.transaction(tx =>
-        service.syncInvoiceRetentionNote(tx, invoiceId, 1, { create })
-      );
-    }
-    it("groups retention amounts without added ISV or double discount and protects immutable accounted notes", async () => {
-      await setupRetentions();
-      const [a, b] = await Promise.all([sync(), sync()]);
-      expect(a!.id).toBe(b!.id);
-      const detail = await service.getFinancialNote(a!.id, admin);
-      expect(detail.lines).toHaveLength(1);
-      expect(detail.lines[0]).toMatchObject({
-        baseAmount: "250.0000",
-        taxAmount: "0.0000",
-      });
-      const input = noteDraftSchema.parse({
-        type: "credit",
-        lines: detail.lines.map(l => ({ ...l, notes: l.notes ?? undefined })),
-        allocations: detail.allocations,
-      });
-      await prepare(a!.id, input);
-      await service.transitionFinancialNote(
-        a!.id,
-        "account",
-        undefined,
-        accountant
-      );
-      expect(await balance()).toBe("700.0000");
-      await expect(sync()).rejects.toThrow(/Anule/);
-      await expect(
-        client.query(`update invoices set status='revisada' where id=1`)
-      ).rejects.toThrow(/Anule/);
-      await service.transitionFinancialNote(
-        a!.id,
-        "void",
-        "Corrección de factura",
-        accountant
-      );
-      const replacement = await sync();
-      expect(replacement!.id).not.toBe(a!.id);
-      expect(await balance()).toBe("700.0000");
+    it("retires automatic retention credit note creation", async () => {
+      await expect((await database.getDb())!.transaction(tx => service.syncInvoiceRetentionNote(tx, 1, 1, { create: true })))
+        .rejects.toThrow(/retirada/);
+      expect((await client.query('select count(*)::int n from "financialNotes"')).rows[0].n).toBe(0);
     });
-    it("includes old invoices and syncs a pending retention note back to draft", async () => {
-      await setupRetentions();
-      await client.query(
-        `update invoices set "createdAt"=now()-interval '1 year' where id=1`
-      );
-      const n = (await sync())!;
-      const detail = await service.getFinancialNote(n.id, admin);
-      await prepare(
-        n.id,
-        noteDraftSchema.parse({
-          type: "credit",
-          lines: detail.lines.map(l => ({ ...l, notes: l.notes ?? undefined })),
-          allocations: detail.allocations,
-        })
-      );
-      await client.query(
-        `update "invoiceRetentions" set amount=75 where "invoiceId"=1`
-      );
-      await sync(1, false);
-      const changed = await service.getFinancialNote(n.id, admin);
-      expect(changed.note.status).toBe("borrador");
-      expect(changed.note.total).toBe("150.0000");
-      await expect(
-        service.updateFinancialNote(n.id, draft(), admin)
-      ).rejects.toThrow(/retenciones se modifican/);
-      await client.query('update invoices set "supplierId"=2 where id=1');
-      const replacement = await sync(1, false);
-      expect(replacement!.id).not.toBe(n.id);
-      expect(
-        (await service.getFinancialNote(replacement!.id, admin)).note.supplierId
-      ).toBe(2);
-      expect((await service.getFinancialNote(n.id, admin)).note.status).toBe(
-        "anulada"
-      );
-    });
-
-    it.each(["before", "after"])(
-      "creates a retention draft when accounting invoices created %s activation",
-      async timing => {
-        await setupRetentions();
-        await client.query("update invoices set status='revisada' where id=1");
-        await client.query(
-          'update invoices set "createdAt"=(select "activatedAt" from "financialNoteSettings" where id=1)+$1::interval where id=1',
-          [timing === "before" ? "-1 year" : "1 minute"]
-        );
-        await database.submitInvoiceForAccounting({ id: 1, submittedById: 1 });
-        expect(
-          (await client.query('select count(*)::int n from "financialNotes"'))
-            .rows[0].n
-        ).toBe(0);
-        await database.accountInvoice({ id: 1, accountedById: 1 });
-        const note = (
-          await client.query(
-            'select status,total,"sourceInvoiceId" from "financialNotes"'
-          )
-        ).rows[0];
-        expect(note).toEqual({
-          status: "borrador",
-          total: "250.0000",
-          sourceInvoiceId: 1,
-        });
-        expect(await balance()).toBe("700.0000");
-      }
-    );
-
-    it("keeps disabled generation and non-fiscal adjustments out of automatic notes", async () => {
-      await client.query(
-        'update invoices set "otherRetentionTotal"=30 where id=1'
-      );
-      expect(await sync()).toBeUndefined();
-      await setupRetentions();
-      await client.query('update "financialNoteSettings" set enabled=false');
-      expect(await sync()).toBeUndefined();
-      expect(
-        (await client.query('select count(*)::int n from "financialNotes"'))
-          .rows[0].n
-      ).toBe(0);
-    });
-
-    async function recovery(
-      mode: "dry-run" | "apply" = "apply",
-      overrides: Record<string, unknown> = {}
-    ) {
-      const { recoverInvoiceRetentionNote } = await import(
-        "./retentionNoteRecovery"
-      );
-      return recoverInvoiceRetentionNote({
-        invoiceId: 1,
-        invoiceNumber: "FT-P1-1",
-        retentionCode: "RT01",
-        expectedAmount: "250.0000",
-        mode,
-        ...overrides,
-      });
-    }
-
-    async function recoverySetup() {
-      await setupRetentions();
-      await client.query(
-        'update invoices set "createdAt"=$1,"accountedAt"=now(),"accountedById"=1 where id=1',
-        ["2020-01-01"]
-      );
-    }
-
-    it("recovers only the selected invoice once with dry-run, concurrent retries and unchanged financial data", async () => {
-      await recoverySetup();
-      await client.query(`
-        insert into "purchaseOrderAdvances" (id,"advanceNumber","purchaseOrderId","projectId","supplierId",currency,"requestedAmount","requestedPaymentDate","createdById")
-          values (1,'ANT-RECOVERY',1,1,1,'HNL',100,current_date,1);
-        insert into "purchaseOrderAdvanceApplications" ("purchaseOrderAdvanceId","invoiceId",amount,"appliedById") values (1,1,100,1);
-        insert into "treasuryPaymentBatches" (id,"batchNumber","projectId",currency,"requestedPaymentDate","createdById")
-          values (1,'TES-RECOVERY',1,'HNL',current_date,1);
-        insert into "treasuryPaymentItems" ("batchId","invoiceId","supplierId","supplierCode","supplierName","invoiceDocumentNumber",currency,"invoiceNetPayable","requestedAmount","bankPaidAmount",status,"activeReservation","accountedAt")
-          values (1,1,1,'S1','Supplier One','FT-P1-1','HNL',700,50,50,'contabilizada',false,now());
-      `);
-      const snapshot = async () =>
-        (
-          await client.query(`select
-        (select jsonb_agg(to_jsonb(i) order by id) from invoices i) as invoices,
-        (select jsonb_agg(to_jsonb(p) order by id) from "treasuryPaymentItems" p) as payments,
-        (select jsonb_agg(to_jsonb(a) order by id) from "purchaseOrderAdvanceApplications" a) as advances,
-        (select jsonb_agg(to_jsonb(s) order by id) from "financialNoteSettings" s) as settings`)
-        ).rows[0];
-      const before = await snapshot();
-      const beforeBalance = await balance();
-      expect(await recovery("dry-run")).toMatchObject({
-        outcome: "would_create",
-        amount: "250.0000",
-      });
-      expect(
-        (await client.query('select count(*)::int n from "financialNotes"'))
-          .rows[0].n
-      ).toBe(0);
-      expect(
-        (
-          await client.query(
-            'select count(*)::int n from "financialNoteSequences"'
-          )
-        ).rows[0].n
-      ).toBe(0);
-      const attempts = await Promise.all([recovery(), recovery()]);
-      expect(attempts.map(r => r.outcome).sort()).toEqual([
-        "already_exists",
-        "created",
-      ]);
-      const note = (
-        await client.query('select id,status,total from "financialNotes"')
-      ).rows[0];
-      expect(note).toMatchObject({ status: "borrador", total: "250.0000" });
-      const events = (
-        await client.query('select * from "financialNoteEvents" order by id')
-      ).rows;
-      expect(events.filter(e => e.action === "recuperada")).toHaveLength(1);
-      expect(events.find(e => e.action === "recuperada")).toMatchObject({
-        actorId: 1,
-      });
-      expect(await recovery()).toMatchObject({
-        outcome: "already_exists",
-        note: { id: note.id },
-      });
-      expect(
-        (await client.query('select * from "financialNoteEvents" order by id'))
-          .rows
-      ).toEqual(events);
-      expect(await snapshot()).toEqual(before);
-      expect(
-        await service.invoiceNoteAvailable((await database.getDb())!, 1)
-      ).toBe("550.0000");
-      const detail = await service.getFinancialNote(note.id, admin);
-      expect(detail.lines[0]).toMatchObject({
-        baseAmount: "250.0000",
-        taxAmount: "0.0000",
-      });
-      await prepare(
-        note.id,
-        noteDraftSchema.parse({
-          type: "credit",
-          lines: detail.lines.map(l => ({ ...l, notes: l.notes ?? undefined })),
-          allocations: detail.allocations,
-        })
-      );
-      await service.transitionFinancialNote(
-        note.id,
-        "account",
-        undefined,
-        accountant
-      );
-      const posted = (
-        await client.query('select * from "financialNotes" where id=$1', [
-          note.id,
-        ])
-      ).rows[0];
-      expect(await recovery()).toMatchObject({
-        outcome: "already_exists",
-        note: { status: "registrada" },
-      });
-      expect(
-        (
-          await client.query('select * from "financialNotes" where id=$1', [
-            note.id,
-          ])
-        ).rows[0]
-      ).toEqual(posted);
-      expect(await balance()).toBe(beforeBalance);
-    });
-
-    it.each([
-      ["wrong invoice", { invoiceNumber: "FT-OTHER" }, "", /destino/],
-      ["changed amount", { expectedAmount: "251.0000" }, "", /importe/],
-      ["wrong tax", { retentionCode: "RT15" }, "", /retenciones fiscales/],
-      [
-        "not accounted",
-        {},
-        "update invoices set status='revisada' where id=1",
-        /contabilizada/,
-      ],
-      [
-        "no original actor",
-        {},
-        'update invoices set "accountedById"=null where id=1',
-        /responsable/,
-      ],
-      [
-        "disabled",
-        {},
-        'update "financialNoteSettings" set enabled=false',
-        /deshabilitadas/,
-      ],
-    ] as const)(
-      "blocks recovery for %s without creating anything",
-      async (_label, overrides, change, message) => {
-        await recoverySetup();
-        if (change) await client.query(change);
-        await expect(recovery("apply", overrides)).rejects.toThrow(message);
-        expect(
-          (await client.query('select count(*)::int n from "financialNotes"'))
-            .rows[0].n
-        ).toBe(0);
-        expect(await balance()).toBe("700.0000");
-      }
-    );
 
     async function setupReturn(mapped = true, stock = 10) {
       await client.query(`insert into "receiptItems" (id,"receiptId","itemName","sapItemCode","quantityExpected","quantityReceived","warehouseId") values (1,1,'Material','ITEM1',10,10,1);
@@ -1456,42 +1104,6 @@ describeDb(
           )
         ).rows[0].n
       ).toBe(1);
-    });
-    it("can account a retention note after the rounded full balance has been paid", async () => {
-      await setupRetentions();
-      await client.query(
-        'update invoices set total=1000.0055, "netPayable"=700.0055 where id=1'
-      );
-      const note = await sync();
-      const detail = await service.getFinancialNote(note!.id, admin);
-      const input = noteDraftSchema.parse({
-        type: "credit",
-        lines: detail.lines.map(line => ({
-          ...line,
-          notes: line.notes ?? undefined,
-        })),
-        allocations: detail.allocations,
-      });
-      await prepare(note!.id, input);
-      const payment = await reserve(700.01);
-      await client.query(
-        `update "treasuryPaymentItems" set status='contabilizada', "bankPaidAmount"=700.01, "activeReservation"=false where "batchId"=$1`,
-        [payment.id]
-      );
-      await service.transitionFinancialNote(
-        note!.id,
-        "account",
-        undefined,
-        accountant
-      );
-      expect(await balance()).toBe("0.0000");
-      expect(
-        (await service.getFinancialNote(note!.id, admin)).note.status
-      ).toBe("registrada");
-      expect(
-        (await client.query('select "netPayable" from invoices where id=1'))
-          .rows[0].netPayable
-      ).toBe("700.0055");
     });
     it("uses the same per-payment rounding as the UI for legacy bank amounts", async () => {
       await client.query(

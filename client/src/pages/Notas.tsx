@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearch } from "wouter";
+import { useSearch, useLocation } from "wouter";
 import {
   Plus,
   FileText,
@@ -118,6 +118,7 @@ const eventLabels: Record<string, string> = {
 
 export default function Notas({ type }: { type: FinancialNoteType }) {
   const { user } = useAuth();
+  const [, navigate] = useLocation();
   const utils = trpc.useUtils();
   const searchParams = useSearch();
   const canPrepare = canPrepareFinancialNotes(user);
@@ -199,6 +200,10 @@ export default function Notas({ type }: { type: FinancialNoteType }) {
       return;
     if (loadedId.current === selectedId && dirty) return;
     const d = detail.data;
+    if (d.note.origin === "retentions") {
+      if (d.retentionDocumentId) navigate("/retenciones?id=" + d.retentionDocumentId);
+      return;
+    }
     setEditType(d.note.type);
     setNoteScope({
       supplierId: d.note.supplierId,
@@ -234,7 +239,7 @@ export default function Notas({ type }: { type: FinancialNoteType }) {
   }, [detail.data, selectedId]);
   const editing =
     selectedId === 0 ||
-    (canPrepare && !!note && ["borrador", "rechazada"].includes(note.status));
+    (canPrepare && !!note && note.origin !== "retentions" && ["borrador", "rechazada"].includes(note.status));
   const financialEditing = editing && note?.origin !== "retentions";
   const money = (amount: unknown) =>
     `${noteScope?.currency ?? "HNL"} ${Number(amount ?? 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
@@ -564,7 +569,7 @@ export default function Notas({ type }: { type: FinancialNoteType }) {
               }}
             >
               <option value="all">Todos los orígenes</option>
-              {Object.entries(NOTE_ORIGIN_LABELS).map(([v, l]) => (
+              {Object.entries(NOTE_ORIGIN_LABELS).filter(([value]) => value !== "retentions").map(([v, l]) => (
                 <option key={v} value={v}>
                   {l}
                 </option>

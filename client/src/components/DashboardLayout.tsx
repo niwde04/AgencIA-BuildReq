@@ -377,6 +377,12 @@ const allMenuItems: MenuItem[] = [
     icon: Percent,
     label: "Retenciones",
     path: "/retenciones",
+    roles: ["administracion_central", "contable", "admin"],
+  },
+  {
+    icon: Percent,
+    label: "Tipos de retención",
+    path: "/tipos-retencion",
     roles: [
       "administracion_central",
       "administrador_proyecto",
@@ -483,6 +489,7 @@ const MAIN_MENU_SECTIONS = [
       "/conceptos-notas-debito",
       "/impuestos",
       "/retenciones",
+      "/tipos-retencion",
       "/grupos-financieros",
       "/matriz-costos",
       "/activos-fijos-pendientes",
@@ -667,7 +674,8 @@ function DashboardLayoutContent({
           item.path === "/proyectos" ||
           item.path === "/reportes" ||
           item.path === "/impuestos" ||
-          item.path === "/retenciones"
+          item.path === "/retenciones" ||
+          item.path === "/tipos-retencion"
         );
       }
       if (!item.roles) return true;
@@ -711,7 +719,8 @@ function DashboardLayoutContent({
     location !== "/proyectos" &&
     location !== "/reportes" &&
     location !== "/impuestos" &&
-    location !== "/retenciones";
+    location !== "/retenciones" &&
+    location !== "/tipos-retencion";
   const isSuperintendentAllowedPath =
     location === "/" ||
     location === "/articulos" ||

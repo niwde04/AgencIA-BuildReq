@@ -1,3 +1,4 @@
+import { canReadRetentionDocuments } from "../shared/retention-documents";
 import { invoiceNoteBalanceSql } from "./invoiceMoney";
 import { TRPCError } from "@trpc/server";
 import { sql, type SQL } from "drizzle-orm";
@@ -17,7 +18,6 @@ import {
   canAccountFinancialNotes,
   canPrepareFinancialNotes,
   canReadFinancialNotes,
-  groupNoteRetentions,
   noteMoneyString,
   noteMoneyUnits,
   sumNoteMoney,
@@ -86,10 +86,14 @@ function scope(user: NoteActor, column: SQL) {
     : sql`${column} = any(${sql.param(ids)}::int[])`;
 }
 export function assertFinancialNoteAccess(
-  note: Pick<FinancialNote, "projectId" | "status">,
+  note: Pick<FinancialNote, "projectId" | "status"> & { origin?: string },
   user: NoteActor,
   action: "view" | "prepare" | "account" = "view"
 ) {
+  if (note.origin === "retentions") {
+    if (action !== "view") bad("Este antecedente está cerrado; consúltelo en Retenciones");
+    if (!canReadRetentionDocuments(user)) throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a retenciones" });
+  }
   const allowed =
     action === "prepare"
       ? canPrepareFinancialNotes(user)
@@ -142,7 +146,7 @@ export async function listNoteConcepts(input: {
 }) {
   const db = await database();
   const pageSize = input.pageSize ?? 25;
-  const filter = sql`c.type = ${input.type} and (${input.isActive ?? null}::boolean is null or c."isActive" = ${input.isActive ?? null}) and (c.code ilike ${`%${input.search ?? ""}%`} or c.description ilike ${`%${input.search ?? ""}%`})`;
+  const filter = sql`c."retentionCatalogId" is null and c.type = ${input.type} and (${input.isActive ?? null}::boolean is null or c."isActive" = ${input.isActive ?? null}) and (c.code ilike ${`%${input.search ?? ""}%`} or c.description ilike ${`%${input.search ?? ""}%`})`;
   const [{ total }] = await noteRows(
     db,
     sql`select count(*)::int total from "financialNoteConcepts" c where ${filter}`
@@ -299,7 +303,7 @@ export async function getFinancialNote(id: number, user: NoteActor) {
     }
   >(
     db,
-    sql`select n.*, s.name "supplierName", s.rtn "supplierRtn", p.name "projectName", r."returnNumber" "sourceReturnNumber" from "financialNotes" n join suppliers s on s.id=n."supplierId" join projects p on p.id=n."projectId" left join "reverseLogistics" r on r.id=n."sourceReturnId" where n.id=${id} and n."deletedAt" is null`
+    sql`select n.*, s.name "supplierName", s.rtn "supplierRtn", p.name "projectName", r."returnNumber" "sourceReturnNumber" from "financialNotes" n join suppliers s on s.id=n."supplierId" join projects p on p.id=n."projectId" left join "reverseLogistics" r on r.id=n."sourceReturnId" where n.id=${id} and (n."deletedAt" is null or n.origin='retentions')`
   );
   if (!note)
     throw new TRPCError({ code: "NOT_FOUND", message: "Nota no encontrada" });
@@ -336,7 +340,11 @@ export async function getFinancialNote(id: number, user: NoteActor) {
     sql`select i.id "invoiceId", ${invoiceNoteBalanceSql(sql`i.id`, sql`i."netPayable"`)}::numeric(14,4)::text available
       from invoices i where i.id=any(${sql.param(allocations.map(a => a.invoiceId))}::int[])`
   );
+  const retentionDocumentId = note.origin === "retentions"
+    ? (await (await import("./retentionDocuments")).resolveLegacyRetention(note.id, user))?.documentId ?? null
+    : null;
   return {
+    retentionDocumentId,
     note,
     lines,
     allocations: allocations.map(a => ({
@@ -373,7 +381,7 @@ export async function listFinancialNotes(
   const pageSize = input.pageSize ?? 25;
   const restricted =
     !canPrepareFinancialNotes(user) && !canAccountFinancialNotes(user);
-  const filter = sql`n.type=${input.type} and n."deletedAt" is null and ${scope(user, sql`n."projectId"`)}
+  const filter = sql`n.origin <> 'retentions' and n.type=${input.type} and n."deletedAt" is null and ${scope(user, sql`n."projectId"`)}
     and (${input.projectId ?? null}::int is null or n."projectId"=${input.projectId ?? null})
     and (${input.supplierId ?? null}::int is null or n."supplierId"=${input.supplierId ?? null})
     and (${input.status ?? null}::text is null or n.status=${input.status ?? null})
@@ -584,6 +592,7 @@ async function prepareLines(
     const concept = concepts.find(c => c.id === line.conceptId);
     if (!concept || concept.type !== type || !concept.isActive)
       bad("Seleccione un concepto activo del tipo de nota correspondiente");
+    if (concept.retentionCatalogId) bad("Los conceptos de retención se utilizan desde Facturas");
     const tax = taxes.find(t => t.taxCode === line.taxCode);
     if (line.taxCode && !tax) bad("Seleccione un impuesto activo");
     if (
@@ -1007,127 +1016,9 @@ export async function lookupNoteFiscalRange(
     : null;
 }
 
-export async function syncInvoiceRetentionNote(
-  tx: Executor,
-  invoiceId: number,
-  actorId: number,
-  options: { create?: boolean } = {}
-) {
-  const [invoice] = await lockInvoices(tx, [invoiceId]);
-  if (!invoice) return;
-  const [existingRow] = await noteRows<FinancialNote>(
-    tx,
-    sql`select * from "financialNotes" where "sourceInvoiceId"=${invoiceId} and origin='retentions' and status<>'anulada' for update`
-  );
-  let existing: FinancialNote | undefined = existingRow;
-  if (existing?.status === "registrada")
-    bad(
-      "Anule la nota de retenciones contabilizada antes de corregir la factura"
-    );
-  let replacingPending = false;
-  if (
-    existing &&
-    (existing.projectId !== invoice.projectId ||
-      existing.supplierId !== invoice.supplierId ||
-      existing.currency !== invoice.currency)
-  ) {
-    await tx.execute(
-      sql`update "financialNotes" set status='anulada',"updatedAt"=now() where id=${existing.id}`
-    );
-    await event(
-      tx,
-      existing.id,
-      actorId,
-      "anulada",
-      "Sustituida por cambio de proveedor, proyecto o moneda en la factura"
-    );
-    replacingPending = true;
-    existing = undefined;
-  }
-  const [settings] = await noteRows(
-    tx,
-    sql`select "enabled" from "financialNoteSettings" where id=1`
-  );
-  if (
-    !existing &&
-    ((!options.create && !replacingPending) || !settings?.enabled)
-  )
-    return;
-  const retentions = await noteRows<{
-    retentionCatalogId: number | null;
-    description: string;
-    amount: string;
-  }>(
-    tx,
-    sql`select "retentionCatalogId",description,amount from "invoiceRetentions" where "invoiceId"=${invoiceId} order by "retentionCatalogId",id`
-  );
-  const grouped =
-    invoice.status === "anulada" ? [] : groupNoteRetentions(retentions);
-  if (!grouped.length) {
-    if (existing) {
-      await tx.execute(
-        sql`update "financialNotes" set status='anulada',"updatedAt"=now() where id=${existing.id}`
-      );
-      await event(
-        tx,
-        existing.id,
-        actorId,
-        "anulada",
-        "La factura dejó de tener retenciones fiscales vigentes"
-      );
-    }
-    return;
-  }
-  if (!invoice.supplierId)
-    bad("La factura con retenciones debe tener proveedor");
-  for (const row of grouped)
-    await syncRetentionConcept(tx, row.retentionCatalogId);
-  const concepts = await noteRows<NoteConcept>(
-    tx,
-    sql`select c.*,g."financialGroupDescription" from "financialNoteConcepts" c left join "financialGroups" g on g."financialGroupCode"=c."financialGroupCode" where c."retentionCatalogId"=any(${sql.param(grouped.map(r => r.retentionCatalogId))}::int[])`
-  );
-  let note = existing;
-  if (!note) {
-    const number = await allocateNumber(tx, invoice.projectId, "credit");
-    [note] = await noteRows<FinancialNote>(
-      tx,
-      sql`insert into "financialNotes" (type,origin,"documentNumber","projectId","supplierId",currency,"sourceInvoiceId","createdById") values ('credit','retentions',${number},${invoice.projectId},${invoice.supplierId},${invoice.currency},${invoice.id},${actorId}) returning *`
-    );
-  }
-  const lines = grouped.map(row => {
-    const concept = concepts.find(
-      c => c.retentionCatalogId === row.retentionCatalogId
-    );
-    if (!concept) return bad("Falta el concepto de una retención");
-    return {
-      conceptId: concept.id,
-      code: concept.code,
-      description: row.description,
-      financialGroupCode: concept.financialGroupCode,
-      financialGroupDescription: concept.financialGroupDescription ?? null,
-      baseAmount: row.amount,
-      taxCode: null,
-      taxSnapshot: null,
-      taxAmount: "0.0000",
-      total: row.amount,
-      notes: null,
-    };
-  });
-  await replaceLines(tx, note.id, lines);
-  await replaceAllocations(tx, note.id, [
-    { invoiceId, amount: sumNoteMoney(grouped.map(r => r.amount)) },
-  ]);
-  await tx.execute(
-    sql`update "financialNotes" set status='borrador',"updatedAt"=now() where id=${note.id}`
-  );
-  await event(
-    tx,
-    note.id,
-    actorId,
-    existing ? "sincronizada" : "creada",
-    "Importes de retenciones fiscales; sin descuento adicional"
-  );
-  return { id: note.id, documentNumber: note.documentNumber };
+/** Retired compatibility entry point for old maintenance scripts. */
+export async function syncInvoiceRetentionNote(tx: Executor, invoiceId: number, actorId: number, options: { create?: boolean } = {}): Promise<{id:number; documentNumber:string} | undefined> {
+  bad("La generación de notas de retención fue retirada. Ejecute la migración de comprobantes de retención.");
 }
 
 export async function createSupplierReturnNote(

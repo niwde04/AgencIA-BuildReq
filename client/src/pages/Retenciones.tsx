@@ -288,7 +288,7 @@ export default function Retenciones() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1>Retenciones</h1>
+          <h1>Tipos de retención</h1>
           <p className="text-sm text-muted-foreground">
             {error
               ? "No fue posible cargar las retenciones"

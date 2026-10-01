@@ -6,7 +6,6 @@ import { protectedProcedure, router } from "../_core/trpc";
 import {
   CAI_FORMAT_EXAMPLE,
   INVOICE_NUMBER_FORMAT_EXAMPLE,
-  SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL,
   formatCaiInput,
   formatInvoiceNumberInput,
   isValidCai,
@@ -71,16 +70,6 @@ function canAccountInvoices(user: {
   buildreqRole?: string | null;
 }) {
   return user.role === "admin" || user.buildreqRole === "contable";
-}
-
-function canReturnInvoiceToReview(user: {
-  role: string;
-  email?: string | null;
-}) {
-  return (
-    user.role === "admin" &&
-    user.email?.trim().toLowerCase() === SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL
-  );
 }
 
 function canEditDocumentAdjustments(
@@ -1249,27 +1238,7 @@ export const invoicesRouter = router({
 
   returnToReview: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
-    .mutation(async ({ ctx, input }) => {
-      if (!canReturnInvoiceToReview(ctx.user)) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message:
-            "Solo el administrador autorizado puede realizar esta acción",
-        });
-      }
-
-      try {
-        return await db.returnAccountedInvoiceToReview(input.id, ctx.user.id);
-      } catch (error) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            error instanceof Error
-              ? error.message
-              : "No se pudo regresar la factura a revisión",
-        });
-      }
-    }),
+    .mutation(() => { throw new TRPCError({ code: "BAD_REQUEST", message: "La factura contabilizada está cerrada y no puede regresar a revisión" }); }),
 
   reject: protectedProcedure
     .input(

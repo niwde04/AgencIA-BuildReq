@@ -1,3 +1,4 @@
+import { canReadRetentionDocuments } from "@shared/retention-documents";
 import { InvoiceAccountingQueue } from "@/components/InvoiceAccountingQueue";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useSearch } from "wouter";
@@ -2660,6 +2661,9 @@ function BatchDetailDialog({
                           item.invoiceNetPayable,
                           detail.batch.currency
                         )}
+                        {Number(item.invoiceRetentionTotal) > 0 && canReadRetentionDocuments(user) ? (
+                          <a className="mt-1 block text-xs font-normal text-primary hover:underline" href={`/retenciones?invoiceId=${item.invoiceId}`}>Comprobante de retención</a>
+                        ) : null}
                         {Number(item.invoiceCreditNoteTotal) > 0 ? (
                           <a
                             className="mt-1 block text-xs font-normal text-primary hover:underline"
