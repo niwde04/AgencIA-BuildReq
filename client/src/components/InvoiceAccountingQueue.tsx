@@ -138,7 +138,9 @@ export function InvoiceAccountingQueue({
   });
   const reject = trpc.invoices.reject.useMutation({
     onSuccess: async () => {
-      toast.success("Factura rechazada; disponible para corregir en Facturas");
+      toast.success(
+        "Factura enviada a revisión; disponible para corregir en Facturas"
+      );
       setDecision(null);
       await invalidate();
     },
@@ -237,8 +239,8 @@ export function InvoiceAccountingQueue({
                   )}
                 </span>
                 <span className="pl-4 text-sm font-normal text-muted-foreground">
-                  Revisa las facturas enviadas y contabilízalas o recházalas
-                  para corrección.
+                  Revisa las facturas enviadas y contabilízalas o envíalas a
+                  revisión para corregirlas.
                 </span>
               </span>
             </AccordionTrigger>
@@ -584,7 +586,7 @@ export function InvoiceAccountingQueue({
                                           onClick={() => choose(row, "reject")}
                                         >
                                           <XCircle className="mr-1 h-4 w-4" />
-                                          Rechazar
+                                          Enviar a revisión
                                         </Button>
                                       </div>
                                     ) : (
@@ -701,11 +703,11 @@ export function InvoiceAccountingQueue({
             <DialogTitle>
               {decision?.action === "account"
                 ? "Contabilizar factura"
-                : "Rechazar factura"}
+                : "Enviar factura a revisión"}
             </DialogTitle>
             <DialogDescription>
               {decision?.action === "account"
-                ? "La contabilización cierra definitivamente la factura, registra su comprobante si tiene retenciones fiscales y aplica los anticipos disponibles. No podrá regresar a revisión."
+                ? "La contabilización registra la factura, crea su comprobante si tiene retenciones fiscales y aplica los anticipos disponibles. Los datos documentales quedan cerrados."
                 : "La factura volverá a Facturas para corregirla, enviarla a revisión y pasar nuevamente por ambas validaciones."}
             </DialogDescription>
           </DialogHeader>
@@ -730,7 +732,7 @@ export function InvoiceAccountingQueue({
                 <Label htmlFor="accounting-comment">
                   {decision.action === "account"
                     ? "Comentario (opcional)"
-                    : "Motivo de rechazo *"}
+                    : "Motivo de devolución a revisión *"}
                 </Label>
                 <Textarea
                   id="accounting-comment"
@@ -763,7 +765,7 @@ export function InvoiceAccountingQueue({
                 ? "Procesando…"
                 : decision?.action === "account"
                   ? "Confirmar contabilización"
-                  : "Confirmar rechazo"}
+                  : "Enviar a revisión"}
             </Button>
           </DialogFooter>
         </DialogContent>

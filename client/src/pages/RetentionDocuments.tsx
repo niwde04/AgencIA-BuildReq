@@ -55,7 +55,7 @@ export default function RetentionDocuments() {
     invoiceSearch: "",
     dateFrom: "",
     dateTo: "",
-    status: "registrada",
+    status: invoiceId ? "all" : "registrada",
   });
   const [applied, setApplied] = useState(filters);
   const [page, setPage] = useState(1),
@@ -67,7 +67,7 @@ export default function RetentionDocuments() {
       status:
         applied.status === "all"
           ? undefined
-          : (applied.status as "registrada" | "historico"),
+          : (applied.status as "registrada" | "historico" | "anulada"),
       dateFrom: applied.dateFrom || undefined,
       dateTo: applied.dateTo || undefined,
       page,
@@ -195,6 +195,7 @@ export default function RetentionDocuments() {
           >
             <option value="registrada">Contabilizados</option>
             <option value="historico">Históricos</option>
+            <option value="anulada">Anulados</option>
             <option value="all">Todos</option>
           </select>
         </div>
@@ -322,9 +323,11 @@ export default function RetentionDocuments() {
                             row.status === "historico" ? "secondary" : "outline"
                           }
                         >
-                          {row.status === "historico"
-                            ? "Histórico"
-                            : "Contabilizado"}
+                          {row.status === "anulada"
+                            ? "Anulado"
+                            : row.status === "historico"
+                              ? "Histórico"
+                              : "Contabilizado"}
                         </Badge>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
@@ -353,9 +356,11 @@ export default function RetentionDocuments() {
                       {shown(row.documentNumber)}
                     </h2>
                     <Badge variant="outline">
-                      {row.status === "historico"
-                        ? "Histórico"
-                        : "Contabilizado"}
+                      {row.status === "anulada"
+                        ? "Anulado"
+                        : row.status === "historico"
+                          ? "Histórico"
+                          : "Contabilizado"}
                     </Badge>
                   </div>
                   {row.requiresReview && (
@@ -430,14 +435,37 @@ export default function RetentionDocuments() {
               <div className="min-w-0 space-y-5 p-4 sm:p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <Badge variant="outline">
-                    {d.status === "historico"
-                      ? "Histórico"
-                      : "Contabilizado · Cerrado"}
+                    {d.status === "anulada"
+                      ? "Anulado · No vigente"
+                      : d.status === "historico"
+                        ? "Histórico"
+                        : "Contabilizado · Cerrado"}
                   </Badge>
                   <p className="text-xl font-semibold tabular-nums">
                     {money(d.total, d.currency)}
                   </p>
                 </div>
+                {d.status === "anulada" && (
+                  <aside
+                    role="note"
+                    className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm"
+                  >
+                    <h2 className="font-semibold">
+                      Comprobante anulado por reversión de la factura
+                    </h2>
+                    <p>
+                      Este comprobante conserva sus datos y soportes originales
+                      y no participa en los totales vigentes.
+                    </p>
+                    <p className="break-words">Motivo: {d.voidReason}</p>
+                    <p>
+                      {d.voidedByName} ·{" "}
+                      {d.voidedAt
+                        ? new Date(d.voidedAt).toLocaleString("es-HN")
+                        : ""}
+                    </p>
+                  </aside>
+                )}
                 {d.status === "historico" && (
                   <p className="rounded-md bg-muted p-3 text-sm">
                     Antecedente conservado para auditoría. Su importe no se suma

@@ -18,6 +18,19 @@ export const EMISSION_DEADLINE_ISSUE_MESSAGE =
   "Documento fuera de fecha límite de emisión";
 export const SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL = "ed_barah@hotmail.com";
 
+export function canRevertAccountedInvoices(
+  user:
+    | { role?: string | null; email?: string | null; isActive?: boolean }
+    | null
+    | undefined
+) {
+  return (
+    user?.role === "admin" &&
+    user.isActive !== false &&
+    user.email?.trim().toLowerCase() === SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL
+  );
+}
+
 const CAI_LENGTH = CAI_GROUPS.reduce((sum, group) => sum + group, 0);
 const INVOICE_NUMBER_LENGTH = INVOICE_NUMBER_GROUPS.reduce(
   (sum, group) => sum + group,
@@ -79,9 +92,7 @@ export function normalizeFiscalRtn(value: string | null | undefined) {
   return String(value ?? "").replace(/\D/g, "");
 }
 
-export function getFiscalInvoiceNumberKey(
-  value: string | null | undefined
-) {
+export function getFiscalInvoiceNumberKey(value: string | null | undefined) {
   const compact = String(value ?? "").replace(/\D/g, "");
   return compact.length === INVOICE_NUMBER_LENGTH ? compact : null;
 }

@@ -85,7 +85,9 @@ export function validateRetentionSnapshot(
   const date = calendarDate(invoice.retentionDocumentDate);
   const deadline = calendarDate(invoice.retentionEmissionDeadline);
   if (!date || !deadline)
-    return fail("Revise las fechas de emisión y límite del comprobante de retención");
+    return fail(
+      "Revise las fechas de emisión y límite del comprobante de retención"
+    );
   if (date > deadline) {
     if (!options.preserveHistoricalDates)
       fail(
@@ -188,7 +190,7 @@ export type RetentionListInput = {
   page?: number;
   pageSize?: number;
   search?: string;
-  status?: "registrada" | "historico";
+  status?: "registrada" | "historico" | "anulada";
   supplierId?: number;
   projectId?: number;
   invoiceId?: number;
@@ -237,7 +239,7 @@ export async function listRetentionDocuments(
     }
   >(
     db,
-    sql`select d.id,d."invoiceId",d."legacyNoteId",d."supplierId",d."projectId",d.status,d."documentNumber",d.currency,d.total,d."documentDate",d."createdAt",d."createdById",
+    sql`select d.id,d."invoiceId",d."legacyNoteId",d."supplierId",d."projectId",d.status,d."documentNumber",d.currency,d.total,d."documentDate",d."createdAt",d."createdById",d."voidedAt",d."voidedById",d."voidReason",d."reversalId",
       d.snapshot->>'supplierName' "supplierName",d.snapshot->>'projectName' "projectName",
       d.snapshot->>'invoiceNumber' "invoiceNumber",d.snapshot->>'invoiceDocumentNumber' "invoiceDocumentNumber",
       jsonb_array_length(coalesce(d.snapshot->'reviewWarnings','[]'::jsonb))>0 "requiresReview"
@@ -253,9 +255,11 @@ export async function listRetentionDocuments(
 export async function getRetentionDocument(id: number, user: NoteActor) {
   assertRetentionAccess(user);
   const db = await database();
-  const [document] = await noteRows<RetentionDocument>(
+  const [document] = await noteRows<
+    RetentionDocument & { voidedByName: string | null }
+  >(
     db,
-    sql`select * from "retentionDocuments" where id=${id}`
+    sql`select d.*,u.name "voidedByName" from "retentionDocuments" d left join users u on u.id=d."voidedById" where d.id=${id}`
   );
   if (!document)
     throw new TRPCError({

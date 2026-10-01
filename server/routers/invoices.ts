@@ -12,7 +12,12 @@ import {
   isFiscalInvoiceRangeOrdered,
   isInvoiceNumberWithinFiscalRange,
   isValidInvoiceNumber,
+  canRevertAccountedInvoices,
 } from "@shared/invoices";
+import {
+  revertInvoiceToTreasury,
+  getInvoiceReversalHistory,
+} from "../invoiceReversals";
 import {
   ASSET_CONDITION_VALUES,
   normalizeFixedAssetDetails,
@@ -1238,7 +1243,62 @@ export const invoicesRouter = router({
 
   returnToReview: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
-    .mutation(() => { throw new TRPCError({ code: "BAD_REQUEST", message: "La factura contabilizada está cerrada y no puede regresar a revisión" }); }),
+    .mutation(() => {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "La factura contabilizada está cerrada y no puede regresar a revisión",
+      });
+    }),
+
+  revertToTreasury: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        reason: z.string().trim().min(5).max(2000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canRevertAccountedInvoices(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo ed_barah@hotmail.com puede revertir facturas contabilizadas",
+        });
+      }
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail)
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      if (!canAccessProject(ctx.user, detail.invoice.projectId)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso al proyecto de esta factura",
+        });
+      }
+      return revertInvoiceToTreasury(input.id, ctx.user.id, input.reason);
+    }),
+
+  reversalHistory: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      if (!canAccessInvoices(ctx.user))
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a facturas",
+        });
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail)
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      assertProjectScopedAccess(ctx.user, detail.invoice.projectId);
+      assertAccountingAccess(ctx.user, detail);
+      return getInvoiceReversalHistory(input.id);
+    }),
 
   reject: protectedProcedure
     .input(

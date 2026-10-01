@@ -6,6 +6,9 @@ export function buildRetentionPrintHtml(document: {
   currency: string;
   total: string;
   snapshot: RetentionSnapshot;
+  voidedAt?: Date | string | null;
+  voidedByName?: string | null;
+  voidReason?: string | null;
 }) {
   const e = escapeNoteHtml,
     s = document.snapshot;
@@ -30,10 +33,26 @@ export function buildRetentionPrintHtml(document: {
     '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Comprobante de retención</title><style>@page{size:letter;margin:16mm}body{font:12px Arial;color:#172033}h1{font-size:23px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px}table{border-collapse:collapse;width:100%;margin-top:24px}td,th{padding:9px;border-bottom:1px solid #ccd1d9;text-align:left}tr{break-inside:avoid}thead{display:table-header-group}.amount{text-align:right;white-space:nowrap}p,td,div{overflow-wrap:anywhere}</style></head><body><h1>Comprobante de retención</h1><p>' +
     e(document.documentNumber) +
     " · " +
-    (document.status === "historico"
-      ? "HISTÓRICO · No constituye un comprobante vigente"
-      : "Contabilizado") +
+    (document.status === "anulada"
+      ? "ANULADO · No constituye un comprobante vigente"
+      : document.status === "historico"
+        ? "HISTÓRICO · No constituye un comprobante vigente"
+        : "Contabilizado") +
     "</p>" +
+    (document.status === "anulada"
+      ? "<aside><strong>ANULADO POR REVERSIÓN DE FACTURA</strong>" +
+        field("Motivo de anulación", document.voidReason) +
+        field("Anulado por", document.voidedByName) +
+        field(
+          "Fecha de anulación",
+          document.voidedAt
+            ? new Date(document.voidedAt).toLocaleString("es-HN", {
+                timeZone: "America/Tegucigalpa",
+              })
+            : null
+        ) +
+        "</aside>"
+      : "") +
     (s.reviewWarnings?.length
       ? "<aside><strong>Revisión contable pendiente</strong>" +
         s.reviewWarnings.map(w => "<p>" + e(w) + "</p>").join("") +
@@ -69,7 +88,11 @@ export function buildRetentionPrintHtml(document: {
       )
       .join("") +
     '</tbody></table><p class="amount"><strong>' +
-    (document.status === "historico" ? "Importe histórico" : "Total retenido") +
+    (document.status === "anulada"
+      ? "Importe anulado"
+      : document.status === "historico"
+        ? "Importe histórico"
+        : "Total retenido") +
     ": " +
     money(document.total) +
     "</strong></p><h2>Historial</h2>" +

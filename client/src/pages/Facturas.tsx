@@ -91,6 +91,7 @@ import {
   isInvoiceNumberWithinFiscalRange,
   isValidCai,
   isValidInvoiceNumber,
+  canRevertAccountedInvoices,
 } from "@shared/invoices";
 import { getInvoiceReceiptFiscalDifferences } from "@shared/invoice-receipt-fiscal";
 import {
@@ -1616,6 +1617,8 @@ export default function Facturas() {
     useState(false);
   const [accountingComment, setAccountingComment] = useState("");
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [reversalDialogOpen, setReversalDialogOpen] = useState(false);
+  const [reversalReason, setReversalReason] = useState("");
   const [rejectionComment, setRejectionComment] = useState("");
   const [correctionDialogOpen, setCorrectionDialogOpen] = useState(false);
   const [correctionReason, setCorrectionReason] = useState("");
@@ -1787,6 +1790,10 @@ export default function Facturas() {
       { id: selectedId ?? 0 },
       { enabled: selectedId !== null }
     );
+  const reversalHistory = trpc.invoices.reversalHistory.useQuery(
+    { id: selectedId ?? 0 },
+    { enabled: selectedId !== null && !!detail }
+  );
   const replacementReceiptId = detail?.receipt?.replacementReceiptId ?? null;
   const { data: replacementReceiptDetail } = trpc.receipts.getById.useQuery(
     { id: replacementReceiptId ?? 0 },
@@ -2082,6 +2089,24 @@ export default function Facturas() {
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
+  const reversalMutation = trpc.invoices.revertToTreasury.useMutation({
+    onSuccess: async result => {
+      toast.success(
+        result.voidedRetentionCount > 0
+          ? "Factura devuelta a Tesorería y comprobante de retención anulado"
+          : "Factura devuelta a Tesorería"
+      );
+      setReversalDialogOpen(false);
+      setReversalReason("");
+      await Promise.all([
+        utils.invoices.invalidate(),
+        utils.treasury.invalidate(),
+        utils.retentionDocuments.invalidate(),
+        utils.dashboard.sidebarCounts.invalidate(),
+      ]);
+    },
+    onError: error => toast.error(getFriendlyMutationError(error.message)),
+  });
   const correctReceiptMutation = trpc.invoices.correctReceipt.useMutation({
     onSuccess: result => {
       const replacementReceipt = (result as any).replacementReceipt;
@@ -2112,6 +2137,8 @@ export default function Facturas() {
     if (selectedId !== null) return;
     setRejectDialogOpen(false);
     setRejectionComment("");
+    setReversalDialogOpen(false);
+    setReversalReason("");
     retentionDraftInvoiceIdRef.current = null;
     retentionDraftsDirtyRef.current = false;
     setRetentionsDirty(false);
@@ -3188,6 +3215,8 @@ export default function Facturas() {
   const isDraft = detail?.invoice.status === "borrador" || isRejected;
   const isReviewed = detail?.invoice.status === "revisada";
   const isAccounted = detail?.invoice.status === "registrada";
+  const canRevertSelectedInvoice =
+    isAccounted && canRevertAccountedInvoices(user);
   const isVoided = detail?.invoice.status === "anulada";
   const canEditSelectedInvoice = canEditInvoices && isDraft;
   const canEditRetentions = canEditSelectedInvoice && canRetainSelectedInvoice;
@@ -3864,7 +3893,12 @@ export default function Facturas() {
   };
 
   const handlePrintRetentionCertificate = () => {
-    if (!detail || detail.invoice.status !== "registrada" || !canReadRetentionDocuments(user)) return;
+    if (
+      !detail ||
+      detail.invoice.status !== "registrada" ||
+      !canReadRetentionDocuments(user)
+    )
+      return;
     setLocation("/retenciones?invoiceId=" + detail.invoice.id);
   };
 
@@ -4367,8 +4401,29 @@ export default function Facturas() {
                     <Printer className="mr-2 h-4 w-4" />
                     Imprimir
                   </Button>
-                  {detail.invoice.status === "registrada" && Number(detail.invoice.retentionTotal) > 0 && canReadRetentionDocuments(user) ? (
-                    <Button variant="outline" asChild><a href={`/retenciones?invoiceId=${detail.invoice.id}`}>Comprobante de retención</a></Button>
+                  {canRevertSelectedInvoice && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setReversalReason("");
+                        setReversalDialogOpen(true);
+                      }}
+                    >
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      Revertir a Tesorería
+                    </Button>
+                  )}
+                  {(Number(detail.invoice.retentionTotal) > 0 ||
+                    reversalHistory.data?.some(
+                      r => r.voidedRetentionCount > 0
+                    )) &&
+                  canReadRetentionDocuments(user) ? (
+                    <Button variant="outline" asChild>
+                      <a href={`/retenciones?invoiceId=${detail.invoice.id}`}>
+                        Comprobante de retención
+                      </a>
+                    </Button>
                   ) : null}
                   {canCorrectSelectedReceipt ? (
                     <Button
@@ -6616,7 +6671,9 @@ export default function Facturas() {
                 <section className="rounded-lg border border-border/70 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="font-semibold">Detalle de retenciones</h3>
-                    {retentionDrafts.length > 0 && detail.invoice.status === "registrada" && canReadRetentionDocuments(user) ? (
+                    {retentionDrafts.length > 0 &&
+                    detail.invoice.status === "registrada" &&
+                    canReadRetentionDocuments(user) ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -6800,6 +6857,36 @@ export default function Facturas() {
                 <section className="rounded-lg border border-border/70 p-4">
                   <InvoiceFinancialNotes invoiceId={detail.invoice.id} />
                   <h3 className="mt-4 font-semibold">Historial</h3>
+                  {reversalHistory.error && (
+                    <p role="alert" className="mt-3 text-sm text-destructive">
+                      No se pudo consultar el historial de reversiones.
+                    </p>
+                  )}
+                  {reversalHistory.data?.map(entry => (
+                    <div
+                      key={entry.id}
+                      className="mt-3 rounded-md border p-3 text-sm"
+                    >
+                      <p className="font-medium">Revertida a Tesorería</p>
+                      <p className="text-muted-foreground">
+                        {formatDateTimeLabel(entry.createdAt)} ·{" "}
+                        {entry.actorName}
+                      </p>
+                      <p className="mt-1 break-words">{entry.reason}</p>
+                      {entry.originalAccountedAt && (
+                        <p className="mt-1 text-muted-foreground">
+                          Contabilización anterior:{" "}
+                          {formatDateTimeLabel(entry.originalAccountedAt)}
+                        </p>
+                      )}
+                      {entry.voidedRetentionCount > 0 && (
+                        <p className="mt-1">
+                          Comprobantes de retención anulados:{" "}
+                          {entry.voidedRetentionCount}
+                        </p>
+                      )}
+                    </div>
+                  ))}
                   <div className="mt-4 space-y-3">
                     {getInvoiceHistoryRows(detail.invoice).map(
                       (entry, index) => (
@@ -6835,6 +6922,75 @@ export default function Facturas() {
             </div>
           )}
         </FiscalDocumentDialogContent>
+      </Dialog>
+
+      <Dialog
+        open={reversalDialogOpen}
+        onOpenChange={open => {
+          if (!reversalMutation.isPending) setReversalDialogOpen(open);
+        }}
+      >
+        <DialogContent
+          className="max-w-lg"
+          onEscapeKeyDown={event => {
+            if (reversalMutation.isPending) event.preventDefault();
+          }}
+          onPointerDownOutside={event => {
+            if (reversalMutation.isPending) event.preventDefault();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Revertir factura a Tesorería</DialogTitle>
+            <DialogDescription>
+              {detail?.invoice.invoiceDocumentNumber} volverá a estar pendiente
+              de contabilizar en Tesorería. Si tiene un comprobante de
+              retención, se anulará conservando su historial y soportes.
+              Tesorería podrá contabilizarla nuevamente o enviarla a revisión
+              para corregirla.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="invoice-reversal-reason">
+              Motivo de reversión *
+            </Label>
+            <Textarea
+              id="invoice-reversal-reason"
+              value={reversalReason}
+              onChange={event => setReversalReason(event.target.value)}
+              rows={4}
+              maxLength={2000}
+              disabled={reversalMutation.isPending}
+            />
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              variant="outline"
+              disabled={reversalMutation.isPending}
+              onClick={() => setReversalDialogOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={
+                reversalMutation.isPending ||
+                reversalReason.trim().length < 5 ||
+                !canRevertSelectedInvoice
+              }
+              onClick={() => {
+                if (selectedId)
+                  reversalMutation.mutate({
+                    id: selectedId,
+                    reason: reversalReason.trim(),
+                  });
+              }}
+            >
+              {reversalMutation.isPending
+                ? "Revirtiendo…"
+                : "Revertir a Tesorería"}
+            </Button>
+          </div>
+        </DialogContent>
       </Dialog>
 
       <Dialog

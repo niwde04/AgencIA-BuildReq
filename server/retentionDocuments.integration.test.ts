@@ -22,6 +22,14 @@ suite(
       db: typeof import("./db"),
       service: typeof import("./retentionDocuments"),
       notes: typeof import("./financialNotes");
+    let reversals: typeof import("./invoiceReversals");
+    const reversalMigration = readFileSync(
+      new URL(
+        "../drizzle/20261001155841_invoice_accounting_reversal.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
     const migration = readFileSync(
       new URL(
         "../drizzle/20260930120000_retention_documents.sql",
@@ -45,6 +53,7 @@ suite(
       db = await import("./db");
       service = await import("./retentionDocuments");
       notes = await import("./financialNotes");
+      reversals = await import("./invoiceReversals");
     });
     afterAll(async () => {
       await ((await db?.getDb()) as any)?.$client?.end();
@@ -85,6 +94,11 @@ suite(
   INSERT INTO "financialNoteInvoices"("noteId","invoiceId",amount) SELECT id,"sourceInvoiceId",total FROM "financialNotes";
   SELECT setval(pg_get_serial_sequence('"financialNotes"','id'),103);`);
       await client.query(migration);
+      await client.query(
+        "INSERT INTO users(id,\"openId\",name,email,role) VALUES(2,'reversal-admin','Ed Reversal','ed_barah@hotmail.com','admin')"
+      );
+      await client.query(reversalMigration);
+      await client.query(reversalMigration);
     });
     async function account(id = 1) {
       return db.accountInvoice({ id, accountedById: 1 });
@@ -145,6 +159,392 @@ suite(
         (await service.getRetentionDocument(page.items[0].id, admin)).document
           .snapshot.supplierName
       ).toBe("Proveedor Uno");
+    });
+    it("reverts an invoice without withholding directly to the treasury queue without changing money", async () => {
+      await account(2);
+      const before = (
+        await client.query(
+          'select total,"netPayable","retentionTotal" from invoices where id=2'
+        )
+      ).rows[0];
+      expect(
+        await reversals.revertInvoiceToTreasury(2, 2, "Corregir factura")
+      ).toMatchObject({
+        id: 2,
+        status: "pendiente_contabilizar",
+        voidedRetentionCount: 0,
+      });
+      expect(
+        (
+          await client.query(
+            'select status,"accountedAt","accountedById","submittedForAccountingById" from invoices where id=2'
+          )
+        ).rows[0]
+      ).toEqual({
+        status: "pendiente_contabilizar",
+        accountedAt: null,
+        accountedById: null,
+        submittedForAccountingById: 2,
+      });
+      expect(
+        (
+          await client.query(
+            'select total,"netPayable","retentionTotal" from invoices where id=2'
+          )
+        ).rows[0]
+      ).toEqual(before);
+      expect((await reversals.getInvoiceReversalHistory(2))[0]).toMatchObject({
+        actorName: "Ed Reversal",
+        reason: "Corregir factura",
+        voidedRetentionCount: 0,
+      });
+    });
+    it("annuls the retention and retains its original snapshot and files through rejection and re-accounting", async () => {
+      await account();
+      const original = await service.getRetentionDocument(
+        (await service.listRetentionDocuments({ invoiceId: 1 }, admin)).items[0]
+          .id,
+        admin
+      );
+      await reversals.revertInvoiceToTreasury(1, 2, "Corregir <importe>");
+      const cancelled = await service.getRetentionDocument(
+        original.document.id,
+        admin
+      );
+      expect(cancelled.document).toMatchObject({
+        status: "anulada",
+        voidReason: "Corregir <importe>",
+        voidedById: 2,
+        voidedByName: "Ed Reversal",
+        snapshot: original.document.snapshot,
+      });
+      expect(cancelled.attachments).toEqual(original.attachments);
+      expect(
+        (await service.listRetentionDocuments({ invoiceId: 1 }, admin)).totals
+      ).toEqual([]);
+      const html = buildRetentionPrintHtml(cancelled.document);
+      expect(html).toContain("ANULADO");
+      expect(html).toContain("Corregir &lt;importe&gt;");
+      expect(html).not.toContain("Corregir <importe>");
+      await db.rejectInvoiceFromAccounting({
+        id: 1,
+        rejectedById: 1,
+        rejectionComment: "Corregir los datos",
+        expectedStatus: "pendiente_contabilizar",
+      });
+      await db.reviewInvoice(1, 1);
+      await db.submitInvoiceForAccounting({ id: 1, submittedById: 1 });
+      await account();
+      const current = await service.listRetentionDocuments(
+        { invoiceId: 1, status: "registrada" },
+        admin
+      );
+      expect(current.total).toBe(1);
+      expect(current.items[0].id).not.toBe(original.document.id);
+      expect(current.totals).toEqual([{ currency: "HNL", total: "60.0000" }]);
+      expect(
+        (
+          await service.listRetentionDocuments(
+            { invoiceId: 1, status: "anulada" },
+            admin
+          )
+        ).total
+      ).toBe(1);
+      expect(
+        (
+          await client.query(
+            'select "netPayable","retentionTotal" from invoices where id=1'
+          )
+        ).rows[0]
+      ).toEqual({ netPayable: "940.0000", retentionTotal: "60.0000" });
+      await client.query(reversalMigration);
+      expect(
+        (await service.getRetentionDocument(original.document.id, admin))
+          .document.snapshot
+      ).toEqual(original.document.snapshot);
+    });
+    it("rejects an unauthorized actor at the database boundary", async () => {
+      await account();
+      await expect(
+        reversals.revertInvoiceToTreasury(1, 1, "Corregir factura")
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(
+        (
+          await client.query(
+            'select count(*)::int n from "invoiceAccountingReversals"'
+          )
+        ).rows[0].n
+      ).toBe(0);
+    });
+    it("serializes simultaneous reversals with only one audit event", async () => {
+      await account();
+      const results = await Promise.allSettled([
+        reversals.revertInvoiceToTreasury(1, 2, "Primera corrección"),
+        reversals.revertInvoiceToTreasury(1, 2, "Segunda corrección"),
+      ]);
+      expect(results.filter(r => r.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter(r => r.status === "rejected")).toHaveLength(1);
+      expect(
+        (results.find(r => r.status === "rejected") as PromiseRejectedResult)
+          .reason
+      ).toMatchObject({ code: "CONFLICT" });
+      expect(
+        (
+          await client.query(
+            'select count(*)::int n from "invoiceAccountingReversals"'
+          )
+        ).rows[0].n
+      ).toBe(1);
+      const eventId = (await reversals.getInvoiceReversalHistory(1))[0].id;
+      await expect(
+        client.query(
+          "update \"invoiceAccountingReversals\" set reason='Cambiar historial' where id=$1",
+          [eventId]
+        )
+      ).rejects.toThrow(/cerrado/);
+      await expect(
+        client.query('delete from "invoiceAccountingReversals" where id=$1', [
+          eventId,
+        ])
+      ).rejects.toThrow(/cerrado/);
+    });
+    it("annuls migrated retention documents while preserving their legacy notes, antecedents and attachments", async () => {
+      await migrate();
+      const doc = (
+        await service.listRetentionDocuments({ invoiceId: 3 }, admin)
+      ).items[0];
+      const before = await service.getRetentionDocument(doc.id, admin);
+      const originalNotes = (
+        await client.query(
+          'select * from "financialNotes" where "sourceInvoiceId"=3 order by id'
+        )
+      ).rows;
+      await reversals.revertInvoiceToTreasury(
+        3,
+        2,
+        "Corregir factura histórica"
+      );
+      const after = await service.getRetentionDocument(doc.id, admin);
+      expect(after.document.status).toBe("anulada");
+      expect(after.document.snapshot).toEqual(before.document.snapshot);
+      expect(after.antecedents).toEqual(before.antecedents);
+      expect(after.attachments).toEqual(before.attachments);
+      expect(
+        (
+          await client.query(
+            'select * from "financialNotes" where "sourceInvoiceId"=3 order by id'
+          )
+        ).rows
+      ).toEqual(originalNotes);
+      expect(await service.resolveLegacyRetention(100, admin)).toEqual({
+        documentId: doc.id,
+      });
+    });
+    it("denies browser-role access to the reversal function and audit table", async () => {
+      for (const role of ["anon", "authenticated"]) {
+        const privileges = (
+          await client.query(
+            `select has_table_privilege($1,'"invoiceAccountingReversals"','SELECT') can_read,
+          has_table_privilege($1,'"invoiceAccountingReversals"','INSERT') can_insert,
+          has_function_privilege($1,'private.revert_accounted_invoice(integer,integer,text)','EXECUTE') can_revert`,
+            [role]
+          )
+        ).rows[0];
+        expect(privileges).toEqual({
+          can_read: false,
+          can_insert: false,
+          can_revert: false,
+        });
+      }
+    });
+    it("rechecks that Ed is active inside PostgreSQL before modifying any document", async () => {
+      await account();
+      await client.query('update users set "isActive"=false where id=2');
+      await expect(
+        reversals.revertInvoiceToTreasury(1, 2, "Corregir factura")
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(
+        (
+          await service.listRetentionDocuments(
+            { invoiceId: 1, status: "registrada" },
+            admin
+          )
+        ).total
+      ).toBe(1);
+      expect(await reversals.getInvoiceReversalHistory(1)).toEqual([]);
+    });
+    async function payment(
+      status: string,
+      reservation: boolean,
+      cancelled = false
+    ) {
+      await client.query(
+        `INSERT INTO "treasuryPaymentBatches"(id,"batchNumber","projectId",currency,"requestedPaymentDate","createdById",status)
+        VALUES(70,'TES-REV',1,'HNL',current_date,1,$1)`,
+        [cancelled ? "anulado" : "borrador"]
+      );
+      await client.query(
+        `INSERT INTO "treasuryPaymentItems"("batchId","sourceType","invoiceId","supplierId","supplierCode","supplierName","invoiceDocumentNumber",currency,"invoiceNetPayable","requestedAmount","bankPaidAmount",status,"activeReservation","accountedAt")
+        VALUES(70,'invoice',1,1,'S1','Proveedor Uno','FT-1','HNL',940,100,$1,$2,$3,now())`,
+        [reservation ? 0 : 100, status, reservation]
+      );
+    }
+    it.each([
+      ["incluida", true],
+      ["pagada", false],
+      ["con_diferencia", false],
+      ["contabilizada", false],
+    ] as const)(
+      "blocks treasury dependencies in state %s without annulling a retention",
+      async (status, reservation) => {
+        await account();
+        await payment(status, reservation);
+        await expect(
+          reversals.revertInvoiceToTreasury(1, 2, "Corregir factura")
+        ).rejects.toMatchObject({
+          code: "BAD_REQUEST",
+          message: expect.stringContaining("pagos o reservas"),
+        });
+        expect(
+          (
+            await service.listRetentionDocuments(
+              { invoiceId: 1, status: "registrada" },
+              admin
+            )
+          ).total
+        ).toBe(1);
+        expect(
+          (
+            await client.query(
+              'select count(*)::int n from "invoiceAccountingReversals"'
+            )
+          ).rows[0].n
+        ).toBe(0);
+      }
+    );
+    it("ignores a stale reservation belonging to a cancelled unexecuted batch", async () => {
+      await account();
+      await payment("incluida", true, true);
+      expect(
+        await reversals.revertInvoiceToTreasury(1, 2, "Corregir factura")
+      ).toMatchObject({ voidedRetentionCount: 1 });
+    });
+    it("blocks applied advances", async () => {
+      await account();
+      await client.query(`INSERT INTO "purchaseOrderAdvances"(id,"advanceNumber","purchaseOrderId","projectId","supplierId",currency,"requestedAmount","requestedPaymentDate","createdById") VALUES(1,'ANT-REV',1,1,1,'HNL',100,current_date,1);
+        INSERT INTO "purchaseOrderAdvanceApplications"("purchaseOrderAdvanceId","invoiceId",amount,"appliedById") VALUES(1,1,100,1)`);
+      await expect(
+        reversals.revertInvoiceToTreasury(1, 2, "Corregir factura")
+      ).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+        message: expect.stringContaining("anticipos"),
+      });
+    });
+    it("blocks even an unapplied contractual commitment", async () => {
+      await account();
+      await client.query(
+        `INSERT INTO "invoiceContractualAmortizations"("invoiceId","purchaseOrderId","inputMode","inputValue","baseKind","baseAmount","proposedAmount",amount) VALUES(1,1,'amount',100,'total',1000,100,100)`
+      );
+      await expect(
+        reversals.revertInvoiceToTreasury(1, 2, "Corregir factura")
+      ).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+        message: expect.stringContaining("amortización"),
+      });
+    });
+    it.each(["credit", "debit"] as const)(
+      "blocks active %s notes including drafts",
+      async type => {
+        await account();
+        const concept = (
+          await client.query(
+            'select id from "financialNoteConcepts" where type=$1 and "retentionCatalogId" is null order by id limit 1',
+            [type]
+          )
+        ).rows[0];
+        await notes.createFinancialNote(
+          {
+            type,
+            requestKey: "block-reversal-" + type,
+            lines: [
+              {
+                conceptId: concept.id,
+                baseAmount: "20.0000",
+                taxAmount: "0.0000",
+              },
+            ],
+            allocations: [{ invoiceId: 1, amount: "20.0000" }],
+          },
+          admin
+        );
+        await expect(
+          reversals.revertInvoiceToTreasury(1, 2, "Corregir factura")
+        ).rejects.toMatchObject({
+          code: "BAD_REQUEST",
+          message: expect.stringContaining("notas activas"),
+        });
+      }
+    );
+    it("blocks pending quality releases", async () => {
+      await client.query(
+        `INSERT INTO "invoiceDocumentAdjustments"(id,"invoiceId","adjustmentType",percentage,"baseAmount",amount) VALUES(20,1,'quality_retention',10,1000,100)`
+      );
+      await account();
+      await client.query(
+        `INSERT INTO "qualityRetentionReleases"("invoiceDocumentAdjustmentId","requestedAmount",justification,"requestedById") VALUES(20,50,'Liberar por calidad',1)`
+      );
+      await expect(
+        reversals.revertInvoiceToTreasury(1, 2, "Corregir factura")
+      ).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+        message: expect.stringContaining("calidad"),
+      });
+    });
+    it("rolls cancellation and the audit event back if returning the invoice fails", async () => {
+      await account();
+      await client.query(`CREATE FUNCTION private.test_reversal_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced reversal error'; END $$;
+        CREATE TRIGGER test_reversal_failure BEFORE UPDATE OF status ON invoices FOR EACH ROW EXECUTE FUNCTION private.test_reversal_failure()`);
+      try {
+        await expect(
+          reversals.revertInvoiceToTreasury(1, 2, "Corregir factura")
+        ).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+        expect(
+          (
+            await service.listRetentionDocuments(
+              { invoiceId: 1, status: "registrada" },
+              admin
+            )
+          ).total
+        ).toBe(1);
+        expect(
+          (await client.query("select status from invoices where id=1")).rows[0]
+            .status
+        ).toBe("registrada");
+        expect(
+          (
+            await client.query(
+              'select count(*)::int n from "invoiceAccountingReversals"'
+            )
+          ).rows[0].n
+        ).toBe(0);
+      } finally {
+        await client.query(
+          "DROP TRIGGER test_reversal_failure ON invoices; DROP FUNCTION private.test_reversal_failure()"
+        );
+      }
+    });
+    it("rejects direct SQL modifications without the authorized reversal event", async () => {
+      await account();
+      await expect(
+        client.query(
+          "update invoices set status='pendiente_contabilizar' where id=1"
+        )
+      ).rejects.toThrow(/cerrada/);
+      await expect(
+        client.query(
+          'update "retentionDocuments" set status=\'anulada\' where "invoiceId"=1'
+        )
+      ).rejects.toThrow(/cerrado/);
     });
     it("accounts invoices without retentions without a document", async () => {
       await account(2);

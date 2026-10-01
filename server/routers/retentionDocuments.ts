@@ -22,7 +22,7 @@ export const retentionDocumentsRouter = router({
         supplierSearch: text,
         projectSearch: text,
         invoiceSearch: text,
-        status: z.enum(["registrada", "historico"]).optional(),
+        status: z.enum(["registrada", "historico", "anulada"]).optional(),
         supplierId: id.optional(),
         projectId: id.optional(),
         invoiceId: id.optional(),
