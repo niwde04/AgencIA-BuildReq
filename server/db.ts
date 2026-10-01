@@ -15919,89 +15919,8 @@ export async function submitInvoiceForAccounting(params: {
   return updated;
 }
 
-export async function returnAccountedInvoiceToReview(
-  id: number,
-  actorId?: number
-) {
-  const db = await getDb();
-  if (!db) throw new Error("DB not available");
-
-  return db.transaction(async tx => {
-    const [invoice] = await tx
-      .select({ id: invoices.id, status: invoices.status })
-      .from(invoices)
-      .where(eq(invoices.id, id))
-      .limit(1)
-      .for("update");
-
-    if (!invoice) throw new Error("Factura no encontrada");
-    if (invoice.status !== "registrada") {
-      throw new Error(
-        "Solo una factura contabilizada puede regresar a revisión"
-      );
-    }
-
-    const [treasuryBatchItems, advanceApplication] = await Promise.all([
-      tx
-        .select({
-          batchStatus: treasuryPaymentBatches.status,
-          itemStatus: treasuryPaymentItems.status,
-          activeReservation: treasuryPaymentItems.activeReservation,
-        })
-        .from(treasuryPaymentItems)
-        .innerJoin(
-          treasuryPaymentBatches,
-          eq(treasuryPaymentItems.batchId, treasuryPaymentBatches.id)
-        )
-        .where(
-          and(
-            eq(treasuryPaymentItems.sourceType, "invoice"),
-            eq(treasuryPaymentItems.invoiceId, id)
-          )
-        ),
-      tx
-        .select({ id: purchaseOrderAdvanceApplications.id })
-        .from(purchaseOrderAdvanceApplications)
-        .where(eq(purchaseOrderAdvanceApplications.invoiceId, id))
-        .limit(1),
-    ]);
-
-    if (treasuryBatchItems.some(isTreasuryItemBlockingInvoiceReview)) {
-      throw new Error(
-        "La factura pertenece a un lote de pago y no puede regresar a revisión"
-      );
-    }
-    if (advanceApplication.length > 0) {
-      throw new Error(
-        "La factura tiene un anticipo aplicado y no puede regresar a revisión"
-      );
-    }
-
-    const [updated] = await tx
-      .update(invoices)
-      .set({
-        status: "revisada",
-        submittedForAccountingAt: null,
-        submittedForAccountingById: null,
-        accountedById: null,
-        accountedAt: null,
-        accountingComment: null,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(invoices.id, id), eq(invoices.status, "registrada")))
-      .returning();
-
-    if (!updated) {
-      throw new Error(
-        "La factura cambió de estado; actualice e intente de nuevo"
-      );
-    }
-    if (actorId) {
-      const { syncInvoiceRetentionNote } = await import("./financialNotes");
-      await syncInvoiceRetentionNote(tx, id, actorId);
-    }
-    return updated;
-  });
+export async function returnAccountedInvoiceToReview(id: number, actorId?: number): Promise<never> {
+  throw new TRPCError({ code: "BAD_REQUEST", message: "La factura contabilizada está cerrada y no puede regresar a revisión" });
 }
 
 export async function accountInvoice(params: {
@@ -16054,10 +15973,8 @@ export async function accountInvoice(params: {
       throw new Error(
         "La factura cambió de estado; actualice e intente nuevamente"
       );
-    const { syncInvoiceRetentionNote } = await import("./financialNotes");
-    await syncInvoiceRetentionNote(tx, updated.id, params.accountedById, {
-      create: true,
-    });
+    const { createInvoiceRetentionDocument } = await import("./retentionDocuments");
+    await createInvoiceRetentionDocument(tx, updated.id);
     const { applyAvailableAdvancesForPurchaseOrder } = await import(
       "./purchaseOrderAdvances"
     );
@@ -16483,8 +16400,6 @@ export async function correctInvoiceReceiptFromInvoice(params: {
       .where(eq(invoices.id, row.invoice.id))
       .returning();
 
-    const { syncInvoiceRetentionNote } = await import("./financialNotes");
-    await syncInvoiceRetentionNote(tx, updatedInvoice.id, params.correctedById);
 
     return {
       invoice: updatedInvoice,
@@ -16810,10 +16725,6 @@ export async function replaceInvoiceRetentions(
       .where(eq(invoices.id, invoiceId))
       .returning();
 
-    if (actorId) {
-      const { syncInvoiceRetentionNote } = await import("./financialNotes");
-      await syncInvoiceRetentionNote(tx, invoiceId, actorId);
-    }
     return updatedInvoice;
   });
 
@@ -16843,6 +16754,9 @@ export async function replaceInvoiceDocumentAdjustments(
       .where(eq(invoices.id, invoiceId))
       .limit(1);
     if (!invoice) throw new Error("Factura no encontrada");
+    if (!["borrador", "rechazada"].includes(invoice.status))
+      throw new Error("Las retenciones solo pueden editarse en una factura borrador o rechazada");
+
     if (!["borrador", "rechazada", "revisada"].includes(invoice.status)) {
       throw new Error(
         "Las retenciones y descuentos no se pueden editar en este estado"

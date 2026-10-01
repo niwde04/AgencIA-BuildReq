@@ -63,6 +63,8 @@ async function main() {
     );
     await fixture.query(queueMigration);
     await fixture.query(queueMigration);
+    // Schema needed by current accounting; closure and archival triggers are tested with the full migration in test-retention-documents-db.
+    await fixture.query(readFileSync(new URL("../drizzle/20260930120000_retention_documents.sql",import.meta.url),"utf8").split("CREATE OR REPLACE FUNCTION private.retention_immutable")[0]);
     await fixture.end();
     fixture = undefined;
     console.log(

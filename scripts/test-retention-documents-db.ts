@@ -28,9 +28,6 @@ async function main() {
   let fixture: Client | undefined;
   try {
     await admin.connect();
-    await admin.query(
-      `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF; IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$`
-    );
     await admin.query(`CREATE DATABASE "${name}"`);
     created = true;
     url.pathname = `/${name}`;
@@ -66,30 +63,18 @@ async function main() {
     );
     await fixture.query(queueMigration);
     await fixture.query(queueMigration);
-    const contractualMigration = readFileSync(
-      new URL("../drizzle/20260930_contractual_advances.sql", import.meta.url),
-      "utf8"
-    );
-    await fixture.query(contractualMigration);
-    await fixture.query(contractualMigration);
-    // Current invoice accounting also queries the independent retention-document schema.
-    await fixture.query(readFileSync(new URL("../drizzle/20260930120000_retention_documents.sql",import.meta.url),"utf8").split("CREATE OR REPLACE FUNCTION private.retention_immutable")[0]);
     await fixture.end();
     fixture = undefined;
     console.log(
-      "Isolated schema ready; migration applied twice. Running financial-note database tests."
+      "Isolated schema ready; migration applied twice. Running retention-document database tests."
     );
     const result = spawnSync(
       process.execPath,
       [
         "node_modules/vitest/vitest.mjs",
         "run",
-        "server/contractualAdvances.integration.test.ts",
-        ...(process.argv.includes("--contractual-only")
-          ? []
-          : ["server/financialNotes.integration.test.ts"]),
-        "--fileParallelism=false",
-        ...process.argv.slice(2).filter(arg => arg !== "--contractual-only"),
+        "server/retentionDocuments.integration.test.ts",
+        ...process.argv.slice(2),
       ],
       {
         env: {

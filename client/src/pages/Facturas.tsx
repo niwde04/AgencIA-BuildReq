@@ -1,3 +1,4 @@
+import { canReadRetentionDocuments } from "@shared/retention-documents";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   FiscalDocumentDialogContent,
@@ -15,7 +16,6 @@ import {
   calculateRetentionPrintAmount,
   formatRetentionCalendarDate,
   getRetentionCurrencyWord,
-  getPrintableRetentionConcepts,
 } from "@/lib/retention-print";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
@@ -84,7 +84,6 @@ import {
   CAI_FORMAT_EXAMPLE,
   EMISSION_DEADLINE_ISSUE_MESSAGE,
   INVOICE_NUMBER_FORMAT_EXAMPLE,
-  SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL,
   formatCaiInput,
   formatInvoiceNumberInput,
   hasEmissionDeadlineIssue,
@@ -1561,9 +1560,6 @@ export default function Facturas() {
   const userRole = (user as any)?.buildreqRole;
   const isAccountant = userRole === "contable";
   const canAccountInvoices = isAccountant || user?.role === "admin";
-  const isSystemInvoiceReviewAdmin =
-    user?.role === "admin" &&
-    user.email?.trim().toLowerCase() === SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL;
   const canEditInvoices =
     user?.role === "admin" ||
     userRole === "administracion_central" ||
@@ -2083,14 +2079,6 @@ export default function Facturas() {
       void utils.treasury.invoiceAccountingQueue.invalidate();
       void utils.dashboard.sidebarCounts.invalidate();
       setSelectedId(null);
-    },
-    onError: error => toast.error(getFriendlyMutationError(error.message)),
-  });
-  const returnToReviewMutation = trpc.invoices.returnToReview.useMutation({
-    onSuccess: (_data, variables) => {
-      toast.success("Factura regresada a revisión");
-      void utils.invoices.invalidate();
-      void utils.invoices.getById.invalidate({ id: variables.id });
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
@@ -3208,11 +3196,6 @@ export default function Facturas() {
   const canManageInvoiceAttachments = canReviewInvoices && isDraft;
   const canReviewSelectedInvoice = canReviewInvoices && isDraft;
   const canSubmitSelectedInvoice = canAccountInvoices && isReviewed;
-  const canReturnSelectedInvoiceToReview =
-    isSystemInvoiceReviewAdmin &&
-    isAccounted &&
-    detail?.hasBlockingTreasuryBatchItems === false &&
-    appliedAdvanceAmount === 0;
   const canCorrectSelectedReceipt =
     canEditInvoices &&
     Boolean(detail?.receipt) &&
@@ -3881,263 +3864,8 @@ export default function Facturas() {
   };
 
   const handlePrintRetentionCertificate = () => {
-    if (!detail || retentionDrafts.length === 0 || retentionTotal <= 0) {
-      toast.error("Esta factura no tiene retenciones para imprimir");
-      return;
-    }
-    const retentionReceiptNumber =
-      invoiceDraft.retentionReceiptNumber.trim() ||
-      detail.invoice.retentionReceiptNumber ||
-      "";
-    if (!retentionReceiptNumber.trim()) {
-      toast.error("Ingrese el número de comprobante de retención");
-      return;
-    }
-
-    const invoice = detail.invoice;
-    const supplier = (detail.supplier ?? {}) as Record<string, any>;
-    const supplierContact = (detail.supplierContact ?? {}) as Record<
-      string,
-      any
-    >;
-    const supplierName = supplier?.name ?? "Proveedor";
-    const supplierRtn =
-      supplier?.rtn ??
-      supplier?.taxId ??
-      supplier?.rtnNumber ??
-      supplier?.supplierRtn ??
-      "";
-    const supplierAddress =
-      supplierContact?.address ??
-      supplier?.address ??
-      supplier?.direccion ??
-      supplier?.location ??
-      "";
-    const documentNumber =
-      invoice.invoiceNumber || invoice.invoiceDocumentNumber || "";
-    const documentDate = formatRetentionPrintDate(
-      invoice.documentDate ?? invoice.receiptDate ?? invoice.postingDate
-    );
-    const { printableConcepts, truncated } =
-      getPrintableRetentionConcepts(retentionDrafts);
-
-    if (truncated) {
-      toast.warning(
-        "El formato preimpreso solo tiene espacio para los primeros 8 conceptos de retención"
-      );
-    }
-
-    const rowsHtml = printableConcepts
-      .map((retentionConcept, index) => {
-        const top = 52 + index * 7.7;
-        const rate = toNumber(retentionConcept.percentage).toLocaleString(
-          "es-HN",
-          {
-            minimumFractionDigits: 0,
-            maximumFractionDigits: 4,
-          }
-        );
-        return `
-          <div class="cell row-date" style="top:${top}mm">${escapePrintHtml(documentDate)}</div>
-          <div class="cell row-desc" style="top:${top}mm">${escapePrintHtml(retentionConcept.description || retentionConcept.retentionCode || "Retención")}</div>
-          <div class="cell row-type" style="top:${top}mm">Factura</div>
-          <div class="cell row-doc" style="top:${top}mm">${escapePrintHtml(documentNumber)}</div>
-          <div class="cell row-base" style="top:${top}mm">${formatRetentionPrintNumber(retentionConcept.baseAmount)}</div>
-          <div class="cell row-rate" style="top:${top}mm">${escapePrintHtml(rate)}%</div>
-          <div class="cell row-amount" style="top:${top}mm">${formatRetentionPrintNumber(retentionConcept.amount)}</div>
-        `;
-      })
-      .join("");
-
-    const totalRetained = printableConcepts.reduce(
-      (sum, retentionConcept) => sum + retentionConcept.amount,
-      0
-    );
-    const amountWords = amountToSpanishCurrency(
-      totalRetained,
-      selectedInvoiceCurrency
-    );
-    const html = `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>&#8203;</title>
-    <style>
-      @page {
-        size: letter;
-        margin: 0 !important;
-      }
-      * {
-        box-sizing: border-box;
-      }
-      html,
-      body {
-        margin: 0;
-        padding: 0;
-        width: 216mm;
-        height: 279mm;
-      }
-      body {
-        font-family: Arial, Helvetica, sans-serif;
-        color: #000;
-        background: white;
-      }
-      .page {
-        position: relative;
-        width: 216mm;
-        height: 279mm;
-        margin: 0 auto;
-        background: white;
-      }
-      .field,
-      .cell {
-        position: absolute;
-        overflow: hidden;
-        font-size: 10pt;
-        line-height: 1.1;
-        white-space: nowrap;
-      }
-      .multiline {
-        white-space: normal;
-        line-height: 1.12;
-      }
-      .right {
-        text-align: right;
-      }
-      .center {
-        text-align: center;
-      }
-      .supplier-name {
-        left: 19mm;
-        top: 16.5mm;
-        width: 126mm;
-        font-weight: 600;
-      }
-      .supplier-rtn {
-        left: 158mm;
-        top: 14.5mm;
-        width: 47mm;
-      }
-      .print-date {
-        left: 170mm;
-        top: 4.8mm;
-        width: 32mm;
-      }
-      .invoice-cai {
-        left: 56mm;
-        top: 23.3mm;
-        width: 143mm;
-      }
-      .supplier-address {
-        left: 25mm;
-        top: 30mm;
-        width: 174mm;
-      }
-      .row-date {
-        left: 5mm;
-        width: 19mm;
-        text-align: center;
-        font-size: 8.4pt;
-      }
-      .row-desc {
-        left: 27mm;
-        width: 32mm;
-        white-space: normal;
-        font-size: 8.2pt;
-      }
-      .row-type {
-        left: 61mm;
-        width: 24mm;
-        text-align: center;
-        font-size: 8.3pt;
-      }
-      .row-doc {
-        left: 87mm;
-        width: 39mm;
-        text-align: center;
-        font-size: 8.2pt;
-      }
-      .row-base {
-        left: 128mm;
-        width: 24mm;
-        text-align: right;
-        font-size: 8.4pt;
-      }
-      .row-rate {
-        left: 155mm;
-        width: 17mm;
-        text-align: center;
-        font-size: 8.4pt;
-      }
-      .row-amount {
-        left: 174mm;
-        width: 28mm;
-        text-align: right;
-        font-size: 8.4pt;
-        font-weight: 600;
-      }
-      .total-retained {
-        left: 171mm;
-        top: 102mm;
-        width: 28mm;
-        font-size: 9.4pt;
-        font-weight: 700;
-      }
-      .amount-words {
-        left: 35mm;
-        top: 109mm;
-        width: 98mm;
-        font-size: 8.8pt;
-        line-height: 1.18;
-        font-weight: 600;
-      }
-      @media screen {
-        .page {
-          margin: 0 auto;
-          box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
-        }
-      }
-      @media print {
-        body {
-          background: white;
-        }
-        .page {
-          margin: 0;
-          box-shadow: none;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="page">
-      <div class="field print-date">${escapePrintHtml(documentDate)}</div>
-      <div class="field supplier-name">${escapePrintHtml(supplierName)}</div>
-      <div class="field supplier-rtn">${escapePrintHtml(supplierRtn)}</div>
-      <div class="field invoice-cai">${escapePrintHtml(invoice.cai || "")}</div>
-      <div class="field supplier-address multiline">${escapePrintHtml(supplierAddress)}</div>
-      ${rowsHtml}
-      <div class="field total-retained right">${escapePrintHtml(
-        getPurchaseCurrencySymbol(selectedInvoiceCurrency)
-      )} ${formatRetentionPrintNumber(totalRetained)}</div>
-      <div class="field amount-words multiline">${escapePrintHtml(amountWords)}</div>
-    </div>
-    <script>
-      window.addEventListener("load", () => {
-        window.focus();
-        setTimeout(() => window.print(), 250);
-      });
-    </script>
-  </body>
-</html>`;
-
-    const printWindow = window.open("", "_blank", "width=920,height=720");
-    if (!printWindow) {
-      toast.error("No se pudo abrir la ventana de impresión");
-      return;
-    }
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
+    if (!detail || detail.invoice.status !== "registrada" || !canReadRetentionDocuments(user)) return;
+    setLocation("/retenciones?invoiceId=" + detail.invoice.id);
   };
 
   const submitInvoiceForReview = (syncReceiptFiscalData = false) => {
@@ -4216,15 +3944,6 @@ export default function Facturas() {
       rejectionComment: rejectionComment.trim(),
       stage: "invoice",
     });
-  };
-
-  const handleReturnInvoiceToReview = () => {
-    if (!selectedId || !detail?.invoice) return;
-    const confirmed = window.confirm(
-      `¿Regresar ${detail.invoice.invoiceDocumentNumber} a revisión? Se quitará su registro de contabilización.`
-    );
-    if (!confirmed) return;
-    returnToReviewMutation.mutate({ id: selectedId });
   };
 
   const handleCorrectReceipt = () => {
@@ -4648,18 +4367,8 @@ export default function Facturas() {
                     <Printer className="mr-2 h-4 w-4" />
                     Imprimir
                   </Button>
-                  {canReturnSelectedInvoiceToReview ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={handleReturnInvoiceToReview}
-                      disabled={returnToReviewMutation.isPending}
-                    >
-                      <RotateCcw className="mr-2 h-4 w-4" />
-                      {returnToReviewMutation.isPending
-                        ? "Regresando..."
-                        : "Regresar a revisión"}
-                    </Button>
+                  {detail.invoice.status === "registrada" && Number(detail.invoice.retentionTotal) > 0 && canReadRetentionDocuments(user) ? (
+                    <Button variant="outline" asChild><a href={`/retenciones?invoiceId=${detail.invoice.id}`}>Comprobante de retención</a></Button>
                   ) : null}
                   {canCorrectSelectedReceipt ? (
                     <Button
@@ -6907,7 +6616,7 @@ export default function Facturas() {
                 <section className="rounded-lg border border-border/70 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="font-semibold">Detalle de retenciones</h3>
-                    {retentionDrafts.length > 0 ? (
+                    {retentionDrafts.length > 0 && detail.invoice.status === "registrada" && canReadRetentionDocuments(user) ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -6915,7 +6624,7 @@ export default function Facturas() {
                         onClick={handlePrintRetentionCertificate}
                       >
                         <Printer className="mr-2 h-4 w-4" />
-                        Imprimir
+                        Consultar comprobante
                       </Button>
                     ) : null}
                   </div>

@@ -1,3 +1,4 @@
+import { retentionDocumentsRouter } from "./routers/retentionDocuments";
 import { costMatrixRouter } from "./routers/costMatrix";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -99,6 +100,7 @@ export const appRouter = router({
   costMatrix: costMatrixRouter,
   suppliers: suppliersRouter,
   retentions: retentionsRouter,
+  retentionDocuments: retentionDocumentsRouter,
   taxes: taxesRouter,
   reports: reportsRouter,
   systemSettings: systemSettingsRouter,

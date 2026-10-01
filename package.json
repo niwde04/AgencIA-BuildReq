@@ -24,7 +24,9 @@
     "test:cost-matrix:db": "tsx scripts/test-cost-matrix-db.ts",
     "db:migrate-contractual-advances": "tsx scripts/migrate-contractual-advances.ts",
     "db:audit-contractual-advances": "tsx scripts/reconcile-contractual-advances.ts",
-    "test:contractual-advances:db": "tsx scripts/test-contractual-advances-db.ts"
+    "test:contractual-advances:db": "tsx scripts/test-contractual-advances-db.ts",
+    "db:migrate-retention-documents": "tsx scripts/migrate-retention-documents.ts",
+    "test:retention-documents:db": "tsx scripts/test-retention-documents-db.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",

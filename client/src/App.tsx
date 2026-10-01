@@ -35,7 +35,8 @@ import Facturas from "./pages/Facturas";
 import Notas from "./pages/Notas";
 import ConceptosNotas from "./pages/ConceptosNotas";
 import Impuestos from "./pages/Impuestos";
-import Retenciones from "./pages/Retenciones";
+import TiposRetencion from "./pages/Retenciones";
+import RetentionDocuments from "./pages/RetentionDocuments";
 import Reportes from "./pages/Reportes";
 import SaldosIniciales from "./pages/SaldosIniciales";
 import SalidasBodega from "./pages/SalidasBodega";
@@ -203,7 +204,8 @@ function DashboardRoutes() {
       <Route path="/tesoreria" component={Tesoreria} />
       <Route path="/reportes" component={Reportes} />
       <Route path="/impuestos" component={Impuestos} />
-      <Route path="/retenciones" component={Retenciones} />
+      <Route path="/retenciones" component={RetentionDocuments} />
+      <Route path="/tipos-retencion" component={TiposRetencion} />
       <Route path="/salidas-inventario" component={SalidasBodega} />
       <Route path="/salidas-bodega" component={SalidasBodega} />
       <Route path="/saldos-iniciales" component={SaldosIniciales} />

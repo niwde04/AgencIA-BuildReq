@@ -1,5 +1,7 @@
 # Notas de crédito y débito
 
+> Retenciones desplegadas en SSH: las retenciones fiscales pasan a comprobantes independientes y las NC automáticas quedan como antecedentes cerrados. Procedimiento y alcance por entorno en [retenciones.md](retenciones.md). Los detalles de NC automáticas siguientes documentan el flujo anterior.
+
 Implementado el 22 de septiembre de 2026. Las rutas son `/notas-credito`, `/notas-debito`, `/conceptos-notas-credito` y `/conceptos-notas-debito`.
 
 ## Flujo
