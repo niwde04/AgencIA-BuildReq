@@ -8,7 +8,7 @@
 - Suite general: 1.025 aprobadas, 11 omitidas, 4 fallidas. Los mismos cuatro fallos se reprodujeron en una copia temporal independiente de HEAD: asesor de ventas en impresión de OC; expectativa de `expectedStatus` al rechazar factura; dos expectativas antiguas de argumentos de ajustes documentales.
 - Revisión real de Chrome con API simulada: 1440, 768, 390 y 320 px; listado, diálogo, estado vacío, error y acceso denegado. Sin desbordamiento de página ni errores JavaScript. Corregidos el ancho interno del diálogo y el listado de tableta. La aplicación está configurada con tema claro fijo; añadir la clase dark no activa una paleta oscura.
 - Evidencia: capturas y `review.json` en `output/retention-review/`. Las pruebas visuales usan datos ficticios; la lógica real se probó por separado en PostgreSQL.
-- No se aplicaron cambios ni migraciones en bases remotas. El paso de despliegue pendiente es ejecutar `db:migrate-retention-documents` con aplicación detenida y respaldo, y publicar cliente/servidor juntos.
+- Despliegue SSH: migración repetida sin duplicados, 317 comprobantes y 3 antecedentes; 21 tablas originales sin cambios. Ver [procedimiento y limitación de Storage](retenciones.md).
 
 Para repetir la revisión visual desde la raíz: instalar Playwright en `.tmp/retention-visual-tools`, iniciar Vite en 127.0.0.1:4187 y ejecutar `node output/retention-review/visual-check.cjs`. Se usa Chrome instalado y se intercepta toda llamada de API; no inicia sesión en servicios remotos.
 
