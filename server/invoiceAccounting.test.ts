@@ -9,6 +9,7 @@ import * as db from "./db";
 import * as queue from "./invoiceAccounting";
 import * as treasury from "./treasury";
 import type { TrpcContext } from "./_core/context";
+import { BUILDREQ_ROLE_CODES } from "../shared/buildreq-roles";
 const context = (role = "contable") =>
   ({
     user: {
@@ -28,6 +29,167 @@ const detail = (status = "revisada") =>
     retentions: [],
   }) as any;
 afterEach(() => vi.restoreAllMocks());
+
+describe("invoice accounting from Treasury", () => {
+  function enabledSettings() {
+    return vi.spyOn(treasury, "getTreasurySettings").mockResolvedValue({
+      treasuryEnabled: true,
+      treasuryBatchApprovalsEnabled: false,
+      updatedAt: new Date(),
+    });
+  }
+
+  it.each(["administracion_central", "contable", "admin"])(
+    "allows %s to account a pending invoice and records the actor",
+    async role => {
+      enabledSettings();
+      vi.spyOn(db, "getInvoiceById").mockResolvedValue(
+        detail("pendiente_contabilizar")
+      );
+      const account = vi.spyOn(db, "accountInvoice").mockResolvedValue({
+        id: 1,
+        status: "registrada",
+      } as any);
+      const callerContext = context(role);
+      if (role === "admin") callerContext.user!.role = "admin";
+      const caller = appRouter.createCaller(callerContext);
+
+      const settings = await caller.treasury.settings();
+      expect(settings.permissions.canAccountInvoices).toBe(true);
+      if (role === "administracion_central") {
+        expect(settings.permissions.canAccount).toBe(false);
+        expect(settings.isApprover).toBe(false);
+      }
+      await expect(
+        caller.treasury.accountInvoice({
+          id: 1,
+          accountingComment: "  Validada en Tesorería  ",
+        })
+      ).resolves.toMatchObject({ id: 1, status: "registrada" });
+      expect(account).toHaveBeenCalledTimes(1);
+      expect(account).toHaveBeenCalledWith({
+        id: 1,
+        accountedById: 1,
+        accountingComment: "Validada en Tesorería",
+      });
+    }
+  );
+
+  it.each(
+    BUILDREQ_ROLE_CODES.filter(
+      role => role !== "administracion_central" && role !== "contable"
+    )
+  )("denies final invoice accounting for %s", async role => {
+    enabledSettings();
+    const read = vi.spyOn(db, "getInvoiceById");
+    const account = vi.spyOn(db, "accountInvoice");
+    const caller = appRouter.createCaller(context(role));
+    expect(
+      (await caller.treasury.settings()).permissions.canAccountInvoices
+    ).toBe(false);
+    await expect(
+      caller.treasury.accountInvoice({ id: 1 })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(read).not.toHaveBeenCalled();
+    expect(account).not.toHaveBeenCalled();
+  });
+
+  it.each(["borrador", "revisada", "rechazada", "registrada", "anulada"])(
+    "blocks Administración Central from accounting an invoice in %s",
+    async status => {
+      enabledSettings();
+      vi.spyOn(db, "getInvoiceById").mockResolvedValue(detail(status));
+      const account = vi.spyOn(db, "accountInvoice");
+      await expect(
+        appRouter
+          .createCaller(context("administracion_central"))
+          .treasury.accountInvoice({ id: 1 })
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(account).not.toHaveBeenCalled();
+    }
+  );
+
+  it("preserves the CPC and RT01 requirement for the new Treasury action", async () => {
+    enabledSettings();
+    const invoice = detail("pendiente_contabilizar");
+    Object.assign(invoice.invoice, {
+      isFiscalDocument: true,
+      documentDate: new Date("2026-10-03T12:00:00Z"),
+    });
+    invoice.retentionPolicy = "manual";
+    invoice.items = [{ subtotal: "1,000.00", allowsTaxWithholding: true }];
+    const read = vi.spyOn(db, "getInvoiceById").mockResolvedValue(invoice);
+    const account = vi.spyOn(db, "accountInvoice").mockResolvedValue({
+      id: 1,
+      status: "registrada",
+    } as any);
+    const caller = appRouter.createCaller(context("administracion_central"));
+    await expect(
+      caller.treasury.accountInvoice({ id: 1 })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("RT01"),
+    });
+    expect(account).not.toHaveBeenCalled();
+
+    read.mockResolvedValue({
+      ...invoice,
+      retentions: [{ retentionCode: "RT01", percentage: "1" }],
+    });
+    await expect(
+      caller.treasury.accountInvoice({ id: 1 })
+    ).resolves.toMatchObject({ status: "registrada" });
+    expect(account).toHaveBeenCalledOnce();
+  });
+
+  it("blocks unauthenticated callers and disabled Treasury before reading invoices", async () => {
+    const settings = enabledSettings();
+    const read = vi.spyOn(db, "getInvoiceById");
+    const account = vi.spyOn(db, "accountInvoice");
+    const anonymous = context();
+    anonymous.user = null;
+    await expect(
+      appRouter.createCaller(anonymous).treasury.accountInvoice({ id: 1 })
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+    settings.mockResolvedValue({ treasuryEnabled: false } as any);
+    await expect(
+      appRouter
+        .createCaller(context("administracion_central"))
+        .treasury.accountInvoice({ id: 1 })
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    expect(read).not.toHaveBeenCalled();
+    expect(account).not.toHaveBeenCalled();
+  });
+
+  it("returns NOT_FOUND for a missing invoice without accounting", async () => {
+    enabledSettings();
+    vi.spyOn(db, "getInvoiceById").mockResolvedValue(undefined);
+    const account = vi.spyOn(db, "accountInvoice");
+    await expect(
+      appRouter
+        .createCaller(context("administracion_central"))
+        .treasury.accountInvoice({ id: 999 })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(account).not.toHaveBeenCalled();
+  });
+
+  it("blocks a scoped system administrator from accounting another project's invoice", async () => {
+    enabledSettings();
+    vi.spyOn(db, "getInvoiceById").mockResolvedValue(
+      detail("pendiente_contabilizar")
+    );
+    const account = vi.spyOn(db, "accountInvoice");
+    const callerContext = context("superintendente_aprobador");
+    callerContext.user!.role = "admin";
+    callerContext.user!.assignedProjectIds = [17];
+    await expect(
+      appRouter.createCaller(callerContext).treasury.accountInvoice({ id: 1 })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(account).not.toHaveBeenCalled();
+  });
+});
+
 describe("invoice accounting queue", () => {
   it("sends a reviewed invoice without calling accounting", async () => {
     vi.spyOn(db, "getInvoiceById").mockResolvedValue(detail());
@@ -100,13 +262,11 @@ describe("invoice accounting queue", () => {
         .spyOn(db, "rejectInvoiceFromAccounting")
         .mockResolvedValue({ id: 1, status: "rechazada" } as any);
       const account = vi.spyOn(db, "accountInvoice");
-      await appRouter
-        .createCaller(context())
-        .invoices.reject({
-          id: 1,
-          rejectionComment: "  Corregir soporte  ",
-          stage,
-        });
+      await appRouter.createCaller(context()).invoices.reject({
+        id: 1,
+        rejectionComment: "  Corregir soporte  ",
+        stage,
+      });
       expect(reject).toHaveBeenCalledWith({
         id: 1,
         rejectedById: 1,
@@ -126,13 +286,11 @@ describe("invoice accounting queue", () => {
     vi.spyOn(db, "getInvoiceById").mockResolvedValue(detail(status));
     const reject = vi.spyOn(db, "rejectInvoiceFromAccounting");
     await expect(
-      appRouter
-        .createCaller(context())
-        .invoices.reject({
-          id: 1,
-          rejectionComment: "Corregir",
-          stage: "invoice",
-        })
+      appRouter.createCaller(context()).invoices.reject({
+        id: 1,
+        rejectionComment: "Corregir",
+        stage: "invoice",
+      })
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(reject).not.toHaveBeenCalled();
   });

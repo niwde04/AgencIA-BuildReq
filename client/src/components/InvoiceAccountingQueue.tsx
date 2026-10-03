@@ -78,8 +78,10 @@ function dateLabel(value: Date | string | null) {
 
 export function InvoiceAccountingQueue({
   canAccount,
+  canReject,
 }: {
   canAccount: boolean;
+  canReject: boolean;
 }) {
   const utils = trpc.useUtils();
   const [search, setSearch] = useState("");
@@ -125,7 +127,7 @@ export function InvoiceAccountingQueue({
       utils.dashboard.sidebarCounts.invalidate(),
     ]);
   };
-  const account = trpc.invoices.account.useMutation({
+  const account = trpc.treasury.accountInvoice.useMutation({
     onSuccess: async () => {
       toast.success("Factura contabilizada");
       setDecision(null);
@@ -560,34 +562,42 @@ export function InvoiceAccountingQueue({
                                       )}
                                   </TableCell>
                                   <TableCell>
-                                    {canAccount &&
+                                    {(canAccount || canReject) &&
                                     row.status === "pendiente_contabilizar" ? (
                                       <div className="flex gap-2">
-                                        <Button
-                                          size="sm"
-                                          disabled={
-                                            busy ||
-                                            query.isFetching ||
-                                            exporting
-                                          }
-                                          onClick={() => choose(row, "account")}
-                                        >
-                                          <CheckCircle2 className="mr-1 h-4 w-4" />
-                                          Contabilizar
-                                        </Button>
-                                        <Button
-                                          size="sm"
-                                          variant="outline"
-                                          disabled={
-                                            busy ||
-                                            query.isFetching ||
-                                            exporting
-                                          }
-                                          onClick={() => choose(row, "reject")}
-                                        >
-                                          <XCircle className="mr-1 h-4 w-4" />
-                                          Enviar a revisión
-                                        </Button>
+                                        {canAccount && (
+                                          <Button
+                                            size="sm"
+                                            disabled={
+                                              busy ||
+                                              query.isFetching ||
+                                              exporting
+                                            }
+                                            onClick={() =>
+                                              choose(row, "account")
+                                            }
+                                          >
+                                            <CheckCircle2 className="mr-1 h-4 w-4" />
+                                            Contabilizar
+                                          </Button>
+                                        )}
+                                        {canReject && (
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={
+                                              busy ||
+                                              query.isFetching ||
+                                              exporting
+                                            }
+                                            onClick={() =>
+                                              choose(row, "reject")
+                                            }
+                                          >
+                                            <XCircle className="mr-1 h-4 w-4" />
+                                            Enviar a revisión
+                                          </Button>
+                                        )}
                                       </div>
                                     ) : (
                                       <span className="text-xs text-muted-foreground">

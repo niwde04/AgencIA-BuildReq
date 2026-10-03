@@ -4238,7 +4238,8 @@ export default function Tesoreria() {
       </Card>
 
       <InvoiceAccountingQueue
-        canAccount={settingsQuery.data.permissions.canAccount}
+        canAccount={settingsQuery.data.permissions.canAccountInvoices}
+        canReject={settingsQuery.data.permissions.canAccount}
       />
 
       <Card className="order-[-1] min-w-0">

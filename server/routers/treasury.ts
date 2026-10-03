@@ -19,6 +19,10 @@ import { buildTreasuryInvoiceReportPdfBase64 } from "../_core/documents";
 import * as db from "../db";
 import * as treasury from "../treasury";
 import { listInvoiceAccountingQueue } from "../invoiceAccounting";
+import {
+  assertInvoicePendingAccounting,
+  assertRequiredMissingCpcRetention,
+} from "../invoiceAccountingValidation";
 
 type User = treasury.TreasuryActor;
 
@@ -100,6 +104,10 @@ function canExportBankWorkbook(user: User) {
 
 function isAccountant(user: User) {
   return user.role === "admin" || user.buildreqRole === "contable";
+}
+
+function canAccountTreasuryInvoices(user: User) {
+  return isAccountant(user) || user.buildreqRole === "administracion_central";
 }
 
 async function canAccessTreasury(user: User) {
@@ -393,6 +401,7 @@ export const treasuryRouter = router({
       canCreate: canManageTreasuryDrafts(ctx.user),
       canDepurate: isCentral(ctx.user),
       canAccount: isAccountant(ctx.user),
+      canAccountInvoices: canAccountTreasuryInvoices(ctx.user),
       canExportBankWorkbook: canExportBankWorkbook(ctx.user),
     },
   })),
@@ -523,6 +532,45 @@ export const treasuryRouter = router({
         currency: input.currency,
         excludeBatchId: input.batchId,
         projectIds: input.projectId ? undefined : getProjectScopeIds(ctx.user),
+      });
+    }),
+
+  accountInvoice: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        accountingComment: z.string().trim().max(2000).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertTreasuryAccess(ctx.user);
+      if (!canAccountTreasuryInvoices(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo Contabilidad, Administración Central o Superusuario puede contabilizar facturas desde Tesorería.",
+        });
+      }
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      }
+      if (!canAccessProject(ctx.user, detail.invoice.projectId)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a facturas de ese proyecto.",
+        });
+      }
+      assertInvoicePendingAccounting(detail);
+      assertRequiredMissingCpcRetention(detail);
+      return db.accountInvoice({
+        id: input.id,
+        accountedById: ctx.user.id,
+        accountingComment: input.accountingComment,
       });
     }),
 
