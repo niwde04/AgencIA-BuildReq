@@ -1,4 +1,19 @@
-# Verificación de Retenciones — 30/09/2026
+# Verificación de Retenciones
+
+## Impresión normal y compatibilidad de main — 05/10/2026
+
+- `pnpm check` y `pnpm build` en el checkout main: aprobados. Las advertencias de Vite sobre /umami y tamaño del bundle permanecen.
+- `pnpm test:retention-documents:db`: **52 pruebas aprobadas**. Conserva los casos de reversión de main y agrega impresión normal desde borrador, actualización por rechazo/corrección, concurrencia, no duplicados, cierre, soportes, rollback, permisos, migración repetida, dirección seleccionada, reimpresión de snapshots antiguos y productor histórico de fecha contable.
+- `pnpm test:contractual-advances:db`: **49 pruebas aprobadas**, 35 de notas/Tesorería y 14 contractuales. Total único PostgreSQL: **101**. Bases locales desechables eliminadas al terminar; no se usaron datos ni credenciales Cloud para fixtures.
+- Vitest focalizado: **93 aprobadas** en retentionPreprintedPrint, retentionPrint, invoiceAccounting, invoiceReversalsRouter, invoiceReview, invoiceReceiptFiscalSync, invoiceDocumentAdjustments y projectAccess. Tres fixtures del manejador original en `5260a3c^` comprueban el HTML normal byte por byte para HNL, USD y límite de ocho conceptos.
+- Chrome con API simulada, versión main: 1440/768/390/320 px, impresión desde factura borrador/rechazada, listado/detalle, fallo que cierra ventana, cambios sin guardar bloqueados y comprobante anulado identificado correctamente. Sin errores JavaScript ni desbordamientos. Evidencia `output/retention-normal/main-ui/visual-review.json`; reproducción local en 127.0.0.1:4192 con `node .tmp/retention-main-ui.mjs`. No se verificó impresora física.
+- Migración Cloud por `.env`: **73 tablas con huellas idénticas antes/después dentro de la transacción**; funciones de reversión, RLS y grants originales iguales. Se verificaron tipos de fecha, 328 copias anteriores con interpretación histórica de Honduras y su compatibilidad sin reescribirlas. SQL aplicado: `20261005120000_retention_print.sql`, SHA-256 `40f152c042b4f2920a56d91373aaea05e711be95a68b1aa48541315737a076ee`. Guard nuevo activo. Verificación posterior y deny real de anon/authenticated en `cloud-verification.json`.
+- Recuperación conservada: definiciones SQL previas de los objetos modificados, sin datos ni credenciales. El respaldo completo fue rechazado por revisión automática por exportar datos fuera del alcance; se utilizó la alternativa limitada a definiciones. Detalle de compatibilidad y recuperación en [retenciones.md](retenciones.md).
+- Seguridad: sesión, rol y proyecto validados en el backend bajo bloqueo de factura; HTML escapado; anulados preservados y marcados; funciones invoker con search_path explícito y sin permisos de lectura directa para navegador. No hay dependencias nuevas ni cambios de permisos.
+- Rendimiento: no medido. Listado paginado y operaciones limitadas a una factura. No se ejecutó de nuevo la suite general; las limitaciones/fallos históricos siguientes corresponden a sus entregas anteriores.
+- Alcance operativo: migración Cloud y commit de código en main; sin push ni despliegue de aplicación ni intervención en SSH. Riesgo medio de publicación por requerir cliente/servidor compatibles.
+
+## Verificación anterior — 30/09/2026
 
 - TypeScript: aprobado (`tsc --noEmit`).
 - Compilación: cliente Vite y servidor esbuild aprobados.

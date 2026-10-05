@@ -6,6 +6,7 @@ import { noteRows, type NoteActor } from "./financialNotes";
 import { canAccessProject, getProjectScopeIds } from "./projectAccess";
 import {
   canReadRetentionDocuments,
+  canPrintInvoiceRetention,
   type RetentionSnapshot,
   type RetentionLineSnapshot,
 } from "../shared/retention-documents";
@@ -47,7 +48,10 @@ const calendarDate = (v: any): string | null =>
 export function validateRetentionSnapshot(
   invoice: any,
   lines: RetentionLineSnapshot[],
-  options: { preserveHistoricalDates?: boolean } = {}
+  options: {
+    preserveHistoricalDates?: boolean;
+    requireAccounting?: boolean;
+  } = {}
 ) {
   const reviewWarnings: string[] = [];
   const total = noteMoneyUnits(invoice.retentionTotal);
@@ -97,7 +101,10 @@ export function validateRetentionSnapshot(
       "La fecha de emisión supera el límite autorizado registrado. Se conservaron las fechas originales para revisión contable."
     );
   }
-  if (!invoice.accountedAt || !invoice.accountedById)
+  if (
+    options.requireAccounting !== false &&
+    (!invoice.accountedAt || !invoice.accountedById)
+  )
     fail("Falta el responsable o fecha de contabilización");
   for (const line of lines) {
     if (
@@ -123,25 +130,73 @@ async function copyAttachments(
     from attachments a where a."entityType"=${entityType} and a."entityId"=${entityId}
     on conflict ("documentId","attachmentId") do nothing`);
 }
-/** Caller owns the accounting transaction and invoice lock. No financial adjustments. */
+/** Caller owns the invoice transaction and lock. Never adjusts financial balances. */
 export async function createInvoiceRetentionDocument(
   tx: Executor,
   invoiceId: number,
-  options: { preserveHistoricalDates?: boolean } = {}
+  options: {
+    preserveHistoricalDates?: boolean;
+    printActorId?: number;
+    refreshExistingOnly?: boolean;
+  } = {}
 ) {
   const [invoice] = await noteRows(
     tx,
-    sql`select i.*,s.name "supplierName",s.rtn "supplierRtn",p.name "projectName",u.name "actorName"
+    sql`select i.*,to_char(i."accountedAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') "accountedAtUtc",s.name "supplierName",s.rtn "supplierRtn",coalesce(sc.address,s.address,'') "supplierAddress",p.name "projectName",u.name "actorName"
     from invoices i left join suppliers s on s.id=i."supplierId" join projects p on p.id=i."projectId"
+    left join "purchaseOrders" po on po.id=i."purchaseOrderId"
+    left join "supplierContacts" sc on sc.id=po."supplierContactId"
     left join users u on u.id=i."accountedById" where i.id=${invoiceId} for update of i`
   );
-  if (!invoice || invoice.status !== "registrada")
-    fail("La retención se registra al contabilizar la factura");
+  if (!invoice) fail("Factura no encontrada");
   const [existing] = await noteRows<RetentionDocument>(
     tx,
     sql`select * from "retentionDocuments" where "invoiceId"=${invoiceId} and status='registrada'`
   );
-  if (existing) return existing;
+  if (existing?.snapshot.accountedAt) {
+    // Older snapshots did not store the contact address. Enrich the print response only.
+    return options.printActorId !== undefined &&
+      existing.snapshot.supplierAddress == null
+      ? {
+          ...existing,
+          snapshot: {
+            ...existing.snapshot,
+            supplierAddress: invoice.supplierAddress,
+          },
+        }
+      : existing;
+  }
+  if (options.refreshExistingOnly && !existing) return null;
+  if (
+    invoice.status === "anulada" ||
+    noteMoneyUnits(invoice.retentionTotal) === BigInt(0)
+  ) {
+    if (existing) {
+      await tx.execute(
+        sql`delete from "retentionDocumentAttachments" where "documentId"=${existing.id}`
+      );
+      await tx.execute(
+        sql`delete from "retentionDocuments" where id=${existing.id} and status='registrada'`
+      );
+    }
+    if (invoice.status === "anulada" && !options.refreshExistingOnly)
+      fail("No se puede imprimir la retención de una factura anulada");
+    return null;
+  }
+  const accounted = invoice.status === "registrada";
+  if (
+    !accounted &&
+    options.printActorId === undefined &&
+    !options.refreshExistingOnly
+  )
+    fail("La retención se registra al contabilizar o imprimir la factura");
+  if (
+    !accounted &&
+    !["borrador", "rechazada", "revisada", "pendiente_contabilizar"].includes(
+      invoice.status
+    )
+  )
+    fail("La factura no permite imprimir retenciones en este estado");
   const lines = await noteRows<RetentionLineSnapshot>(
     tx,
     sql`select r.*,c."financialGroupCode",g."financialGroupDescription"
@@ -149,11 +204,14 @@ export async function createInvoiceRetentionDocument(
     left join "financialGroups" g on g."financialGroupCode"=c."financialGroupCode"
     where r."invoiceId"=${invoiceId} order by r.id`
   );
-  const reviewWarnings = validateRetentionSnapshot(invoice, lines, options);
-  if (noteMoneyUnits(invoice.retentionTotal) === BigInt(0)) return null;
+  const reviewWarnings = validateRetentionSnapshot(invoice, lines, {
+    ...options,
+    requireAccounting: accounted,
+  });
   const snapshot: RetentionSnapshot = {
     supplierName: invoice.supplierName,
     supplierRtn: invoice.supplierRtn,
+    supplierAddress: invoice.supplierAddress,
     projectName: invoice.projectName,
     invoiceDocumentNumber: invoice.invoiceDocumentNumber,
     invoiceNumber: invoice.invoiceNumber,
@@ -162,9 +220,9 @@ export async function createInvoiceRetentionDocument(
     documentRangeEnd: invoice.retentionDocumentRangeEnd,
     documentDate: calendarDate(invoice.retentionDocumentDate),
     emissionDeadline: calendarDate(invoice.retentionEmissionDeadline),
-    accountedAt: new Date(invoice.accountedAt).toISOString(),
-    accountedById: invoice.accountedById,
-    actorName: invoice.actorName,
+    accountedAt: accounted ? invoice.accountedAtUtc : null,
+    accountedById: accounted ? invoice.accountedById : null,
+    actorName: accounted ? invoice.actorName : null,
     reviewWarnings,
     lines,
     original: {
@@ -175,15 +233,69 @@ export async function createInvoiceRetentionDocument(
       ),
     },
   };
-  const [document] = await noteRows<RetentionDocument>(
-    tx,
-    sql`insert into "retentionDocuments"
+  const status = "registrada";
+  const [document] = existing
+    ? await noteRows<RetentionDocument>(
+        tx,
+        sql`update "retentionDocuments" set status=${status},"projectId"=${invoice.projectId},"supplierId"=${invoice.supplierId},"documentNumber"=${invoice.retentionReceiptNumber},
+      currency=${invoice.currency},total=${invoice.retentionTotal},"documentDate"=${snapshot.documentDate}::timestamp,
+      snapshot=${JSON.stringify(snapshot)}::jsonb where id=${existing.id} and status='registrada' returning *`
+      )
+    : await noteRows<RetentionDocument>(
+        tx,
+        sql`insert into "retentionDocuments"
     ("invoiceId","projectId","supplierId",status,"documentNumber",currency,total,"documentDate","createdById",snapshot)
-    values (${invoice.id},${invoice.projectId},${invoice.supplierId},'registrada',${invoice.retentionReceiptNumber},
-      ${invoice.currency},${invoice.retentionTotal},${snapshot.documentDate}::timestamp,${invoice.accountedById},${JSON.stringify(snapshot)}::jsonb) returning *`
-  );
-  await copyAttachments(tx, document.id, "invoice", invoiceId);
+    values (${invoice.id},${invoice.projectId},${invoice.supplierId},${status},${invoice.retentionReceiptNumber},
+      ${invoice.currency},${invoice.retentionTotal},${snapshot.documentDate}::timestamp,${accounted ? invoice.accountedById : options.printActorId},${JSON.stringify(snapshot)}::jsonb) returning *`
+      );
+  // Supports stay on the source invoice until accounting freezes them.
+  if (accounted) await copyAttachments(tx, document.id, "invoice", invoiceId);
   return document;
+}
+
+/** Updates an already printed retention within the same transaction as its source correction. */
+export async function syncInvoiceRetentionDocument(
+  tx: Executor,
+  invoiceId: number
+) {
+  return createInvoiceRetentionDocument(tx, invoiceId, {
+    refreshExistingOnly: true,
+  });
+}
+
+/** Printing is a mutation: materialize the saved invoice once and return that exact snapshot. */
+export async function prepareInvoiceRetentionPrint(
+  invoiceId: number,
+  user: NoteActor
+) {
+  if (!canPrintInvoiceRetention(user))
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para imprimir retenciones",
+    });
+  const db = await database();
+  return db.transaction(async tx => {
+    const [invoice] = await noteRows<{ projectId: number; status: string }>(
+      tx,
+      sql`select "projectId",status from invoices where id=${invoiceId} for update`
+    );
+    if (!invoice)
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "Factura no encontrada",
+      });
+    if (!canAccessProject(user, invoice.projectId))
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "No tiene acceso a facturas de otro proyecto",
+      });
+    if (invoice.status === "anulada")
+      fail("No se puede imprimir la retención de una factura anulada");
+    const document = await createInvoiceRetentionDocument(tx, invoiceId, {
+      printActorId: user.id,
+    });
+    return document ?? fail("La factura no tiene retenciones para imprimir");
+  });
 }
 
 export type RetentionListInput = {
@@ -272,14 +384,24 @@ export async function getRetentionDocument(id: number, user: NoteActor) {
       db,
       sql`select "noteId",snapshot from "retentionDocumentAntecedents" where "documentId"=${id} order by "noteId"`
     ),
-    noteRows<{
-      attachmentId: number;
-      legacyNoteId: number | null;
-      snapshot: { fileName: string; fileKey: string };
-    }>(
-      db,
-      sql`select "attachmentId","legacyNoteId",snapshot from "retentionDocumentAttachments" where "documentId"=${id} order by id`
-    ),
+    document.status === "registrada" && !document.snapshot.accountedAt
+      ? noteRows<{
+          attachmentId: number;
+          legacyNoteId: number | null;
+          snapshot: { fileName: string; fileKey: string };
+        }>(
+          db,
+          sql`select id "attachmentId",null::int "legacyNoteId",to_jsonb(a) snapshot
+      from attachments a where "entityType"='invoice' and "entityId"=${document.invoiceId} order by id`
+        )
+      : noteRows<{
+          attachmentId: number;
+          legacyNoteId: number | null;
+          snapshot: { fileName: string; fileKey: string };
+        }>(
+          db,
+          sql`select "attachmentId","legacyNoteId",snapshot from "retentionDocumentAttachments" where "documentId"=${id} order by id`
+        ),
   ]);
   return {
     document,
@@ -307,6 +429,21 @@ export async function retentionAttachmentUrl(
     db,
     sql`select snapshot->>'fileKey' "fileKey" from "retentionDocumentAttachments" where "documentId"=${documentId} and "attachmentId"=${attachmentId}`
   );
+  if (
+    detail.document.status === "registrada" &&
+    !detail.document.snapshot.accountedAt
+  ) {
+    const [attachment] = await noteRows(
+      db,
+      sql`select "fileKey" from attachments where id=${attachmentId} and "entityType"='invoice' and "entityId"=${detail.document.invoiceId}`
+    );
+    if (!attachment)
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "Adjunto no encontrado",
+      });
+    return storageGet(attachment.fileKey);
+  }
   return storageGet(link.fileKey);
 }
 export async function resolveLegacyRetention(noteId: number, user: NoteActor) {
@@ -352,7 +489,7 @@ export async function reclassifyRetentionDocuments(tx: Executor) {
     // Collect incomplete invoices; the caller rolls back every insertion if any fail.
     const [existing] = await noteRows(
       tx,
-      sql`select id from "retentionDocuments" where "invoiceId"=${invoice.id} and status='registrada'`
+      sql`select id from "retentionDocuments" where "invoiceId"=${invoice.id} and status='registrada' and snapshot->>'accountedAt' is not null`
     );
     if (existing) continue;
     try {

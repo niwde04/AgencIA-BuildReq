@@ -17,6 +17,7 @@ import {
 import { FiscalDocumentDialogContent } from "@/components/FiscalDocument";
 import { DataPagination } from "@/components/DataPagination";
 import { canReadRetentionDocuments } from "@shared/retention-documents";
+import { getPrintableRetentionConcepts } from "@/lib/retention-print";
 import { buildRetentionPrintHtml } from "@/lib/retention-document-print";
 
 const selectClass =
@@ -30,6 +31,12 @@ const money = (v: unknown, currency: string) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 4,
   });
+const statusLabel = (status: string) =>
+  status === "anulada"
+    ? "Anulado"
+    : status === "historico"
+      ? "Histórico"
+      : "Registrada";
 function Field({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="min-w-0">
@@ -87,18 +94,44 @@ export default function RetentionDocuments() {
     s = d?.snapshot;
   const close = () =>
     navigate("/retenciones" + (invoiceId ? "?invoiceId=" + invoiceId : ""));
-  function print() {
+  const printMutation = trpc.invoices.printRetention.useMutation();
+  async function print() {
     if (!d) return;
-    const target = window.open("", "_blank");
+    const target = window.open("", "_blank", "width=920,height=720");
     if (!target) {
       toast.error("Permita las ventanas emergentes para imprimir");
       return;
     }
     target.opener = null;
-    target.document.write(buildRetentionPrintHtml(d));
-    target.document.close();
-    target.focus();
-    target.print();
+    try {
+      const document =
+        d.status === "registrada"
+          ? await printMutation.mutateAsync({ id: d.invoiceId! })
+          : d;
+      if (
+        document.status === "registrada" &&
+        getPrintableRetentionConcepts(document.snapshot.lines).truncated
+      ) {
+        toast.warning(
+          "El formato preimpreso solo tiene espacio para los primeros 8 conceptos de retención"
+        );
+      }
+      target.document.open();
+      target.document.write(buildRetentionPrintHtml(document));
+      target.document.close();
+      if (document.status !== "registrada") {
+        target.focus();
+        target.print();
+      }
+      void utils.retentionDocuments.invalidate();
+    } catch (error) {
+      target.close();
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo imprimir la retención"
+      );
+    }
   }
   async function openAttachment(id: number) {
     if (!d) return;
@@ -136,7 +169,8 @@ export default function RetentionDocuments() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Retenciones</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Comprobantes registrados al contabilizar las facturas en Tesorería.
+            Comprobantes creados al imprimir y actualizados hasta contabilizar
+            la factura.
           </p>
         </div>
         <Button variant="outline" asChild>
@@ -193,7 +227,7 @@ export default function RetentionDocuments() {
             value={filters.status}
             onChange={e => setFilters({ ...filters, status: e.target.value })}
           >
-            <option value="registrada">Contabilizados</option>
+            <option value="registrada">Registradas</option>
             <option value="historico">Históricos</option>
             <option value="anulada">Anulados</option>
             <option value="all">Todos</option>
@@ -233,7 +267,7 @@ export default function RetentionDocuments() {
         {list.data?.totals.map(t => (
           <div key={t.currency} className="rounded-lg border bg-card px-4 py-3">
             <p className="text-xs text-muted-foreground">
-              Total retenido · {t.currency}
+              Total registrado · {t.currency}
             </p>
             <p className="text-lg font-semibold tabular-nums">
               {money(t.total, t.currency)}
@@ -263,7 +297,7 @@ export default function RetentionDocuments() {
               No hay comprobantes para estos filtros
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Las facturas con retenciones generan su comprobante al
+              Las facturas con retenciones generan su comprobante al imprimir o
               contabilizarse.
             </p>
           </div>
@@ -323,11 +357,7 @@ export default function RetentionDocuments() {
                             row.status === "historico" ? "secondary" : "outline"
                           }
                         >
-                          {row.status === "anulada"
-                            ? "Anulado"
-                            : row.status === "historico"
-                              ? "Histórico"
-                              : "Contabilizado"}
+                          {statusLabel(row.status)}
                         </Badge>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
@@ -355,13 +385,7 @@ export default function RetentionDocuments() {
                     <h2 className="break-all font-medium">
                       {shown(row.documentNumber)}
                     </h2>
-                    <Badge variant="outline">
-                      {row.status === "anulada"
-                        ? "Anulado"
-                        : row.status === "historico"
-                          ? "Histórico"
-                          : "Contabilizado"}
-                    </Badge>
+                    <Badge variant="outline">{statusLabel(row.status)}</Badge>
                   </div>
                   {row.requiresReview && (
                     <p className="text-xs font-medium text-amber-800">
@@ -414,7 +438,11 @@ export default function RetentionDocuments() {
                 </DialogDescription>
               </div>
               {d && (
-                <Button variant="outline" onClick={print}>
+                <Button
+                  variant="outline"
+                  onClick={print}
+                  disabled={printMutation.isPending}
+                >
                   <Printer className="mr-2 h-4 w-4" />
                   Imprimir
                 </Button>
@@ -439,7 +467,9 @@ export default function RetentionDocuments() {
                       ? "Anulado · No vigente"
                       : d.status === "historico"
                         ? "Histórico"
-                        : "Contabilizado · Cerrado"}
+                        : s.accountedAt
+                          ? "Registrada · Cerrada"
+                          : "Registrada"}
                   </Badge>
                   <p className="text-xl font-semibold tabular-nums">
                     {money(d.total, d.currency)}
@@ -465,6 +495,13 @@ export default function RetentionDocuments() {
                         : ""}
                     </p>
                   </aside>
+                )}
+                {d.status === "registrada" && !s.accountedAt && (
+                  <p className="rounded-md bg-muted p-3 text-sm">
+                    Este comprobante se actualiza al guardar correcciones de la
+                    factura, incluso después de un rechazo. Se cierra al
+                    contabilizar.
+                  </p>
                 )}
                 {d.status === "historico" && (
                   <p className="rounded-md bg-muted p-3 text-sm">
@@ -597,7 +634,13 @@ export default function RetentionDocuments() {
                 </section>
                 <section className="rounded-lg border p-4">
                   <h2 className="mb-3 font-semibold">Historial</h2>
-                  {d.status === "registrada" && (
+                  {d.status === "registrada" && !s.accountedAt && (
+                    <p className="text-sm text-muted-foreground">
+                      Pendiente de contabilizar. Las correcciones se guardan
+                      desde la factura de origen.
+                    </p>
+                  )}
+                  {d.status === "registrada" && s.accountedAt && (
                     <p className="text-sm">
                       Contabilizado por {shown(s.actorName)} ·{" "}
                       {s.accountedAt

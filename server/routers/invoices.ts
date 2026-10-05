@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
+import { prepareInvoiceRetentionPrint } from "../retentionDocuments";
 import { listInvoicesPage } from "../paginatedLists";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
@@ -458,6 +459,9 @@ const invoiceItemAssetSchema = z.object({
 });
 
 export const invoicesRouter = router({
+  printRetention: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(({ ctx, input }) => prepareInvoiceRetentionPrint(input.id, ctx.user)),
   listPage: protectedProcedure
     .input(
       z.object({

@@ -1,0 +1,39 @@
+{
+  "currency": "USD",
+  "snapshot": {
+    "supplierName": "Proveedor \"Prueba\" & Cía.",
+    "supplierRtn": "08011999000001",
+    "supplierAddress": "Dirección de prueba <centro>",
+    "projectName": "Proyecto de prueba",
+    "invoiceNumber": "001-001-01-00000031",
+    "invoiceDocumentNumber": "FT-PRUEBA",
+    "cai": "CAI-DE-RETENCION",
+    "documentRangeStart": null,
+    "documentRangeEnd": null,
+    "documentDate": "2026-10-05",
+    "emissionDeadline": "2027-12-31",
+    "accountedAt": null,
+    "accountedById": null,
+    "actorName": null,
+    "lines": [
+      {
+        "id": 1,
+        "retentionCatalogId": 101,
+        "description": "Honorarios",
+        "baseAmount": "1000",
+        "percentage": "0.1",
+        "amount": "1.0000"
+      }
+    ],
+    "original": {
+      "invoice": {
+        "cai": "338827-15203E-A419E0-63BE03-0909A6-53",
+        "documentDate": "2026-09-21",
+        "receiptDate": "2026-09-20",
+        "postingDate": "2026-09-22",
+        "invoiceNumber": "001-001-01-00000031",
+        "invoiceDocumentNumber": "FT-PRUEBA"
+      }
+    }
+  }
+}

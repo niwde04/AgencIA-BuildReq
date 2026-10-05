@@ -37,6 +37,10 @@ suite(
       ),
       "utf8"
     );
+    const printMigration = readFileSync(
+      new URL("../drizzle/20261005120000_retention_print.sql", import.meta.url),
+      "utf8"
+    );
     beforeAll(async () => {
       const token = process.env.FINANCIAL_NOTES_TEST_TOKEN,
         url = new URL(testUrl!);
@@ -61,7 +65,7 @@ suite(
     });
     beforeEach(async () => {
       // Owner-only fixture setup in a verified disposable database. Restore every guard before assertions.
-      await client.query(`DO $$ DECLARE r record; BEGIN FOR r IN SELECT c.relname,t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE NOT t.tgisinternal AND t.tgname IN ('closed_invoice_guard','closed_invoice_child_guard','legacy_retention_guard','retention_attachment_guard','accounted_retention_required') LOOP EXECUTE format('DROP TRIGGER %I ON %I',r.tgname,r.relname); END LOOP; END $$;
+      await client.query(`DO $$ DECLARE r record; BEGIN FOR r IN SELECT c.relname,t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE NOT t.tgisinternal AND t.tgname IN ('closed_invoice_guard','closed_invoice_child_guard','legacy_retention_guard','retention_attachment_guard','accounted_retention_required','retention_document_guard') LOOP EXECUTE format('DROP TRIGGER %I ON %I',r.tgname,r.relname); END LOOP; END $$;
   TRUNCATE attachments,"financialNotes","financialNoteSequences","treasuryPaymentBatches","purchaseOrderAdvanceApplications","reverseLogistics","inventoryItems","invoiceRetentions","invoiceItems","receiptItems",invoices,receipts,"purchaseOrders",suppliers,projects,warehouses,users RESTART IDENTITY CASCADE;
   INSERT INTO users(id,"openId",name) VALUES(1,'retention-test','Contador de prueba');
   INSERT INTO warehouses(id,code,name,"displayName") VALUES(1,'W1','Bodega','Bodega');
@@ -99,6 +103,7 @@ suite(
       );
       await client.query(reversalMigration);
       await client.query(reversalMigration);
+      await client.query(printMigration);
     });
     async function account(id = 1) {
       return db.accountInvoice({ id, accountedById: 1 });
@@ -108,6 +113,416 @@ suite(
         service.reclassifyRetentionDocuments(tx)
       );
     }
+    it("creates a normal registered retention from a saved draft invoice through the authenticated endpoint", async () => {
+      await client.query("update invoices set status='borrador' where id=1");
+      const { invoicesRouter } = await import("./routers/invoices");
+      const caller = invoicesRouter.createCaller({
+        user: denied,
+        req: { headers: {} },
+        res: {},
+      } as any);
+      const document = await caller.printRetention({ id: 1 });
+      expect(document).toMatchObject({
+        invoiceId: 1,
+        status: "registrada",
+        total: "60.0000",
+        createdById: 1,
+      });
+      expect(document.snapshot).toMatchObject({
+        accountedAt: null,
+        accountedById: null,
+        actorName: null,
+      });
+      expect(buildRetentionPrintHtml(document)).toContain("size: letter;");
+      expect(
+        (await service.listRetentionDocuments({ status: "registrada" }, admin))
+          .items
+      ).toHaveLength(1);
+      expect((await service.listRetentionDocuments({}, admin)).totals).toEqual([
+        { currency: "HNL", total: "60.0000" },
+      ]);
+      expect(
+        (
+          await client.query(
+            'select status,"netPayable" from invoices where id=1'
+          )
+        ).rows[0]
+      ).toEqual({ status: "borrador", netPayable: "940.0000" });
+      expect(
+        (
+          await client.query(
+            'select count(*)::int n from "financialNotes" where "sourceInvoiceId"=1'
+          )
+        ).rows[0].n
+      ).toBe(0);
+    });
+    it("prints the selected purchase order contact address and original invoice fiscal fields", async () => {
+      await client.query(`update suppliers set address='Dirección general' where id=1;
+        insert into "supplierContacts" (id,"supplierId","projectId",name,address) values(1,1,1,'Contacto de prueba','Dirección seleccionada');
+        update "purchaseOrders" set "supplierContactId"=1 where id=1;
+        update invoices set "documentDate"='2026-09-20',cai='CAI-DE-FACTURA' where id=1`);
+      const document = await service.prepareInvoiceRetentionPrint(1, admin);
+      expect(document.snapshot.supplierAddress).toBe("Dirección seleccionada");
+      const html = buildRetentionPrintHtml(document);
+      expect(html).toContain(
+        'supplier-address multiline">Dirección seleccionada</div>'
+      );
+      expect(html).toContain('invoice-cai">CAI-DE-FACTURA</div>');
+      expect(html).toContain('print-date">20/09/2026</div>');
+      await account();
+      await client.query(
+        "update suppliers set address='Cambio posterior' where id=1; update \"supplierContacts\" set address='Cambio posterior' where id=1"
+      );
+      expect(
+        (await service.prepareInvoiceRetentionPrint(1, admin)).snapshot
+          .supplierAddress
+      ).toBe("Dirección seleccionada");
+    });
+    it("accepts the previous Honduras accounting timestamp producer while rejecting an unclosed printed retention", async () => {
+      const printed = await service.prepareInvoiceRetentionPrint(1, admin);
+      await (await db.getDb())!.transaction(async tx => {
+        await tx.execute(
+          sql`update invoices set status='registrada',"accountedAt"='2026-10-05 12:00:00',"accountedById"=1 where id=1`
+        );
+        await tx.execute(
+          sql`update "retentionDocuments" set snapshot=jsonb_set(jsonb_set(snapshot,'{accountedAt}','"2026-10-05T18:00:00.000Z"'),'{accountedById}'::text[],'1') where id=${printed.id}`
+        );
+      });
+      const closed = (await service.getRetentionDocument(printed.id, admin))
+        .document;
+      expect(closed.snapshot.accountedAt).toBe("2026-10-05T18:00:00.000Z");
+      await expect(
+        client.query('update "retentionDocuments" set total=1 where id=$1', [
+          printed.id,
+        ])
+      ).rejects.toThrow(/cerrado/);
+    });
+    it("enriches old closed snapshots for preprinted reprints without changing the stored document", async () => {
+      await account();
+      await client.query(
+        "update suppliers set address='Dirección de prueba' where id=1"
+      );
+      // Represent the deployed snapshots created before supplierAddress was added.
+      await client.query(
+        'ALTER TABLE "retentionDocuments" DISABLE TRIGGER retention_document_guard'
+      );
+      try {
+        await client.query(
+          `update "retentionDocuments" set snapshot=snapshot-'supplierAddress' where "invoiceId"=1`
+        );
+      } finally {
+        await client.query(
+          'ALTER TABLE "retentionDocuments" ENABLE TRIGGER retention_document_guard'
+        );
+      }
+      const before = (
+        await client.query(
+          'select * from "retentionDocuments" where "invoiceId"=1'
+        )
+      ).rows[0];
+      const printed = await service.prepareInvoiceRetentionPrint(1, admin);
+      expect(buildRetentionPrintHtml(printed)).toContain(
+        'supplier-address multiline">Dirección de prueba</div>'
+      );
+      expect(
+        (
+          await client.query(
+            'select * from "retentionDocuments" where "invoiceId"=1'
+          )
+        ).rows[0]
+      ).toEqual(before);
+    });
+    it("reuses one retention across concurrent and repeated prints", async () => {
+      const documents = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          service.prepareInvoiceRetentionPrint(1, admin)
+        )
+      );
+      expect(new Set(documents.map(d => d.id)).size).toBe(1);
+      expect(
+        (await service.listRetentionDocuments({ invoiceId: 1 }, admin)).total
+      ).toBe(1);
+    });
+    it("updates the same printed retention after accounting rejects and the user corrects lines and fiscal data", async () => {
+      const printed = await service.prepareInvoiceRetentionPrint(1, admin);
+      await db.rejectInvoiceFromAccounting({
+        id: 1,
+        rejectedById: 1,
+        rejectionComment: "Corregir la base",
+      });
+      await db.replaceInvoiceRetentions(
+        1,
+        [
+          { retentionCatalogId: 101, baseAmount: "500" },
+          { retentionCatalogId: 102, baseAmount: "500" },
+        ],
+        undefined,
+        undefined,
+        1
+      );
+      await db.updateInvoice(1, {
+        retentionReceiptNumber: "001-001-01-00000009",
+        retentionDocumentDate: new Date("2026-10-05T00:00:00Z"),
+      });
+      const corrected = (await service.getRetentionDocument(printed.id, admin))
+        .document;
+      expect(corrected).toMatchObject({
+        id: printed.id,
+        status: "registrada",
+        total: "30.0000",
+        documentNumber: "001-001-01-00000009",
+      });
+      expect(corrected.snapshot.documentDate).toBe("2026-10-05");
+      expect(corrected.snapshot.lines.map(l => l.amount)).toEqual([
+        "5.0000",
+        "25.0000",
+      ]);
+      expect(
+        (await client.query('select "netPayable" from invoices where id=1'))
+          .rows[0].netPayable
+      ).toBe("970.0000");
+      expect((await service.prepareInvoiceRetentionPrint(1, admin)).id).toBe(
+        printed.id
+      );
+    });
+    it("finalizes the same retention at accounting and keeps its snapshot immutable", async () => {
+      const retention = await service.prepareInvoiceRetentionPrint(1, admin);
+      await account();
+      const document = await service.prepareInvoiceRetentionPrint(1, denied);
+      expect(document).toMatchObject({
+        id: retention.id,
+        status: "registrada",
+        total: "60.0000",
+      });
+      expect(document.snapshot.accountedById).toBe(1);
+      expect(document.snapshot.accountedAt).not.toBeNull();
+      expect(
+        (await service.getRetentionDocument(retention.id, admin)).attachments
+      ).toHaveLength(1);
+      await expect(
+        db.updateInvoice(1, { retentionReceiptNumber: "001-001-01-00000009" })
+      ).rejects.toMatchObject({
+        cause: { message: expect.stringMatching(/cerrada/) },
+      });
+      await expect(
+        client.query(
+          "update \"retentionDocuments\" set status='borrador' where id=$1",
+          [retention.id]
+        )
+      ).rejects.toThrow(/cerrado/);
+      expect(
+        (await service.getRetentionDocument(retention.id, admin)).document
+          .snapshot
+      ).toEqual(document.snapshot);
+    });
+    it("removes a printed retention when all retentions are removed", async () => {
+      await service.prepareInvoiceRetentionPrint(1, admin);
+      await client.query("update invoices set status='rechazada' where id=1");
+      await db.replaceInvoiceRetentions(1, [], undefined, undefined, 1);
+      expect(
+        (await service.listRetentionDocuments({ invoiceId: 1 }, admin)).total
+      ).toBe(0);
+      await expect(
+        service.prepareInvoiceRetentionPrint(1, admin)
+      ).rejects.toThrow(/no tiene retenciones/);
+      expect(
+        (await client.query('select "netPayable" from invoices where id=1'))
+          .rows[0].netPayable
+      ).toBe("1000.0000");
+    });
+    it("keeps retention supports editable and freezes only current attachments at accounting", async () => {
+      const retention = await service.prepareInvoiceRetentionPrint(1, admin);
+      await service.assertRetentionAttachmentUnchanged(1);
+      await client.query("delete from attachments where id=1");
+      expect(
+        (await service.getRetentionDocument(retention.id, admin)).attachments
+      ).toEqual([]);
+      await client.query(
+        `INSERT INTO attachments("entityType","entityId","fileName","fileKey","fileUrl","fileSize","uploadedById") VALUES('invoice',1,'corregida.pdf','tests/corregida','/corregida.pdf',20,1)`
+      );
+      await account();
+      expect(
+        (await service.getRetentionDocument(retention.id, admin)).attachments[0]
+          .fileName
+      ).toBe("corregida.pdf");
+      await expect(
+        client.query("delete from attachments where id=3")
+      ).rejects.toThrow(/cerrados|soporte/);
+    });
+    it("denies printing across project boundaries, unauthorized roles, annulled and empty invoices", async () => {
+      await expect(
+        service.prepareInvoiceRetentionPrint(1, {
+          ...denied,
+          assignedProjectId: 99,
+        })
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(
+        service.prepareInvoiceRetentionPrint(1, {
+          ...denied,
+          buildreqRole: "bodeguero_proyecto",
+        })
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(
+        service.prepareInvoiceRetentionPrint(5, admin)
+      ).rejects.toThrow(/anulada/);
+      await expect(
+        service.prepareInvoiceRetentionPrint(2, admin)
+      ).rejects.toThrow(/no tiene retenciones/);
+      expect((await service.listRetentionDocuments({}, admin)).total).toBe(0);
+    });
+    it("serializes a concurrent correction and print without stale persisted amounts or duplicates", async () => {
+      const retention = await service.prepareInvoiceRetentionPrint(1, admin);
+      await client.query("update invoices set status='rechazada' where id=1");
+      await Promise.all([
+        service.prepareInvoiceRetentionPrint(1, admin),
+        db.replaceInvoiceRetentions(
+          1,
+          [{ retentionCatalogId: 101, baseAmount: "500" }],
+          undefined,
+          undefined,
+          1
+        ),
+      ]);
+      expect(
+        (await service.getRetentionDocument(retention.id, admin)).document.total
+      ).toBe("5.0000");
+      expect(
+        (await service.listRetentionDocuments({ invoiceId: 1 }, admin)).total
+      ).toBe(1);
+    });
+    it("rolls corrections back if the printed retention cannot be synchronized", async () => {
+      const retention = await service.prepareInvoiceRetentionPrint(1, admin);
+      await client.query("update invoices set status='rechazada' where id=1");
+      await client.query(`CREATE FUNCTION private.test_draft_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced retention error'; END $$;
+        CREATE TRIGGER test_draft_failure BEFORE UPDATE ON "retentionDocuments" FOR EACH ROW EXECUTE FUNCTION private.test_draft_failure();`);
+      try {
+        await expect(
+          db.replaceInvoiceRetentions(
+            1,
+            [{ retentionCatalogId: 101, baseAmount: "500" }],
+            undefined,
+            undefined,
+            1
+          )
+        ).rejects.toMatchObject({
+          cause: { message: "forced retention error" },
+        });
+        await expect(
+          db.updateInvoice(1, { retentionReceiptNumber: "001-001-01-00000009" })
+        ).rejects.toMatchObject({
+          cause: { message: "forced retention error" },
+        });
+        expect(
+          (
+            await client.query(
+              'select "retentionTotal","netPayable","retentionReceiptNumber" from invoices where id=1'
+            )
+          ).rows[0]
+        ).toEqual({
+          retentionTotal: "60.0000",
+          netPayable: "940.0000",
+          retentionReceiptNumber: "001-001-01-00000001",
+        });
+        expect(
+          (await service.getRetentionDocument(retention.id, admin)).document
+            .total
+        ).toBe("60.0000");
+        expect(
+          (
+            await client.query(
+              'select amount from "invoiceRetentions" where "invoiceId"=1 order by id'
+            )
+          ).rows.map(r => r.amount)
+        ).toEqual(["10.0000", "50.0000"]);
+      } finally {
+        await client.query(
+          'DROP TRIGGER test_draft_failure ON "retentionDocuments"; DROP FUNCTION private.test_draft_failure()'
+        );
+      }
+    });
+    it("rejects incomplete fiscal data without creating a retention and denies early finalization", async () => {
+      await client.query('update invoices set "retentionCai"=null where id=1');
+      await expect(
+        service.prepareInvoiceRetentionPrint(1, admin)
+      ).rejects.toThrow(/CAI/);
+      expect((await service.listRetentionDocuments({}, admin)).total).toBe(0);
+      await client.query('update invoices set "retentionCai"=$1 where id=1', [
+        "338827-15203E-A419E0-63BE03-0909A6-53",
+      ]);
+      const retention = await service.prepareInvoiceRetentionPrint(1, admin);
+      await expect(
+        client.query(
+          "update \"retentionDocuments\" set snapshot=jsonb_set(jsonb_set(snapshot,'{accountedAt}','\"2026-10-05T00:00:00.000Z\"'),'{accountedById}','1') where id=$1",
+          [retention.id]
+        )
+      ).rejects.toThrow(/estado/);
+    });
+    it("preserves the printed retention if accounting fails while copying supports", async () => {
+      const retention = await service.prepareInvoiceRetentionPrint(1, admin);
+      await client.query(`CREATE FUNCTION private.test_retention_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced copy error'; END $$;
+        CREATE TRIGGER test_retention_failure BEFORE INSERT ON "retentionDocumentAttachments" FOR EACH ROW EXECUTE FUNCTION private.test_retention_failure();`);
+      try {
+        await expect(account()).rejects.toThrow();
+        expect(
+          (await client.query("select status from invoices where id=1")).rows[0]
+            .status
+        ).toBe("pendiente_contabilizar");
+        expect(
+          (await service.getRetentionDocument(retention.id, admin)).document
+        ).toEqual({ ...retention, voidedByName: null });
+        expect(
+          (
+            await client.query(
+              'select count(*)::int n from "retentionDocumentAttachments"'
+            )
+          ).rows[0].n
+        ).toBe(0);
+      } finally {
+        await client.query(
+          'DROP TRIGGER test_retention_failure ON "retentionDocumentAttachments"; DROP FUNCTION private.test_retention_failure()'
+        );
+      }
+    });
+    it("removes an open retention when its source invoice is annulled by correction", async () => {
+      const retention = await service.prepareInvoiceRetentionPrint(1, admin);
+      await (await db.getDb())!.transaction(async tx => {
+        await tx.execute(sql`update invoices set status='anulada' where id=1`);
+        await service.syncInvoiceRetentionDocument(tx, 1);
+      });
+      await expect(
+        service.getRetentionDocument(retention.id, admin)
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+      await expect(
+        service.prepareInvoiceRetentionPrint(1, admin)
+      ).rejects.toThrow(/anulada/);
+    });
+    it("repeats both migrations without altering normal retentions, closed snapshots or balances", async () => {
+      await service.prepareInvoiceRetentionPrint(1, admin);
+      await (await db.getDb())!.transaction(tx =>
+        service.createInvoiceRetentionDocument(tx, 3)
+      );
+      const documents = (
+        await client.query('select * from "retentionDocuments" order by id')
+      ).rows;
+      const balances = (
+        await client.query('select id,"netPayable" from invoices order by id')
+      ).rows;
+      await client.query(migration);
+      await client.query(migration);
+      expect(
+        (await client.query('select * from "retentionDocuments" order by id'))
+          .rows
+      ).toEqual(documents);
+      expect(
+        (await client.query('select id,"netPayable" from invoices order by id'))
+          .rows
+      ).toEqual(balances);
+      await expect(
+        client.query(
+          'insert into "retentionDocuments" ("invoiceId","projectId","supplierId",status,"documentNumber",currency,total,"documentDate","createdById",snapshot) select "invoiceId","projectId","supplierId",status,"documentNumber",currency,total,"documentDate","createdById",snapshot from "retentionDocuments" where "invoiceId"=1'
+        )
+      ).rejects.toThrow(/duplicate/);
+    });
     it("creates exactly one fixed complete document at accounting, with no extra financial effect", async () => {
       expect((await service.listRetentionDocuments({}, admin)).total).toBe(0);
       const original = (
@@ -779,8 +1194,8 @@ suite(
           supplierName: "<script>alert(1)</script>",
         },
       });
-      expect(html).toContain("Comprobante de retención");
-      expect(html).not.toContain("<script>");
+      expect(html).toContain("size: letter;");
+      expect(html).not.toContain("<script>alert(1)</script>");
       expect(html).toContain("&lt;script&gt;");
     });
     it("keeps legitimate credit note accounting compatible with closed invoices without changing the retention snapshot", async () => {
@@ -857,6 +1272,7 @@ suite(
       ).toEqual(original);
     });
     it("enforces the document at commit and denies direct browser database privileges", async () => {
+      await service.prepareInvoiceRetentionPrint(1, admin);
       await expect(
         client.query(
           'update invoices set status=\'registrada\', "accountedAt"=now(),"accountedById"=1 where id=1'
@@ -901,7 +1317,7 @@ suite(
       );
       expect(document.snapshot.emissionDeadline).toBe("2010-07-02");
       expect(document.snapshot.reviewWarnings).toHaveLength(1);
-      expect(buildRetentionPrintHtml(document)).toContain(
+      expect(buildRetentionPrintHtml(document)).not.toContain(
         "Revisión contable pendiente"
       );
       expect(

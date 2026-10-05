@@ -1,6 +1,6 @@
 # Contexto de BuildReq
 
-Revisado: 2026-10-01.
+Revisado: 2026-10-05.
 
 Aplicación de compras, recepciones, inventario, facturas de proveedores y tesorería. Cliente React/TypeScript con Vite, Tailwind/Radix y tRPC/TanStack Query; servidor Express/tRPC con Drizzle y PostgreSQL. Supabase proporciona autenticación y almacenamiento. Las tablas de negocio se acceden desde el backend confiable, con RLS y sin permisos directos del navegador.
 
@@ -10,6 +10,7 @@ Aplicación de compras, recepciones, inventario, facturas de proveedores y tesor
 - Facturas, recepciones e inventario: `server/db.ts` y routers específicos en `server/routers/`.
 - Envío de facturas a contabilizar: nuevo estado `pendiente_contabilizar`; enviar no contabiliza. Bandeja paginada en `server/invoiceAccounting.ts` y `client/src/components/InvoiceAccountingQueue.tsx`. Flujo, importes y migración: [facturas-contabilizacion.md](facturas-contabilizacion.md).
 - Reversión contable exclusiva de Ed administrador activo: `server/invoiceReversals.ts`, función privada PostgreSQL y auditoría inmutable `invoiceAccountingReversals`. Devuelve a Tesorería, anula comprobantes de retención conservando copias/soportes y bloquea dependencias financieras. Tesorería envía a revisión mediante el rechazo existente. Migración y reglas: [reversion-facturas.md](reversion-facturas.md).
+- Comprobantes de retención: imprimir desde Facturas crea una retención normal `registrada` aun con factura borrador; guardar correcciones la sincroniza hasta contabilizar. `snapshot.accountedAt` identifica el cierre; se preservan anulados y reversión auditada. HTML preimpreso original en `client/src/lib/retention-preprinted-print.ts`. Migración `db:migrate-retention-print` aplicada en Cloud el 05/10/2026; detalles: [retenciones.md](retenciones.md).
 - Tesorería: `server/treasury.ts`; anticipos: `server/purchaseOrderAdvances.ts`.
 - NC/ND y sus catálogos: `server/financialNotes.ts`, `server/routers/financialNotes.ts`, `shared/financial-notes.ts`, `client/src/pages/Notas.tsx`, `client/src/pages/ConceptosNotas.tsx`.
 - Código financiero de retenciones: fuente única en `financialNoteConcepts.financialGroupCode`, enlazada mediante `retentionCatalogId`; Retenciones y Conceptos de notas editan la misma asignación. Omitir el campo preserva el valor y enviar `null` lo quita. Las notas contabilizadas conservan su copia histórica.

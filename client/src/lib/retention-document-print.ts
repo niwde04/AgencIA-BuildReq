@@ -1,6 +1,7 @@
+import { buildPreprintedRetentionHtml } from "./retention-preprinted-print";
 import type { RetentionSnapshot } from "@shared/retention-documents";
 import { escapeNoteHtml } from "./financial-note-print";
-export function buildRetentionPrintHtml(document: {
+function buildHistoricalRetentionPrintHtml(document: {
   documentNumber: string | null;
   status: string;
   currency: string;
@@ -100,4 +101,12 @@ export function buildRetentionPrintHtml(document: {
     field("Fecha de contabilización", s.accountedAt) +
     "</body></html>"
   );
+}
+
+export function buildRetentionPrintHtml(
+  document: Parameters<typeof buildHistoricalRetentionPrintHtml>[0]
+) {
+  return document.status === "registrada"
+    ? buildPreprintedRetentionHtml(document)
+    : buildHistoricalRetentionPrintHtml(document);
 }

@@ -15759,45 +15759,44 @@ export async function updateInvoice(
     return updated;
   };
 
-  const updated = options?.syncReceiptFiscalData
-    ? await db.transaction(async tx => {
-        await tx.execute(
-          sql`select ${invoices.id} from ${invoices} where ${invoices.id} = ${id} for update`
+  const updated = await db.transaction(async tx => {
+    await tx.execute(
+      sql`select ${invoices.id} from ${invoices} where ${invoices.id} = ${id} for update`
+    );
+    const invoice = await updateInvoiceRow(tx);
+    if (!invoice) return invoice;
+
+    if (options?.syncReceiptFiscalData) {
+      const [updatedReceipt] = await tx
+        .update(receipts)
+        .set({
+          isFiscalDocument: invoice.isFiscalDocument,
+          cai: invoice.cai,
+          invoiceNumber: invoice.invoiceNumber,
+          documentRangeStart: invoice.documentRangeStart,
+          documentRangeEnd: invoice.documentRangeEnd,
+          documentDate: invoice.documentDate,
+          documentDueDate: invoice.documentDueDate,
+          postingDate: invoice.postingDate,
+          receiptDate: invoice.receiptDate,
+          emissionDeadline: invoice.emissionDeadline,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(eq(receipts.id, invoice.receiptId), sql`${receipts.status} <> 'anulada'`)
+        )
+        .returning({ id: receipts.id });
+
+      if (!updatedReceipt) {
+        throw new Error(
+          "No se pudo actualizar la recepción vinculada a la factura"
         );
-        const invoice = await updateInvoiceRow(tx);
-        if (!invoice) return invoice;
-
-        const [updatedReceipt] = await tx
-          .update(receipts)
-          .set({
-            isFiscalDocument: invoice.isFiscalDocument,
-            cai: invoice.cai,
-            invoiceNumber: invoice.invoiceNumber,
-            documentRangeStart: invoice.documentRangeStart,
-            documentRangeEnd: invoice.documentRangeEnd,
-            documentDate: invoice.documentDate,
-            documentDueDate: invoice.documentDueDate,
-            postingDate: invoice.postingDate,
-            receiptDate: invoice.receiptDate,
-            emissionDeadline: invoice.emissionDeadline,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(receipts.id, invoice.receiptId),
-              sql`${receipts.status} <> 'anulada'`
-            )
-          )
-          .returning({ id: receipts.id });
-
-        if (!updatedReceipt) {
-          throw new Error(
-            "No se pudo actualizar la recepción vinculada a la factura"
-          );
-        }
-        return invoice;
-      })
-    : await updateInvoiceRow(db);
+      }
+    }
+    const { syncInvoiceRetentionDocument } = await import("./retentionDocuments");
+    await syncInvoiceRetentionDocument(tx, id);
+    return invoice;
+  });
 
   if (updated) {
     await Promise.all([
@@ -16400,7 +16399,8 @@ export async function correctInvoiceReceiptFromInvoice(params: {
       .where(eq(invoices.id, row.invoice.id))
       .returning();
 
-
+    const { syncInvoiceRetentionDocument } = await import("./retentionDocuments");
+    await syncInvoiceRetentionDocument(tx, row.invoice.id);
     return {
       invoice: updatedInvoice,
       receipt: updatedReceipt,
@@ -16725,6 +16725,8 @@ export async function replaceInvoiceRetentions(
       .where(eq(invoices.id, invoiceId))
       .returning();
 
+    const { syncInvoiceRetentionDocument } = await import("./retentionDocuments");
+    await syncInvoiceRetentionDocument(tx, invoiceId);
     return updatedInvoice;
   });
 

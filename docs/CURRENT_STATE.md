@@ -1,6 +1,8 @@
 # Estado actual
 
-Actualizado: 2026-10-01 (Honduras).
+Actualizado: 2026-10-05 (Honduras).
+
+Retenciones normales desde impresión (05/10/2026): SQL `20261005120000_retention_print.sql` aplicado mediante `.env` en Cloud; la migración base ya existía. 73 tablas, filas/saldos, RLS/grants y funciones de reversión originales conservados; 328 comprobantes intactos. Se conserva la interpretación histórica de fechas y la anulación auditada. Código integrado en main para crear/actualizar la misma retención desde imprimir y recuperar el HTML preimpreso exacto. 52 pruebas PostgreSQL de módulo/reversión, 49 de finanzas, 93 focalizadas, tipos/build y Chrome con API simulada aprobados. Aplicación pendiente de despliegue; sin push ni cambios en SSH. Recuperación/evidencia: [retenciones.md](retenciones.md).
 
 Reversión contable implementada en main: Ed (`ed_barah@hotmail.com`, administrador activo) devuelve facturas a Tesorería con motivo; Tesorería puede enviarlas a revisión. Retenciones asociadas anuladas de forma atómica, conservando historial y soportes; bloqueos financieros y permisos repetidos en PostgreSQL. Cloud ya tiene migración verificada/repetida: 72 tablas originales intactas, 2.041 facturas, 322 comprobantes y cero reversiones. FT-018-00000450 se conservó contabilizada, sin retención aplicada. 36 pruebas PostgreSQL y 46 focalizadas aprobadas, tipos/build y revisión visual local. Rutas nuevas consultadas contra Cloud en transacción de solo lectura. El usuario despliega main en Dokploy; SSH fuera de alcance. Procedimiento, respaldo y límites: [reversion-facturas.md](reversion-facturas.md).
 

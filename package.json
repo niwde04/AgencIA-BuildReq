@@ -27,6 +27,7 @@
     "test:contractual-advances:db": "tsx scripts/test-contractual-advances-db.ts",
     "db:migrate-retention-documents": "tsx scripts/migrate-retention-documents.ts",
     "db:migrate-invoice-reversals": "tsx scripts/migrate-invoice-reversals.ts",
+    "db:migrate-retention-print": "tsx scripts/migrate-retention-print.ts",
     "test:retention-documents:db": "tsx scripts/test-retention-documents-db.ts"
   },
   "dependencies": {

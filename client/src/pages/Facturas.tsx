@@ -1,4 +1,8 @@
-import { canReadRetentionDocuments } from "@shared/retention-documents";
+import {
+  canPrintInvoiceRetention,
+  canReadRetentionDocuments,
+} from "@shared/retention-documents";
+import { buildRetentionPrintHtml } from "@/lib/retention-document-print";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   FiscalDocumentDialogContent,
@@ -15,7 +19,7 @@ import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 import {
   calculateRetentionPrintAmount,
   formatRetentionCalendarDate,
-  getRetentionCurrencyWord,
+  getPrintableRetentionConcepts,
 } from "@/lib/retention-print";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
@@ -1119,118 +1123,6 @@ function formatInvoicePrintQuantity(value: string | number | null | undefined) {
   });
 }
 
-function wordsUnderThousand(value: number): string {
-  const units = [
-    "",
-    "uno",
-    "dos",
-    "tres",
-    "cuatro",
-    "cinco",
-    "seis",
-    "siete",
-    "ocho",
-    "nueve",
-  ];
-  const teens: Record<number, string> = {
-    10: "diez",
-    11: "once",
-    12: "doce",
-    13: "trece",
-    14: "catorce",
-    15: "quince",
-    16: "dieciseis",
-    17: "diecisiete",
-    18: "dieciocho",
-    19: "diecinueve",
-    20: "veinte",
-    21: "veintiuno",
-    22: "veintidos",
-    23: "veintitres",
-    24: "veinticuatro",
-    25: "veinticinco",
-    26: "veintiseis",
-    27: "veintisiete",
-    28: "veintiocho",
-    29: "veintinueve",
-  };
-  const tens = [
-    "",
-    "",
-    "veinte",
-    "treinta",
-    "cuarenta",
-    "cincuenta",
-    "sesenta",
-    "setenta",
-    "ochenta",
-    "noventa",
-  ];
-  const hundreds = [
-    "",
-    "ciento",
-    "doscientos",
-    "trescientos",
-    "cuatrocientos",
-    "quinientos",
-    "seiscientos",
-    "setecientos",
-    "ochocientos",
-    "novecientos",
-  ];
-
-  if (value === 0) return "";
-  if (value === 100) return "cien";
-  if (value < 10) return units[value];
-  if (value < 30) return teens[value];
-  if (value < 100) {
-    const ten = Math.floor(value / 10);
-    const unit = value % 10;
-    return unit ? `${tens[ten]} y ${units[unit]}` : tens[ten];
-  }
-
-  const hundred = Math.floor(value / 100);
-  const rest = value % 100;
-  return rest
-    ? `${hundreds[hundred]} ${wordsUnderThousand(rest)}`
-    : hundreds[hundred];
-}
-
-function integerToSpanishWords(value: number): string {
-  if (value === 0) return "cero";
-
-  const millions = Math.floor(value / 1_000_000);
-  const thousands = Math.floor((value % 1_000_000) / 1_000);
-  const rest = value % 1_000;
-  const parts: string[] = [];
-
-  if (millions > 0) {
-    parts.push(
-      millions === 1
-        ? "un millon"
-        : `${integerToSpanishWords(millions)} millones`
-    );
-  }
-  if (thousands > 0) {
-    parts.push(
-      thousands === 1 ? "mil" : `${wordsUnderThousand(thousands)} mil`
-    );
-  }
-  if (rest > 0) {
-    parts.push(wordsUnderThousand(rest));
-  }
-
-  return parts.join(" ");
-}
-
-function amountToSpanishCurrency(value: number, currency: PurchaseCurrency) {
-  const centsTotal = Math.max(0, Math.round(value * 100));
-  const units = Math.floor(centsTotal / 100);
-  const cents = centsTotal % 100;
-  const unitLabel = getRetentionCurrencyWord(currency, units);
-  return `${integerToSpanishWords(units).toUpperCase()} ${unitLabel} CON ${String(cents).padStart(2, "0")}/100`;
-}
-
 function InvoiceAssetDetailsEditor({
   invoiceId,
   item,
@@ -1852,6 +1744,7 @@ export default function Facturas() {
         void utils.receipts.invalidate();
         void utils.receipts.getById.invalidate({ id: detail.receipt.id });
       }
+      void utils.retentionDocuments.invalidate();
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
@@ -2013,6 +1906,7 @@ export default function Facturas() {
         }));
         void utils.invoices.invalidate();
         void utils.invoices.getById.invalidate({ id: variables.id });
+        void utils.retentionDocuments.invalidate();
       },
       onError: error => toast.error(getFriendlyMutationError(error.message)),
     }
@@ -3892,14 +3786,77 @@ export default function Facturas() {
     });
   };
 
-  const handlePrintRetentionCertificate = () => {
+  const printRetentionMutation = trpc.invoices.printRetention.useMutation();
+  const handlePrintRetentionCertificate = async () => {
     if (
       !detail ||
-      detail.invoice.status !== "registrada" ||
-      !canReadRetentionDocuments(user)
+      printRetentionMutation.isPending ||
+      !canPrintInvoiceRetention(user)
     )
       return;
-    setLocation("/retenciones?invoiceId=" + detail.invoice.id);
+    const fiscalChanges = [
+      "retentionReceiptNumber",
+      "retentionCai",
+      "retentionDocumentRangeStart",
+      "retentionDocumentRangeEnd",
+      "invoiceNumber",
+      "cai",
+    ] as const;
+    const hasFiscalChanges = fiscalChanges.some(
+      field => invoiceDraft[field] !== (detail.invoice[field] ?? "")
+    );
+    const dateChanges =
+      (["documentDate", "receiptDate", "postingDate"] as const).some(
+        field => invoiceDraft[field] !== dateInputValue(detail.invoice[field])
+      ) ||
+      invoiceDraft.retentionDocumentDate !==
+        dateInputValue(
+          detail.invoice.retentionDocumentDate ??
+            detail.invoice.documentDate ??
+            detail.invoice.postingDate ??
+            detail.invoice.receiptDate
+        ) ||
+      invoiceDraft.retentionEmissionDeadline !==
+        dateInputValue(detail.invoice.retentionEmissionDeadline);
+    if (
+      retentionsDirty ||
+      hasFiscalChanges ||
+      dateChanges ||
+      replaceRetentionsMutation.isPending ||
+      updateMutation.isPending
+    ) {
+      toast.error(
+        "Guarde los datos y las retenciones antes de imprimir el comprobante"
+      );
+      return;
+    }
+    const target = window.open("", "_blank", "width=920,height=720");
+    if (!target) {
+      toast.error("Permita las ventanas emergentes para imprimir");
+      return;
+    }
+    target.opener = null;
+    try {
+      const document = await printRetentionMutation.mutateAsync({
+        id: detail.invoice.id,
+      });
+      if (getPrintableRetentionConcepts(document.snapshot.lines).truncated) {
+        toast.warning(
+          "El formato preimpreso solo tiene espacio para los primeros 8 conceptos de retención"
+        );
+      }
+      target.document.open();
+      target.document.write(buildRetentionPrintHtml(document));
+      target.document.close();
+      void utils.retentionDocuments.invalidate();
+    } catch (error) {
+      target.close();
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo imprimir la retención"
+      );
+    }
   };
 
   const submitInvoiceForReview = (syncReceiptFiscalData = false) => {
@@ -4418,11 +4375,24 @@ export default function Facturas() {
                     reversalHistory.data?.some(
                       r => r.voidedRetentionCount > 0
                     )) &&
-                  canReadRetentionDocuments(user) ? (
-                    <Button variant="outline" asChild>
-                      <a href={`/retenciones?invoiceId=${detail.invoice.id}`}>
-                        Comprobante de retención
-                      </a>
+                    canReadRetentionDocuments(user) && (
+                      <Button variant="outline" asChild>
+                        <a href={`/retenciones?invoiceId=${detail.invoice.id}`}>
+                          Comprobantes de retención
+                        </a>
+                      </Button>
+                    )}
+                  {detail.invoice.status !== "anulada" &&
+                  Number(detail.invoice.retentionTotal) > 0 &&
+                  canPrintInvoiceRetention(user) ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handlePrintRetentionCertificate}
+                      disabled={printRetentionMutation.isPending}
+                    >
+                      <Printer className="mr-2 h-4 w-4" />
+                      Imprimir retención
                     </Button>
                   ) : null}
                   {canCorrectSelectedReceipt ? (
@@ -6672,16 +6642,17 @@ export default function Facturas() {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="font-semibold">Detalle de retenciones</h3>
                     {retentionDrafts.length > 0 &&
-                    detail.invoice.status === "registrada" &&
-                    canReadRetentionDocuments(user) ? (
+                    detail.invoice.status !== "anulada" &&
+                    canPrintInvoiceRetention(user) ? (
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
                         onClick={handlePrintRetentionCertificate}
+                        disabled={printRetentionMutation.isPending}
                       >
                         <Printer className="mr-2 h-4 w-4" />
-                        Consultar comprobante
+                        Imprimir retención
                       </Button>
                     ) : null}
                   </div>

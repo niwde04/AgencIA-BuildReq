@@ -1,0 +1,55 @@
+{
+  "currency": "HNL",
+  "snapshot": {
+    "supplierName": "Proveedor \"Prueba\" & Cía.",
+    "supplierRtn": "08011999000001",
+    "supplierAddress": "Dirección de prueba <centro>",
+    "projectName": "Proyecto de prueba",
+    "invoiceNumber": "001-001-01-00000031",
+    "invoiceDocumentNumber": "FT-PRUEBA",
+    "cai": "CAI-DE-RETENCION",
+    "documentRangeStart": null,
+    "documentRangeEnd": null,
+    "documentDate": "2026-10-05",
+    "emissionDeadline": "2027-12-31",
+    "accountedAt": null,
+    "accountedById": null,
+    "actorName": null,
+    "lines": [
+      {
+        "id": 1,
+        "retentionCatalogId": 101,
+        "description": "Servicios & materiales",
+        "baseAmount": "1000.55",
+        "percentage": "1",
+        "amount": "10.0055"
+      },
+      {
+        "id": 2,
+        "retentionCatalogId": 101,
+        "description": "Servicios & materiales",
+        "baseAmount": "2500",
+        "percentage": "1",
+        "amount": "25.0000"
+      },
+      {
+        "id": 3,
+        "retentionCatalogId": 102,
+        "description": "Construcción <principal>",
+        "baseAmount": "1234567.89",
+        "percentage": "5.125",
+        "amount": "63271.6044"
+      }
+    ],
+    "original": {
+      "invoice": {
+        "cai": "338827-15203E-A419E0-63BE03-0909A6-53",
+        "documentDate": "2026-09-21",
+        "receiptDate": "2026-09-20",
+        "postingDate": "2026-09-22",
+        "invoiceNumber": "001-001-01-00000031",
+        "invoiceDocumentNumber": "FT-PRUEBA"
+      }
+    }
+  }
+}
