@@ -1,5 +1,7 @@
 # Anticipos contractuales y conciliación de GEO
 
+Los históricos de CD-018-00000527 tienen un mecanismo separado de captura manual sin regla contractual fija. La habilitación es puntual y auditada; no modifica el comportamiento de nuevos anticipos directos o contractuales. Ver [anticipos históricos manuales](anticipos-historicos-manuales.md).
+
 El neto de la factura ya incluye la amortización contractual y la retención de calidad. La aplicación contractual consume el anticipo sin descontarse otra vez del neto. La aplicación directa conserva su deducción posterior.
 
 Disponible = neto de factura − aplicaciones directas − pagos contabilizados − reservas activas. Las notas conservan su efecto financiero existente. `appliedAmount` del resumen del anticipo es el consumo total; `directAppliedAmount` y `contractualAmortizationAmount` desglosan sus tratamientos. El saldo pendiente de amortizar es cobertura contabilizada menos consumo.

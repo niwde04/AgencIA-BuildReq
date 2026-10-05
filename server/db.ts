@@ -15855,6 +15855,7 @@ export async function reviewInvoice(id: number, reviewedById: number) {
   const now = new Date();
   return db.transaction(async tx => {
     await lockInvoiceAdvanceOrder(tx, id);
+    await tx.execute(sql`select id from invoices where id=${id} for update`);
     await assertContractualInvoiceReady(tx, id);
     await tx.execute(buildDraftInvoiceItemTaxWithholdingSync(id));
 
@@ -15899,23 +15900,30 @@ export async function submitInvoiceForAccounting(params: {
   if (!database) throw new Error("DB not available");
   const now = new Date();
   // This transition only queues the invoice. Accounting/advances/notes happen later.
-  const [updated] = await database
-    .update(invoices)
-    .set({
-      status: "pendiente_contabilizar",
-      submittedForAccountingAt: now,
-      submittedForAccountingById: params.submittedById,
-      accountingComment: params.accountingComment?.trim() || null,
-      updatedAt: now,
-    })
-    .where(and(eq(invoices.id, params.id), eq(invoices.status, "revisada")))
-    .returning();
-  if (!updated)
-    throw new TRPCError({
-      code: "CONFLICT",
-      message: "La factura cambió de estado; actualice e intente nuevamente",
-    });
-  return updated;
+  return database.transaction(async tx => {
+    await lockInvoiceAdvanceOrder(tx, params.id);
+    await tx.execute(
+      sql`select id from invoices where id=${params.id} for update`
+    );
+    await assertContractualInvoiceReady(tx, params.id);
+    const [updated] = await tx
+      .update(invoices)
+      .set({
+        status: "pendiente_contabilizar",
+        submittedForAccountingAt: now,
+        submittedForAccountingById: params.submittedById,
+        accountingComment: params.accountingComment?.trim() || null,
+        updatedAt: now,
+      })
+      .where(and(eq(invoices.id, params.id), eq(invoices.status, "revisada")))
+      .returning();
+    if (!updated)
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "La factura cambió de estado; actualice e intente nuevamente",
+      });
+    return updated;
+  });
 }
 
 export async function returnAccountedInvoiceToReview(id: number, actorId?: number): Promise<never> {
@@ -15932,6 +15940,7 @@ export async function accountInvoice(params: {
 
   return db.transaction(async tx => {
     await lockInvoiceAdvanceOrder(tx, params.id);
+    await tx.execute(sql`select id from invoices where id=${params.id} for update`);
     await assertContractualInvoiceReady(tx, params.id);
     const now = new Date();
     const [currentInvoice] = await tx
@@ -15996,35 +16005,38 @@ export async function rejectInvoiceFromAccounting(params: {
   if (!db) throw new Error("DB not available");
 
   const now = new Date();
-  const [updated] = await db
-    .update(invoices)
-    .set({
-      status: "rechazada",
-      rejectionComment: params.rejectionComment.trim(),
-      rejectedById: params.rejectedById,
-      rejectedAt: now,
-      reviewedById: null,
-      reviewedAt: null,
-      accountedById: null,
-      accountedAt: null,
-      accountingComment: null,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(invoices.id, params.id),
-        // Keep each rejection in its own validation stage, even after a concurrent send.
-        eq(invoices.status, params.expectedStatus ?? "pendiente_contabilizar")
+  return db.transaction(async tx => {
+    await lockInvoiceAdvanceOrder(tx, params.id);
+    const [updated] = await tx
+      .update(invoices)
+      .set({
+        status: "rechazada",
+        rejectionComment: params.rejectionComment.trim(),
+        rejectedById: params.rejectedById,
+        rejectedAt: now,
+        reviewedById: null,
+        reviewedAt: null,
+        accountedById: null,
+        accountedAt: null,
+        accountingComment: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(invoices.id, params.id),
+          // Keep each rejection in its own validation stage, even after a concurrent send.
+          eq(invoices.status, params.expectedStatus ?? "pendiente_contabilizar")
+        )
       )
-    )
-    .returning();
-  if (!updated)
-    throw new TRPCError({
-      code: "CONFLICT",
-      message: "La factura cambió de estado; actualice e intente nuevamente",
-    });
+      .returning();
+    if (!updated)
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "La factura cambió de estado; actualice e intente nuevamente",
+      });
 
-  return updated;
+    return updated;
+  });
 }
 
 export async function correctInvoiceReceiptFromInvoice(params: {
@@ -16840,8 +16852,10 @@ export async function replaceInvoiceDocumentAdjustments(
       calculated.calculations.map(calculation => ({
         invoiceId,
         adjustmentType: calculation.adjustmentType,
-        inputMode: calculation.inputMode,
-        percentage: calculation.percentage.toFixed(8),
+        inputMode: calculation.adjustmentType === "advance_amortization" && contractual?.snapshot.treatment === "legacy_manual"
+          ? contractual.snapshot.inputMode : calculation.inputMode,
+        percentage: (calculation.adjustmentType === "advance_amortization" && contractual?.snapshot.treatment === "legacy_manual" && contractual.snapshot.inputMode === "percentage"
+          ? Number(contractual.snapshot.inputValue) : calculation.percentage).toFixed(8),
         baseAmount: toMoneyString4(calculation.baseAmount),
         amount: toMoneyString4(calculation.amount),
         updatedAt: new Date(),

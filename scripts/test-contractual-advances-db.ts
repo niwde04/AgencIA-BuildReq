@@ -72,8 +72,25 @@ async function main() {
     );
     await fixture.query(contractualMigration);
     await fixture.query(contractualMigration);
+    const manualMigration = readFileSync(
+      new URL(
+        "../drizzle/20261005223104_legacy_manual_advances.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
+    await fixture.query(manualMigration);
+    await fixture.query(manualMigration);
     // Current invoice accounting also queries the independent retention-document schema.
-    await fixture.query(readFileSync(new URL("../drizzle/20260930120000_retention_documents.sql",import.meta.url),"utf8").split("CREATE OR REPLACE FUNCTION private.retention_immutable")[0]);
+    await fixture.query(
+      readFileSync(
+        new URL(
+          "../drizzle/20260930120000_retention_documents.sql",
+          import.meta.url
+        ),
+        "utf8"
+      ).split("CREATE OR REPLACE FUNCTION private.retention_immutable")[0]
+    );
     await fixture.end();
     fixture = undefined;
     console.log(
@@ -85,6 +102,7 @@ async function main() {
         "node_modules/vitest/vitest.mjs",
         "run",
         "server/contractualAdvances.integration.test.ts",
+        "server/legacyManualAdvances.integration.test.ts",
         ...(process.argv.includes("--contractual-only")
           ? []
           : ["server/financialNotes.integration.test.ts"]),

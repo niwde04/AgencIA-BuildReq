@@ -633,6 +633,7 @@ function DocumentAdjustmentPercentageRow({
       <div className="space-y-1.5">
         <Label>Base</Label>
         <Input
+          aria-label={`${label}: base`}
           value={`${currencySymbol} ${baseAmount.toLocaleString("es-HN", {
             minimumFractionDigits: 2,
             maximumFractionDigits: 4,
@@ -645,6 +646,7 @@ function DocumentAdjustmentPercentageRow({
         <Label>Porcentaje</Label>
         <div className="relative">
           <Input
+            aria-label={`${label}: porcentaje`}
             type="number"
             min="0"
             max="100"
@@ -667,6 +669,7 @@ function DocumentAdjustmentPercentageRow({
             {currencySymbol}
           </span>
           <Input
+            aria-label={`${label}: monto`}
             type="number"
             min="0"
             max={baseAmount}
@@ -2135,7 +2138,9 @@ export default function Facturas() {
     const qualityRetentionInputMode =
       qualityRetention?.inputMode === "amount" ? "amount" : "percentage";
     const advanceAmortizationInputMode =
-      detail.contractualAmortization ||
+      detail.contractualAmortization?.treatment === "legacy_manual"
+        ? detail.contractualAmortization.saved?.inputMode ?? advanceAmortization?.inputMode ?? "amount"
+        : detail.contractualAmortization ||
       advanceAmortization?.inputMode === "amount"
         ? "amount"
         : "percentage";
@@ -2153,12 +2158,16 @@ export default function Facturas() {
       ),
       qualityRetentionInputMode,
       advanceAmortizationPercent: formatDocumentAdjustmentPercent(
-        advanceAmortization?.percentage
+        detail.contractualAmortization?.treatment === "legacy_manual" &&
+          detail.contractualAmortization.saved?.inputMode === "percentage"
+          ? detail.contractualAmortization.saved.inputValue
+          : advanceAmortization?.percentage
       ),
       advanceAmortizationAmount: formatDocumentAdjustmentAmount(
         advanceAmortization?.amount ??
           detail.contractualAmortization?.saved?.amount ??
-          detail.contractualAmortization?.amount
+          (detail.contractualAmortization?.treatment === "legacy_manual"
+            ? undefined : detail.contractualAmortization?.amount)
       ),
       advanceAmortizationInputMode,
       promptPaymentPercent: formatDocumentAdjustmentPercent(
@@ -5590,9 +5599,11 @@ export default function Facturas() {
                           </p>
                         ) : null}
                         <DocumentAdjustmentPercentageRow
-                          label="Amortización de anticipo"
+                          label={detail.contractualAmortization?.treatment === "legacy_manual" ? "Amortización manual de anticipo histórico" : "Amortización de anticipo"}
                           description={
-                            detail.contractualAmortization
+                            detail.contractualAmortization?.treatment === "legacy_manual"
+                              ? "Capture monto o porcentaje sobre el subtotal. Se descuenta una sola vez; vacío o cero no amortiza."
+                              : detail.contractualAmortization
                               ? "Recuperación del anticipo contractual, descontada una sola vez del neto."
                               : "Requiere un anticipo contractual vinculado a esta orden."
                           }
@@ -5623,7 +5634,7 @@ export default function Facturas() {
                           )}
                           disabled={
                             !canEditDocumentAdjustments ||
-                            !detail.contractualAmortization
+                            !detail.contractualAmortization?.enabled
                           }
                           onPercentageChange={value =>
                             updateDocumentAdjustmentDraft(current => ({
@@ -5648,10 +5659,7 @@ export default function Facturas() {
                                 .amortizationBase === "total"
                                 ? "total con impuestos"
                                 : "subtotal sin impuestos"}
-                              . Propuesta:{" "}
-                              {formatSelectedInvoiceCurrency(
-                                detail.contractualAmortization.amount
-                              )}
+                              {detail.contractualAmortization.treatment !== "legacy_manual" ? <>. Propuesta:{" "}{formatSelectedInvoiceCurrency(detail.contractualAmortization.amount)}</> : null}
                               . Disponible para esta factura:{" "}
                               {formatSelectedInvoiceCurrency(
                                 detail.contractualAmortization.remainingAmount
@@ -5671,7 +5679,7 @@ export default function Facturas() {
                               )}
                               .
                             </p>
-                            {canEditDocumentAdjustments ? (
+                            {canEditDocumentAdjustments && detail.contractualAmortization.treatment !== "legacy_manual" ? (
                               <>
                                 <Label htmlFor="amortization-override-reason">
                                   Motivo del ajuste (si cambia la propuesta)
@@ -5688,13 +5696,14 @@ export default function Facturas() {
                                 />
                               </>
                             ) : null}
-                            {!detail.contractualAmortization.saved &&
+                            {!detail.contractualAmortization.saved && detail.contractualAmortization.treatment !== "legacy_manual" &&
                             canEditDocumentAdjustments ? (
                               <p>
                                 Guarde las retenciones y descuentos para
                                 confirmar esta propuesta antes de contabilizar.
                               </p>
                             ) : null}
+                            {!detail.contractualAmortization.enabled ? <p role="alert">La captura de amortizaciones está temporalmente deshabilitada.</p> : null}
                           </div>
                         ) : null}
                       </div>
@@ -6555,7 +6564,9 @@ export default function Facturas() {
                           </span>
                         </div>
                         <p className="mt-1 text-xs">
-                          {detail.contractualAmortization
+                          {detail.contractualAmortization?.treatment === "legacy_manual"
+                            ? "Anticipo histórico: solo se descuenta la amortización capturada en esta factura. El saldo restante queda disponible para futuras facturas."
+                            : detail.contractualAmortization
                             ? "Anticipo contractual: la amortización de esta factura ya está incluida en las deducciones. El saldo restante se recuperará en futuras planillas."
                             : isPendingAdvanceApplication
                               ? "El monto contabilizado disponible ya está incluido en el saldo pendiente mostrado y se aplicará definitivamente al contabilizar la factura."

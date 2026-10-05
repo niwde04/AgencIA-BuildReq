@@ -16,6 +16,26 @@ import {
 } from "../shared/purchase-orders";
 
 describe("purchase order advance balances", () => {
+  it("reports historical manual consumption separately from direct invoice payments", () => {
+    const manual = buildPurchaseOrderAdvanceMoneySummary({
+      requestedAmount: 129362.6,
+      accountedAmount: 129362.6,
+      appliedAmount: 60000,
+      applicationMode: "legacy_manual",
+    });
+    expect(manual).toMatchObject({
+      appliedAmount: 60000,
+      directAppliedAmount: 0,
+      contractualAmortizationAmount: 0,
+      legacyManualAmortizationAmount: 60000,
+      unappliedAmount: 69362.6,
+    });
+    expect(buildPurchaseOrderAdvancesSummary([manual])).toMatchObject({
+      directAppliedAmount: 0,
+      legacyManualAmortizationAmount: 60000,
+      unappliedAmount: 69362.6,
+    });
+  });
   it("allows advances only for purchase orders paid cash", () => {
     expect(allowsPurchaseOrderAdvance("contado")).toBe(true);
     expect(allowsPurchaseOrderAdvance("linea_credito")).toBe(false);
@@ -103,6 +123,7 @@ describe("purchase order advance balances", () => {
       appliedAmount: 150,
       directAppliedAmount: 150,
       contractualAmortizationAmount: 0,
+      legacyManualAmortizationAmount: 0,
       availableToPayAmount: 350,
       unappliedAmount: 250,
       status: "en_lote",
@@ -174,6 +195,7 @@ describe("purchase order advance balances", () => {
       appliedAmount: 150,
       directAppliedAmount: 150,
       contractualAmortizationAmount: 0,
+      legacyManualAmortizationAmount: 0,
       availableToPayAmount: 300,
       unappliedAmount: 250,
     });

@@ -1,6 +1,10 @@
 import { decimalToMinorUnits, roundDecimalAmount } from "./money";
 
-export type AdvanceApplicationMode = "direct" | "contractual";
+export type AdvanceApplicationMode = "direct" | "contractual" | "legacy_manual";
+export type AdvanceAmortizationTreatment = Exclude<
+  AdvanceApplicationMode,
+  "direct"
+>;
 export type AmortizationMode = "percentage" | "amount";
 export type AmortizationBase = "subtotal" | "total";
 export type ContractualAdvanceRule = {
@@ -44,6 +48,7 @@ export function contractualAmortizationAmount(input: {
   remainingAmount: number;
   proposedAmount: number;
   overrideReason?: string | null;
+  requireOverrideReason?: boolean;
 }) {
   if (
     !Number.isFinite(input.inputValue) ||
@@ -69,6 +74,7 @@ export function contractualAmortizationAmount(input: {
     );
   }
   if (
+    input.requireOverrideReason !== false &&
     decimalToMinorUnits(amount) !== decimalToMinorUnits(input.proposedAmount) &&
     (input.overrideReason?.trim().length ?? 0) < 5
   ) {
@@ -77,4 +83,22 @@ export function contractualAmortizationAmount(input: {
     );
   }
   return amount;
+}
+
+/** Paid balance, excluding the current invoice's consumption so its saved amount remains valid. */
+export function legacyManualRemainingAmount(input: {
+  covered: string | number;
+  applied: string | number;
+  ownApplied: string | number;
+  unconsumedCommitments: string | number;
+}) {
+  return (
+    Math.max(
+      0,
+      decimalToMinorUnits(input.covered) -
+        decimalToMinorUnits(input.applied) +
+        decimalToMinorUnits(input.ownApplied) -
+        decimalToMinorUnits(input.unconsumedCommitments)
+    ) / 100
+  );
 }

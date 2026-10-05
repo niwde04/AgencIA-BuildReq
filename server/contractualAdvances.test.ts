@@ -1,10 +1,69 @@
 import { describe, expect, it } from "vitest";
 import {
+  legacyManualRemainingAmount,
   proposeContractualAmortization,
   contractualAmortizationAmount,
 } from "../shared/contractual-advances";
 import { buildTreasuryMoneySummary } from "../shared/treasury";
 describe("contractual advance rules", () => {
+  it("validates manual capture in cents without requiring an override reason", () => {
+    expect(
+      contractualAmortizationAmount({
+        baseAmount: 185387.6,
+        inputMode: "percentage",
+        inputValue: 10,
+        remainingAmount: 129362.6,
+        proposedAmount: 0,
+        requireOverrideReason: false,
+      })
+    ).toBe(18538.76);
+    expect(
+      contractualAmortizationAmount({
+        baseAmount: 100,
+        inputMode: "amount",
+        inputValue: 12.345,
+        remainingAmount: 100,
+        proposedAmount: 0,
+        requireOverrideReason: false,
+      })
+    ).toBe(12.35);
+    expect(() =>
+      contractualAmortizationAmount({
+        baseAmount: 100,
+        inputMode: "amount",
+        inputValue: 100.01,
+        remainingAmount: 100,
+        proposedAmount: 0,
+        requireOverrideReason: false,
+      })
+    ).toThrow(/saldo disponible/);
+  });
+  it("subtracts consumed funds and only unconsumed commitments, keeping own saved consumption valid", () => {
+    expect(
+      legacyManualRemainingAmount({
+        covered: 129362.6,
+        applied: 60000,
+        ownApplied: 0,
+        unconsumedCommitments: 20000,
+      })
+    ).toBe(49362.6);
+    expect(
+      legacyManualRemainingAmount({
+        covered: 129362.6,
+        applied: 60000,
+        ownApplied: 60000,
+        unconsumedCommitments: 20000,
+      })
+    ).toBe(109362.6);
+    expect(
+      legacyManualRemainingAmount({
+        covered: 100,
+        applied: 80,
+        ownApplied: 0,
+        unconsumedCommitments: 30,
+      })
+    ).toBe(0);
+  });
   it("deducts the GEO amortization once and keeps it outside direct settlement", () => {
     expect(
       proposeContractualAmortization({

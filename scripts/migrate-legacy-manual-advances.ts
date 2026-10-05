@@ -1,24 +1,15 @@
 import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
+
 async function main() {
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
     connectionTimeoutMillis: 15000,
   });
   try {
-    if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
     await client.connect();
-    await client.query(
-      readFileSync(
-        new URL(
-          "../drizzle/20260930_contractual_advances.sql",
-          import.meta.url
-        ),
-        "utf8"
-      )
-    );
-    // Keep the latest origin guard when this older entry point is repeated.
     await client.query(
       readFileSync(
         new URL(
@@ -29,7 +20,7 @@ async function main() {
       )
     );
     console.log(
-      "Migración aditiva de anticipos contractuales aplicada. No se regularizó ningún anticipo histórico."
+      "Compatibilidad para amortización histórica instalada; no se reclasificó ningún anticipo."
     );
   } finally {
     await client.end();

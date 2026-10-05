@@ -38,6 +38,7 @@ import {
   type PurchaseCurrency,
 } from "../shared/purchase-orders";
 import { decimalToMinorUnits, hasAtMostDecimalPlaces } from "../shared/money";
+import type { AdvanceApplicationMode } from "../shared/contractual-advances";
 import { getDb } from "./db";
 
 type DbExecutor = NonNullable<Awaited<ReturnType<typeof getDb>>> | any;
@@ -79,10 +80,11 @@ export type PurchaseOrderAdvanceMoneySummary = {
   accountedAmount: number;
   reservedAmount: number;
   bankPaidPendingAmount: number;
-  /** Total consumed by both treatments. */
+  /** Total consumed across direct and documentary treatments. */
   appliedAmount: number;
   directAppliedAmount: number;
   contractualAmortizationAmount: number;
+  legacyManualAmortizationAmount: number;
   availableToPayAmount: number;
   unappliedAmount: number;
   status:
@@ -102,10 +104,11 @@ export type PurchaseOrderAdvancesSummary = {
   accountedAmount: number;
   reservedAmount: number;
   bankPaidPendingAmount: number;
-  /** Total consumed by both treatments. */
+  /** Total consumed across direct and documentary treatments. */
   appliedAmount: number;
   directAppliedAmount: number;
   contractualAmortizationAmount: number;
+  legacyManualAmortizationAmount: number;
   availableToPayAmount: number;
   unappliedAmount: number;
 };
@@ -116,7 +119,7 @@ export function buildPurchaseOrderAdvanceMoneySummary(input: {
   reservedAmount?: string | number | null;
   bankPaidPendingAmount?: string | number | null;
   appliedAmount?: string | number | null;
-  applicationMode?: "direct" | "contractual";
+  applicationMode?: AdvanceApplicationMode;
   cancelled?: boolean;
 }): PurchaseOrderAdvanceMoneySummary {
   const requestedAmount = money(input.requestedAmount);
@@ -148,9 +151,13 @@ export function buildPurchaseOrderAdvanceMoneySummary(input: {
     bankPaidPendingAmount,
     appliedAmount,
     directAppliedAmount:
-      input.applicationMode === "contractual" ? 0 : appliedAmount,
+      !input.applicationMode || input.applicationMode === "direct"
+        ? appliedAmount
+        : 0,
     contractualAmortizationAmount:
       input.applicationMode === "contractual" ? appliedAmount : 0,
+    legacyManualAmortizationAmount:
+      input.applicationMode === "legacy_manual" ? appliedAmount : 0,
     availableToPayAmount,
     unappliedAmount,
     status,
@@ -173,6 +180,9 @@ export function buildPurchaseOrderAdvancesSummary(
       contractualAmortizationAmount:
         result.contractualAmortizationAmount +
         summary.contractualAmortizationAmount,
+      legacyManualAmortizationAmount:
+        result.legacyManualAmortizationAmount +
+        summary.legacyManualAmortizationAmount,
       availableToPayAmount:
         result.availableToPayAmount + summary.availableToPayAmount,
       unappliedAmount: result.unappliedAmount + summary.unappliedAmount,
@@ -185,6 +195,7 @@ export function buildPurchaseOrderAdvancesSummary(
       appliedAmount: 0,
       directAppliedAmount: 0,
       contractualAmortizationAmount: 0,
+      legacyManualAmortizationAmount: 0,
       availableToPayAmount: 0,
       unappliedAmount: 0,
     }
@@ -199,6 +210,9 @@ export function buildPurchaseOrderAdvancesSummary(
     appliedAmount: money(totals.appliedAmount),
     directAppliedAmount: money(totals.directAppliedAmount),
     contractualAmortizationAmount: money(totals.contractualAmortizationAmount),
+    legacyManualAmortizationAmount: money(
+      totals.legacyManualAmortizationAmount
+    ),
     availableToPayAmount: money(totals.availableToPayAmount),
     unappliedAmount: money(totals.unappliedAmount),
   };
@@ -673,6 +687,10 @@ export async function createPurchaseOrderAdvance(input: {
     const first = active[0];
     const applicationMode =
       input.applicationMode ?? first?.applicationMode ?? "direct";
+    if (applicationMode !== "direct" && applicationMode !== "contractual")
+      throw new PurchaseOrderAdvanceRuleError(
+        "La modalidad histórica requiere habilitación auditada; no se permite crear anticipos con ella."
+      );
     const amortizationMode =
       applicationMode === "contractual"
         ? (input.amortizationMode ?? first?.amortizationMode)
@@ -943,7 +961,7 @@ export async function cancelPurchaseOrderAdvance(input: {
       throw new PurchaseOrderAdvanceRuleError("Anticipo no encontrado.");
     }
     if (advance.cancelledAt) return advance;
-    if (advance.applicationMode === "contractual") {
+    if (advance.applicationMode !== "direct") {
       const [commitment] = await tx
         .select({ invoiceId: invoiceContractualAmortizations.invoiceId })
         .from(invoiceContractualAmortizations)
@@ -1170,9 +1188,13 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
         throw new PurchaseOrderAdvanceRuleError(
           "El anticipo y la factura no corresponden a la misma operación."
         );
-      const contractual = advance.applicationMode === "contractual";
+      const contractual = advance.applicationMode !== "direct";
       const snapshot = contractualByInvoice.get(invoice.id);
       if (contractual && (!snapshot || Number(snapshot.amount) <= 0)) continue;
+      if (contractual && snapshot.treatment !== advance.applicationMode)
+        throw new PurchaseOrderAdvanceRuleError(
+          "El tratamiento de la amortización no coincide con el anticipo."
+        );
       if (!contractual && snapshot)
         throw new PurchaseOrderAdvanceRuleError(
           "La orden tiene tratamientos incompatibles; requiere conciliación."
@@ -1197,8 +1219,7 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
       );
       if (
         existing &&
-        (existing.applicationMode ?? "direct") !==
-          (contractual ? "contractual" : "direct")
+        (existing.applicationMode ?? "direct") !== advance.applicationMode
       )
         throw new PurchaseOrderAdvanceRuleError(
           "La aplicación existente requiere conciliación."
@@ -1216,7 +1237,7 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
             purchaseOrderAdvanceId: advance.id,
             invoiceId: invoice.id,
             amount: moneyString(amount),
-            applicationMode: contractual ? "contractual" : "direct",
+            applicationMode: advance.applicationMode,
             invoiceDocumentAdjustmentId: contractual
               ? snapshot.invoiceDocumentAdjustmentId
               : null,
