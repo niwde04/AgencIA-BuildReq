@@ -2,11 +2,14 @@
 
 ## Comportamiento
 
+- Al crear una apertura se exige elegir explícitamente el proyecto de apertura antes de su bodega. Esta selección define el encabezado, el consecutivo y el proyecto predeterminado de las líneas; compartir una bodega nunca selecciona otro proyecto automáticamente. La API y persistencia también exigen ese proyecto.
 - Al crear un saldo o agregar líneas a uno existente, cada ítem permite seleccionar un proyecto activo asignado a la bodega del documento.
 - La ubicación es el lugar físico dentro de la bodega (estante, zona o plantel). Es opcional y permite escribir un valor nuevo o elegir una sugerencia del inventario del mismo proyecto y bodega.
 - El proyecto de apertura permanece como referencia del documento y valor predeterminado. Los nuevos ingresos se contabilizan según el proyecto de cada línea.
 - El detalle muestra ambos campos. Los filtros por proyecto y el kardex utilizan el proyecto de cada ítem; los totales filtrados corresponden a esas líneas.
 - Las cantidades admiten hasta dos decimales, de acuerdo con la precisión de la base.
+
+El generador de saldos verifica colisiones contra todos los folios emitidos y serializa las nuevas aperturas del mismo proyecto. Los folios históricos conservados no se reutilizan. Corrección puntual y evidencia: [correccion-proyecto-saldo-inicial.md](correccion-proyecto-saldo-inicial.md).
 
 ## Persistencia y controles
 

@@ -61,16 +61,25 @@ describe("opening balance destination validation", () => {
       .spyOn(db, "addOpeningBalanceItems")
       .mockResolvedValue({ success: true, addedItems: 1 });
     const caller = openingBalancesRouter.createCaller(context());
-    await caller.create({ warehouseId: 1, items: [item] });
+    await caller.create({ projectId: 1, warehouseId: 1, items: [item] });
     await caller.addItems({ id: 1, items: [item] });
     expect(create.mock.calls[0][1][0]).toMatchObject({
       projectId: 2,
       storageLocation: "A1",
     });
+    expect(create.mock.calls[0][0]).toMatchObject({ projectId: 1 });
     expect(append.mock.calls[0][1][0]).toMatchObject({
       projectId: 2,
       storageLocation: "A1",
     });
+  });
+  it("requires an explicit header project before calling persistence", async () => {
+    const create = vi.spyOn(db, "createOpeningBalance");
+    const caller = openingBalancesRouter.createCaller(context());
+    await expect(
+      caller.create({ warehouseId: 1, items: [item] } as any)
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(create).not.toHaveBeenCalled();
   });
   it("denies destination suggestions and posting to users without opening balance permissions", async () => {
     const locations = vi.spyOn(db, "listOpeningBalanceStorageLocations");

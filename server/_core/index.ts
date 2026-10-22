@@ -38,7 +38,11 @@ async function startServer() {
     res.status(200).json({
       ok: true,
       service: "buildreq",
-      capabilities: { legacyManualAdvances: 1, advanceAmortizationGuard: 1 },
+      capabilities: {
+        legacyManualAdvances: 1,
+        advanceAmortizationGuard: 1,
+        explicitOpeningBalanceProject: 1,
+      },
       legacyManualCaptureEnabled:
         process.env.LEGACY_MANUAL_ADVANCES_ENABLED !== "false",
       timestamp: new Date().toISOString(),

@@ -5991,15 +5991,24 @@ export async function generateOpeningBalanceNumber(projectId: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  return generateProjectScopedDocumentNumber({
+  const project = await getProjectForDiagnostic(projectId);
+  if (!project) throw new Error("Proyecto no encontrado para correlativo");
+  const rows = await db
+    .select({ documentNumber: openingBalances.balanceNumber })
+    .from(openingBalances)
+    .where(eq(openingBalances.projectId, projectId));
+
+  return findAvailableProjectScopedDocumentNumber({
     prefix: "SI",
-    projectId,
-    selectExistingNumbers: async scopedProjectId => {
-      const rows = await db
-        .select({ documentNumber: openingBalances.balanceNumber })
+    projectCode: project.code,
+    existingNumbers: rows.map(row => row.documentNumber),
+    isDocumentNumberTaken: async documentNumber => {
+      const [existing] = await db
+        .select({ id: openingBalances.id })
         .from(openingBalances)
-        .where(eq(openingBalances.projectId, scopedProjectId));
-      return rows.map(row => row.documentNumber);
+        .where(eq(openingBalances.balanceNumber, documentNumber))
+        .limit(1);
+      return Boolean(existing);
     },
   });
 }
@@ -18347,47 +18356,6 @@ export async function getOpeningBalanceById(id: number) {
   };
 }
 
-async function getOpeningBalanceProjectForWarehouse(warehouseId: number) {
-  const db = await getDb();
-  if (!db) return null;
-
-  const assignmentRows = await db
-    .select({
-      project: projects,
-      isPrimary: projectWarehouseAssignments.isPrimary,
-    })
-    .from(projectWarehouseAssignments)
-    .innerJoin(projects, eq(projectWarehouseAssignments.projectId, projects.id))
-    .where(
-      and(
-        eq(projectWarehouseAssignments.warehouseId, warehouseId),
-        eq(projects.status, "activo" as any)
-      )
-    )
-    .orderBy(
-      desc(projectWarehouseAssignments.isPrimary),
-      asc(projects.code),
-      asc(projects.name)
-    )
-    .limit(1);
-
-  if (assignmentRows[0]?.project) return assignmentRows[0].project;
-
-  const legacyRows = await db
-    .select()
-    .from(projects)
-    .where(
-      and(
-        eq(projects.warehouseId, warehouseId),
-        eq(projects.status, "activo" as any)
-      )
-    )
-    .orderBy(asc(projects.code), asc(projects.name))
-    .limit(1);
-
-  return legacyRows[0] ?? null;
-}
-
 async function validateOpeningBalanceProjects(
   projectIds: number[],
   warehouseId: number
@@ -18438,11 +18406,12 @@ export async function listOpeningBalanceStorageLocations(params: {
 }
 
 export async function createOpeningBalance(
-  data: Omit<InsertOpeningBalance, "balanceNumber" | "projectId"> & {
-    projectId?: number | null;
-  },
+  data: Omit<InsertOpeningBalance, "balanceNumber">,
   items: OpeningBalanceItemInput[]
 ): Promise<{ id: number; balanceNumber: string; warehouseId: number }> {
+  if (!Number.isSafeInteger(data.projectId) || data.projectId <= 0) {
+    throw new Error("Seleccione el proyecto de apertura del saldo inicial");
+  }
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   if (!databaseTransactionScope.getStore()) {
@@ -18466,19 +18435,15 @@ export async function createOpeningBalance(
       "Seleccione un almacén activo para registrar el saldo inicial"
     );
 
-  const project = data.projectId
-    ? (
-        await db
-          .select()
-          .from(projects)
-          .where(eq(projects.id, data.projectId))
-          .limit(1)
-      )[0]
-    : await getOpeningBalanceProjectForWarehouse(warehouse.id);
+  // Serialize numbering for a project even when it has several warehouses.
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, data.projectId))
+    .limit(1)
+    .for("update");
   if (!project || project.status !== "activo") {
-    throw new Error(
-      "El almacén seleccionado debe tener un proyecto activo asignado"
-    );
+    throw new Error("Seleccione un proyecto de apertura activo");
   }
   const normalized = normalizeOpeningBalanceItems(items, project.id);
   await validateOpeningBalanceProjects(

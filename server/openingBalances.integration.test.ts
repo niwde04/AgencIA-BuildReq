@@ -73,6 +73,133 @@ describeDatabase(
         )
       ).rows;
 
+    it("uses the explicitly selected 018 header and default lines even when 024 is the newer project of the same warehouse", async () => {
+      await client.query(`UPDATE projects SET code='018',"createdAt"='2020-01-01' WHERE id=1;
+        UPDATE projects SET code='024',"createdAt"='2026-10-21' WHERE id=2;`);
+      const { projectId: ignoredProject, ...defaultItem } = item(1, "2C1");
+      const balance = await database.createOpeningBalance(
+        { projectId: 1, warehouseId: 1, createdById: 1 },
+        [defaultItem, item(2, "2D1", "3")]
+      );
+      expect(balance.balanceNumber).toBe("SI-018-00000001");
+      const detail = await database.getOpeningBalanceById(balance.id);
+      expect(detail?.openingBalance).toMatchObject({
+        projectId: 1,
+        balanceNumber: "SI-018-00000001",
+      });
+      expect(
+        detail?.items.map(line => ({
+          projectId: line.projectId,
+          storageLocation: line.storageLocation,
+        }))
+      ).toEqual([
+        { projectId: 1, storageLocation: "2C1" },
+        { projectId: 2, storageLocation: "2D1" },
+      ]);
+      expect(await stock()).toEqual([
+        { projectId: 1, storageLocation: "2C1", currentStock: "2.00" },
+        { projectId: 2, storageLocation: "2D1", currentStock: "3.00" },
+      ]);
+    });
+
+    it("rejects an omitted opening project without creating headers, lines or inventory", async () => {
+      await expect(
+        database.createOpeningBalance(
+          { warehouseId: 1, createdById: 1 } as any,
+          [item(2)]
+        )
+      ).rejects.toThrow(/proyecto de apertura/);
+      expect(
+        (
+          await client.query(
+            'SELECT (SELECT count(*)::int FROM "openingBalances") headers, (SELECT count(*)::int FROM "openingBalanceItems") lines, (SELECT count(*)::int FROM "inventoryItems") stock'
+          )
+        ).rows[0]
+      ).toEqual({ headers: 0, lines: 0, stock: 0 });
+    });
+
+    it.each([3, 4, 999])(
+      "rejects unavailable header project %s before creating any operation rows",
+      async projectId => {
+        await expect(
+          database.createOpeningBalance(
+            { projectId, warehouseId: 1, createdById: 1 },
+            [item(1)]
+          )
+        ).rejects.toThrow();
+        expect(
+          (
+            await client.query(
+              'SELECT (SELECT count(*)::int FROM "openingBalances") headers, (SELECT count(*)::int FROM "openingBalanceItems") lines, (SELECT count(*)::int FROM "inventoryItems") stock'
+            )
+          ).rows[0]
+        ).toEqual({ headers: 0, lines: 0, stock: 0 });
+      }
+    );
+
+    it("does not reuse a preserved 024 folio whose corrected header belongs to 018", async () => {
+      await client.query(`UPDATE projects SET code='018' WHERE id=1;
+        UPDATE projects SET code='024' WHERE id=2;
+        INSERT INTO "projectWarehouseAssignments" ("projectId","warehouseId","isPrimary") VALUES(2,2,false);
+        INSERT INTO "openingBalances" ("balanceNumber","projectId","warehouseId","createdById",notes) VALUES('SI-024-00000001',1,1,1,'Preserved historical folio');`);
+      const historical = (
+        await client.query(
+          'SELECT to_jsonb(balance) data FROM "openingBalances" balance'
+        )
+      ).rows;
+      const balance = await database.createOpeningBalance(
+        { projectId: 2, warehouseId: 2, createdById: 1 },
+        [item(2)]
+      );
+      expect(balance.balanceNumber).toBe("SI-024-00000002");
+      expect(
+        (await database.getOpeningBalanceById(balance.id))?.openingBalance
+          .projectId
+      ).toBe(2);
+      expect(
+        (
+          await client.query(
+            'SELECT to_jsonb(balance) data FROM "openingBalances" balance WHERE "balanceNumber"=\'SI-024-00000001\''
+          )
+        ).rows
+      ).toEqual(historical);
+    });
+
+    it("serializes two simultaneous warehouses of one project without duplicating their folios", async () => {
+      await client.query(
+        'INSERT INTO "projectWarehouseAssignments" ("projectId","warehouseId","isPrimary") VALUES(1,2,false)'
+      );
+      const balances = await Promise.all(
+        [1, 2].map(warehouseId =>
+          database.createOpeningBalance(
+            { projectId: 1, warehouseId, createdById: 1 },
+            [item(1)]
+          )
+        )
+      );
+      expect(balances.map(balance => balance.balanceNumber).sort()).toEqual([
+        "SI-001-00000001",
+        "SI-001-00000002",
+      ]);
+      expect(new Set(balances.map(balance => balance.id)).size).toBe(2);
+      expect(
+        (
+          await client.query(
+            'SELECT "projectId","warehouseId","currentStock" FROM "inventoryItems" ORDER BY "warehouseId"'
+          )
+        ).rows
+      ).toEqual([
+        { projectId: 1, warehouseId: 1, currentStock: "2.00" },
+        { projectId: 1, warehouseId: 2, currentStock: "2.00" },
+      ]);
+      expect(
+        (
+          await client.query(
+            'SELECT count(*)::int count FROM "openingBalanceItems"'
+          )
+        ).rows[0].count
+      ).toBe(2);
+    });
     it("keeps the same article separated by project and location when creating and appending", async () => {
       const balance = await create([
         item(1, " A1 "),
