@@ -27,4 +27,8 @@ Validación: 91 pruebas unitarias/focalizadas y 15 PostgreSQL aprobadas; TypeScr
 
 El CLI usa `--backup-dir RUTA_ABSOLUTA_EXISTENTE` y es de solo lectura salvo `--apply`. Cargar la configuración existente mediante `DOTENV_CONFIG_PATH`; si Node requiere la CA del servidor, proporcionar el certificado de Supabase con `NODE_EXTRA_CA_CERTS`, sin desactivar la verificación TLS. No se guardan credenciales en artefactos ni Git.
 
-Simulación en Cloud aprobada: encabezado 26/024, 26 líneas explícitas 22/018 e inventario de 1.149 filas. Publicación y regularización final pendientes de la comprobación de `/health`.
+Código publicado en main `1f8c71bcbd4fae5ecb625817f0004058ffc70504`. Despliegue automático confirmado el 22/10/2026 a las 21:40 UTC: `/health` HTTP 200 con `explicitOpeningBalanceProject: 1` y bundle público con selector explícito. La protección anterior de anticipos también permanece activa.
+
+Regularización confirmada en Cloud a las 21:41 UTC: saldo ID 4, encabezado 22/018, folio original `SI-024-00000001`. Únicamente se actualizaron `projectId` y `updatedAt`; no hubo cambios de esquema, permisos ni RLS. Las 26 líneas (176,00 unidades acumuladas), notas, fechas históricas y las 1.149 filas del inventario coinciden exactamente con el respaldo bloqueado y la imagen posterior preparada. Listado y detalle reales de la aplicación resuelven el proyecto 018.
+
+Auditoría durable: `opening-project-20261022T214111762Z-9c8c473c/` dentro del respaldo, con antes, después, manifiesto y resultado confirmado. Verificaciones: `deployment.json` y `production-verification.json`. No se crearon saldos ni movimientos de prueba en producción. El cliente solo necesita recargar la aplicación; no debe volver a ingresar las líneas existentes.
