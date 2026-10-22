@@ -18,7 +18,7 @@ El resultado autorizado, cuando se instale la aplicación compatible en Cloud y 
 
 ## Otras facturas para revisión individual
 
-Cloud tiene seis casos adicionales; cinco también aparecen en SSH. La presencia de amortización sin vínculo es una señal de conciliación, no prueba suficiente para recalcular un saldo. Deben revisarse su contrato, cobertura, pagos, reservas, notas y liberaciones antes de proponer ajustes.
+La revisión del 30/09/2026 identificó seis casos adicionales en Cloud, cinco también en SSH. El casoICA 621 fue regularizado el 22/10/2026; los demás conservan su revisión individual pendiente de esta entrega. La presencia de amortización sin vínculo es una señal de conciliación, no prueba suficiente para recalcular un saldo. Deben revisarse su contrato, cobertura, pagos, reservas, notas y liberaciones antes de proponer ajustes.
 
 | Factura | Proveedor | Orden | Amortización documental, L | Aplicación actual Cloud, L | Entornos detectados |
 |---|---|---|---:|---:|---|
@@ -27,8 +27,8 @@ Cloud tiene seis casos adicionales; cinco también aparecen en SSH. La presencia
 | FT-018-00000183 | AC/DC INGENERIA INTEGRAL S DE RL DE CV | OC-018-00000226 | 71,705.15 | 0.00 | Cloud y SSH |
 | FT-017-00000445 | INGENIEROS CIVILES ASOCIADOS INVERSIONES SA DE CV | CD-017-00000406 | 530,519.21 | 0.00 | Cloud y SSH |
 | FT-010-00000235 | GEO STRUCTURES SA DE CV | CD-010-00000271 | 103,332.97 | 0.00 | Cloud y SSH |
-| FT-017-00000621 | INGENIEROS CIVILES ASOCIADOS INVERSIONES SA DE CV | OC-017-00000233 | 549,468.03 | 753,987.00 | Cloud |
+| FT-017-00000621 | INGENIEROS CIVILES ASOCIADOS INVERSIONES SA DE CV | OC-017-00000233 | 549,468.03 | 0.00 directa; 549,468.03 contractual | Cloud: regularizada 22/10/2026 |
 
-FT-017-00000621 combina amortización documental y aplicación automática, por lo que merece revisión prioritaria. Los demás registros requieren identificar el anticipo o explicar documentalmente su tratamiento. FT-010-00000235 conserva un neto histórico de L0.0025: no se redondeó ni reescribió.
+FT-017-00000621 ya tiene control contractual enlazado, aplicación L549,468.03 y saldo de factura L3,113,652.15; conserva el anticipo pagado L753,987.00 con L204,518.97 pendientes de amortizar. Auditoría única 20; evidencia y recuperación en [correccion-anticipo-ica.md](correccion-anticipo-ica.md). Los demás registros requieren identificar el anticipo o explicar documentalmente su tratamiento. FT-010-00000235 conserva un neto histórico de L0.0025: no se redondeó ni reescribió.
 
 Fuentes: consultas de solo lectura del sistema del 30/09/2026. Los JSON conservan la precisión original. No se utilizó el PDF del cliente para sustituir importes de la base.
