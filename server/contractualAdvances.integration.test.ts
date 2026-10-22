@@ -79,6 +79,169 @@ describeDb(
         items: [{ invoiceId: 1953, requestedAmount: amount }],
       });
     }
+    it("refuses unlinked documentary amortization before writing any direct allocation", async () => {
+      await client.query(`DELETE FROM "purchaseOrderAdvanceApplications";
+        INSERT INTO receipts(id,"receiptNumber","sourceType","sourceId","projectId","receivedById") VALUES(2097,'RE-EARLIER','purchase_order',897,18,1);
+        INSERT INTO invoices(id,"invoiceDocumentNumber","receiptId","purchaseOrderId","projectId","supplierId",status,"postingDate","receiptDate","emissionDeadline",subtotal,total,"netPayable","accountedAt") VALUES(1954,'FT-EARLIER',2097,897,18,749,'registrada',now(),now(),now()+interval '1 year',100,100,100,now()-interval '1 day');`);
+      const beforePayments = (
+        await client.query(
+          'select to_jsonb(t) data from "treasuryPaymentItems" t order by id'
+        )
+      ).rows;
+      const beforeInvoices = (
+        await client.query(
+          "select to_jsonb(i) data from invoices i order by id"
+        )
+      ).rows;
+      await expect(apply()).rejects.toThrow(/FT-010-00000306.*conciliación/);
+      expect(
+        (await client.query('select * from "purchaseOrderAdvanceApplications"'))
+          .rows
+      ).toEqual([]);
+      expect(
+        (
+          await client.query(
+            'select to_jsonb(t) data from "treasuryPaymentItems" t order by id'
+          )
+        ).rows
+      ).toEqual(beforePayments);
+      expect(
+        (
+          await client.query(
+            "select to_jsonb(i) data from invoices i order by id"
+          )
+        ).rows
+      ).toEqual(beforeInvoices);
+    });
+    it("preserves normal direct application and repeated execution without documentary amortization", async () => {
+      await client.query(`DELETE FROM "purchaseOrderAdvanceApplications";
+        DELETE FROM "invoiceDocumentAdjustments" WHERE "adjustmentType"='advance_amortization';
+        UPDATE invoices SET "otherRetentionTotal"=103068.62,"netPayable"=1958303.85 WHERE id=1953;`);
+      expect(await apply()).toEqual([
+        { purchaseOrderAdvanceId: 10, invoiceId: 1953, amount: 1163051.75 },
+      ]);
+      expect(await apply()).toEqual([]);
+      expect(
+        (
+          await client.query(
+            'select "applicationMode",amount,"invoiceDocumentAdjustmentId" from "purchaseOrderAdvanceApplications"'
+          )
+        ).rows
+      ).toEqual([
+        {
+          applicationMode: "direct",
+          amount: "1163051.7500",
+          invoiceDocumentAdjustmentId: null,
+        },
+      ]);
+      const detail = await database.getInvoiceById(1953);
+      expect(Number(detail?.appliedAdvanceAmount)).toBe(1163051.75);
+      expect(Number(detail?.invoice.netPayable)).toBe(1958303.85);
+    });
+    it.each([
+      { advanceAmortizationAmount: 549468.03 },
+      { advanceAmortizationPercent: 15 },
+    ])(
+      "rejects new documentary amortization on a direct advance: %j",
+      async input => {
+        await client.query(`DELETE FROM "purchaseOrderAdvanceApplications";
+        DELETE FROM "invoiceDocumentAdjustments";
+        UPDATE invoices SET status='borrador',"otherRetentionTotal"=0,"netPayable"=total WHERE id=1953;`);
+        await expect(
+          database.replaceInvoiceDocumentAdjustments(1953, input, 1)
+        ).rejects.toThrow(/anticipo contractual/);
+        expect(
+          (await client.query('select * from "invoiceDocumentAdjustments"'))
+            .rows
+        ).toEqual([]);
+        expect(
+          (
+            await client.query(
+              'select * from "invoiceContractualAmortizations"'
+            )
+          ).rows
+        ).toEqual([]);
+        expect(
+          (
+            await client.query(
+              'select "applicationMode" from "purchaseOrderAdvances" where id=10'
+            )
+          ).rows[0].applicationMode
+        ).toBe("direct");
+      }
+    );
+    it.each(["borrador", "revisada", "pendiente_contabilizar"] as const)(
+      "blocks an unlinked documentary amortization in the %s transition without changing its state",
+      async status => {
+        await client.query('DELETE FROM "purchaseOrderAdvanceApplications"');
+        await client.query("UPDATE invoices SET status=$1 WHERE id=1953", [
+          status,
+        ]);
+        const transition =
+          status === "borrador"
+            ? () => database.reviewInvoice(1953, 1)
+            : status === "revisada"
+              ? () =>
+                  database.submitInvoiceForAccounting({
+                    id: 1953,
+                    submittedById: 1,
+                  })
+              : () => database.accountInvoice({ id: 1953, accountedById: 1 });
+        await expect(transition()).rejects.toThrow(
+          /amortización sin anticipo contractual/
+        );
+        expect(
+          (await client.query("select status from invoices where id=1953"))
+            .rows[0].status
+        ).toBe(status);
+        expect(
+          (
+            await client.query(
+              'select * from "purchaseOrderAdvanceApplications"'
+            )
+          ).rows
+        ).toEqual([]);
+      }
+    );
+    it("amortizes future invoices at fifteen percent exactly once without reducing their net again", async () => {
+      await repair();
+      await client.query(`UPDATE "purchaseOrderAdvances" SET "amortizationValue"=15 WHERE id=10;
+        INSERT INTO receipts(id,"receiptNumber","sourceType","sourceId","projectId","receivedById") VALUES(2097,'RE-15-PERCENT','purchase_order',897,18,1);
+        INSERT INTO invoices(id,"invoiceDocumentNumber","receiptId","purchaseOrderId","projectId","supplierId",status,"postingDate","receiptDate","emissionDeadline",subtotal,total,"netPayable") VALUES(1954,'FT-15-PERCENT',2097,897,18,749,'borrador',now(),now(),now()+interval '1 year',1000000,1000000,1000000);`);
+      await database.replaceInvoiceDocumentAdjustments(
+        1954,
+        { advanceAmortizationPercent: 15 },
+        1
+      );
+      await database.reviewInvoice(1954, 1);
+      await database.submitInvoiceForAccounting({ id: 1954, submittedById: 1 });
+      await database.accountInvoice({ id: 1954, accountedById: 1 });
+      expect(await apply()).toEqual([]);
+      expect(
+        (
+          await client.query(
+            'select "applicationMode",amount from "purchaseOrderAdvanceApplications" where "invoiceId"=1954'
+          )
+        ).rows
+      ).toEqual([{ applicationMode: "contractual", amount: "150000.0000" }]);
+      const detail = await database.getInvoiceById(1954);
+      expect(Number(detail?.invoice.netPayable)).toBe(850000);
+      expect(Number(detail?.appliedAdvanceAmount)).toBe(0);
+      const eligible = await treasury.listEligibleTreasuryInvoices({
+        projectId: 18,
+      });
+      expect(
+        eligible.find(row => row.invoice.id === 1954)?.money.availableAmount
+      ).toBe(850000);
+      expect(
+        (
+          await contracts.getContractualInvoiceContext(
+            (await database.getDb())!,
+            1954
+          )
+        )?.pendingAmortizationAmount
+      ).toBe(497708.63);
+    });
     it("regularizes GEO, preserves documents/payments, and repeats without effects", async () => {
       const result = await repair();
       expect(result.changed).toBe(true);

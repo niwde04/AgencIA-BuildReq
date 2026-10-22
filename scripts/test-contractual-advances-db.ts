@@ -99,10 +99,11 @@ async function main() {
     const result = spawnSync(
       process.execPath,
       [
-        "node_modules/vitest/vitest.mjs",
+        createRequire(import.meta.url).resolve("vitest/vitest.mjs"),
         "run",
         "server/contractualAdvances.integration.test.ts",
         "server/legacyManualAdvances.integration.test.ts",
+        "server/icaAdvanceReconciliation.integration.test.ts",
         ...(process.argv.includes("--contractual-only")
           ? []
           : ["server/financialNotes.integration.test.ts"]),

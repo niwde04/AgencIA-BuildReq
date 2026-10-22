@@ -1,5 +1,6 @@
 import {
   contractualAdvancesEnabled,
+  getInvoiceAdvanceReconciliationMap,
   lockAdvanceOrder,
 } from "./contractualAdvances";
 import { randomUUID } from "node:crypto";
@@ -1089,6 +1090,28 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
     input.executor,
     advances.map((advance: any) => advance.id)
   );
+  // Recheck documentary provenance before consuming any funded balance. A legacy
+  // amortization without its snapshot must never fall through to a full direct
+  // application, including when the advance is funded after invoice accounting.
+  if (
+    advances.some(
+      (advance: any) =>
+        money(advanceFinancials.get(advance.id)?.unappliedAmount ?? 0) > 0
+    )
+  ) {
+    const reconciliation = await getInvoiceAdvanceReconciliationMap(
+      input.executor,
+      invoiceRows.map((invoice: any) => invoice.id)
+    );
+    const unreadyInvoice = invoiceRows.find((invoice: any) =>
+      reconciliation.has(invoice.id)
+    );
+    if (unreadyInvoice)
+      throw new PurchaseOrderAdvanceRuleError(
+        `${unreadyInvoice.invoiceDocumentNumber}: la amortización del anticipo requiere conciliación antes de aplicar fondos.`
+      );
+  }
+
   const advanceAccountingRows = await input.executor
     .select({
       purchaseOrderAdvanceId: treasuryPaymentItems.purchaseOrderAdvanceId,
