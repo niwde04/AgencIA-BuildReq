@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { downloadWorkbook } from "@/lib/excel-export";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,6 +30,7 @@ import {
   Check,
   ChevronsUpDown,
   Eye,
+  FileSpreadsheet,
   Package,
   Plus,
   Search,
@@ -416,6 +418,7 @@ export default function SaldosIniciales() {
   const utils = trpc.useUtils();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [resolvingSapIndex, setResolvingSapIndex] = useState<number | null>(
     null
   );
@@ -442,10 +445,11 @@ export default function SaldosIniciales() {
 
   const { data: balances, isLoading } = trpc.openingBalances.list.useQuery();
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
-  const { data: detail } = trpc.openingBalances.getById.useQuery(
-    { id: selectedId ?? 0 },
-    { enabled: Boolean(selectedId) }
-  );
+  const { data: detail, isFetching: isDetailFetching } =
+    trpc.openingBalances.getById.useQuery(
+      { id: selectedId ?? 0 },
+      { enabled: Boolean(selectedId) }
+    );
 
   const warehousesWithOpeningBalanceIds = useMemo(
     () =>
@@ -762,6 +766,91 @@ export default function SaldosIniciales() {
       setResolvingAppendSapIndex(current =>
         current === index ? null : current
       );
+    }
+  };
+
+  const exportOpeningBalanceExcel = async () => {
+    if (
+      !detail ||
+      detail.openingBalance.id !== selectedId ||
+      isDetailFetching ||
+      addItemsMutation.isPending ||
+      isExportingExcel
+    )
+      return;
+
+    setIsExportingExcel(true);
+    try {
+      await downloadWorkbook(
+        `saldo-inicial-${detail.openingBalance.balanceNumber}.xlsx`,
+        [
+          {
+            sheetName: "Resumen",
+            columns: [
+              { header: "Dato", value: row => row.label, width: 24 },
+              { header: "Valor", value: row => row.value, width: 80 },
+            ],
+            rows: [
+              {
+                label: "No. saldo",
+                value: detail.openingBalance.balanceNumber,
+              },
+              {
+                label: "Proyecto de apertura",
+                value: detail.project ? formatProjectLabel(detail.project) : "",
+              },
+              { label: "Bodega", value: detail.warehouse?.displayName || "" },
+              {
+                label: "Fecha de apertura",
+                value: new Date(
+                  detail.openingBalance.openingDate
+                ).toLocaleDateString("es-HN"),
+              },
+              { label: "Notas", value: detail.openingBalance.notes || "" },
+              { label: "Ítems", value: detail.items.length },
+            ],
+          },
+          {
+            sheetName: "Detalle",
+            columns: [
+              {
+                header: "Código SAP",
+                value: row => row.sapItemCode,
+                width: 18,
+              },
+              { header: "Ítem", value: row => row.itemName, width: 48 },
+              { header: "Proyecto", value: row => row.projectLabel, width: 48 },
+              {
+                header: "Ubicación",
+                value: row => row.storageLocation,
+                width: 20,
+              },
+              {
+                header: "Cantidad",
+                value: row => row.quantity,
+                numFmt: "0.00",
+              },
+              { header: "Unidad", value: row => row.unit },
+              { header: "Notas", value: row => row.notes, width: 48 },
+            ],
+            rows: detail.items.map(item => ({
+              ...item,
+              projectLabel:
+                item.project || detail.project
+                  ? formatProjectLabel(item.project ?? detail.project)
+                  : "",
+              quantity: Number(item.quantity),
+            })),
+          },
+        ]
+      );
+      toast.success("Saldo inicial exportado a Excel");
+    } catch {
+      toast.error(
+        "No se pudo exportar el saldo inicial a Excel. Intente nuevamente."
+      );
+    } finally {
+      setIsExportingExcel(false);
     }
   };
 
@@ -1274,14 +1363,31 @@ export default function SaldosIniciales() {
         }}
       >
         <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl p-5 sm:w-[calc(100vw-3rem)] sm:max-w-7xl sm:p-8">
-          <DialogHeader>
-            <DialogTitle>
+          <DialogHeader className="min-w-0 gap-3 pr-6 sm:flex-row sm:items-center sm:justify-between">
+            <DialogTitle className="text-left">
               {detail?.openingBalance.balanceNumber || "Saldo inicial"}
             </DialogTitle>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-11 w-full sm:h-9 sm:w-auto"
+              onClick={() => void exportOpeningBalanceExcel()}
+              disabled={
+                !detail ||
+                detail.openingBalance.id !== selectedId ||
+                isDetailFetching ||
+                addItemsMutation.isPending ||
+                isExportingExcel
+              }
+            >
+              <FileSpreadsheet className="mr-2 h-4 w-4" aria-hidden="true" />
+              {isExportingExcel ? "Exportando..." : "Exportar a Excel"}
+            </Button>
           </DialogHeader>
 
           {detail ? (
-            <div className="space-y-5">
+            <div className="min-w-0 space-y-5">
               <div className="grid gap-4 md:grid-cols-3">
                 <div>
                   <Label className="text-xs text-muted-foreground">
