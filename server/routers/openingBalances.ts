@@ -3,6 +3,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { openingBalanceItemSchema } from "../../shared/opening-balances";
+import { buildOpeningBalanceDocument } from "../openingBalanceDocument";
 
 function canManageOpeningBalances(user: {
   role: string;
@@ -71,6 +72,24 @@ export const openingBalancesRouter = router({
       }
 
       return detail;
+    }),
+
+  getDocument: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      if (!canManageOpeningBalances(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a saldos iniciales",
+        });
+      }
+      const detail = await db.getOpeningBalanceById(input.id);
+      if (!detail)
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Saldo inicial no encontrado",
+        });
+      return buildOpeningBalanceDocument(detail);
     }),
 
   create: protectedProcedure

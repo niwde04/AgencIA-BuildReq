@@ -834,6 +834,8 @@ export function buildProcurementPdfBase64(params: {
   watermarkText?: string;
   detailTitle?: string;
   detailDescription?: string;
+  notes?: string;
+  preserveItemText?: boolean;
 }) {
   const palette = {
     ink: [0.11, 0.14, 0.2] as PdfRgb,
@@ -1037,12 +1039,12 @@ export function buildProcurementPdfBase64(params: {
     }
   };
 
-  const startNewPage = () => {
+  const startNewPage = (includeTableHeader = true) => {
     page = createPage();
     pages.push(page);
     drawContinuationHeader();
-    drawItemsTableHeader(106);
-    return 140;
+    if (includeTableHeader) drawItemsTableHeader(106);
+    return includeTableHeader ? 140 : 106;
   };
 
   let currentTop = 388;
@@ -1050,6 +1052,99 @@ export function buildProcurementPdfBase64(params: {
   currentTop += 36;
 
   params.items.forEach((item, index) => {
+    if (params.preserveItemText) {
+      const lines = [
+        ...wrapText(item.description, descriptionWidth, 11.5, "F1").map(
+          text => ({ text, fontSize: 11.5, leading: 15, color: palette.ink })
+        ),
+        ...(item.metaLines ?? [])
+          .filter(Boolean)
+          .flatMap(detail =>
+            wrapText(detail, descriptionWidth, 10, "F1").map(text => ({
+              text,
+              fontSize: 10,
+              leading: 12.5,
+              color: palette.muted,
+            }))
+          ),
+      ];
+      const bottom = PAGE_HEIGHT - PAGE_MARGIN_BOTTOM - 26;
+      const fullHeight = Math.max(
+        42,
+        lines.reduce((sum, line) => sum + line.leading, 18)
+      );
+      if (fullHeight <= bottom - 140 && currentTop + fullHeight > bottom)
+        currentTop = startNewPage();
+      let offset = 0;
+      while (offset < lines.length) {
+        let count = 0;
+        let height = 18;
+        while (
+          offset + count < lines.length &&
+          Math.max(42, height + lines[offset + count].leading) <=
+            bottom - currentTop
+        ) {
+          height += lines[offset + count].leading;
+          count += 1;
+        }
+        if (count === 0) {
+          currentTop = startNewPage();
+          continue;
+        }
+        height = Math.max(42, height);
+        drawRect(page, 42, currentTop, 528, height, {
+          fill: index % 2 === 0 ? palette.rowAlt : palette.white,
+          stroke: palette.border,
+          lineWidth: 0.7,
+        });
+        drawText(page, {
+          x: 56,
+          top: currentTop + 12,
+          text: offset === 0 ? String(index + 1).padStart(2, "0") : "cont.",
+          fontSize: 10,
+          font: "F2",
+          color: palette.accent,
+        });
+        let textTop = currentTop + 10;
+        for (const line of lines.slice(offset, offset + count)) {
+          drawText(page, {
+            x: 94,
+            top: textTop,
+            text: line.text,
+            fontSize: line.fontSize,
+            color: line.color,
+          });
+          textTop += line.leading;
+        }
+        if (offset === 0) {
+          drawText(page, {
+            x: quantityColumnX,
+            top: currentTop + Math.max(11, height / 2 - 4),
+            width: quantityColumnWidth,
+            text: item.quantityLabel,
+            fontSize: 11.5,
+            font: "F2",
+            color: palette.ink,
+            align: "right",
+          });
+          if (hasAmountColumn)
+            drawText(page, {
+              x: amountColumnX,
+              top: currentTop + Math.max(11, height / 2 - 4),
+              width: amountColumnWidth,
+              text: item.amountLabel ?? "-",
+              fontSize: 11.5,
+              font: "F2",
+              color: palette.ink,
+              align: "right",
+            });
+        }
+        currentTop += height;
+        offset += count;
+        if (offset < lines.length) currentTop = startNewPage();
+      }
+      return;
+    }
     const descriptionLines = wrapText(
       item.description,
       descriptionWidth,
@@ -1131,6 +1226,52 @@ export function buildProcurementPdfBase64(params: {
     currentTop += rowHeight;
   });
 
+  if (params.notes !== undefined) {
+    const lines = wrapText(
+      params.notes.trim() || "Sin observaciones",
+      500,
+      10.5
+    );
+    const bottom = PAGE_HEIGHT - PAGE_MARGIN_BOTTOM - 26;
+    let offset = 0;
+    currentTop += 14;
+    while (offset < lines.length) {
+      if (bottom - currentTop < 58) currentTop = startNewPage(false);
+      const count = Math.min(
+        lines.length - offset,
+        Math.floor((bottom - currentTop - 44) / 14)
+      );
+      const height = 44 + count * 14;
+      drawRect(page, 42, currentTop, 528, height, {
+        fill: palette.rowAlt,
+        stroke: palette.border,
+        lineWidth: 0.7,
+      });
+      drawText(page, {
+        x: 56,
+        top: currentTop + 12,
+        text: offset === 0 ? "Observaciones" : "Observaciones (continuación)",
+        fontSize: 11,
+        font: "F2",
+        color: palette.ink,
+      });
+      lines
+        .slice(offset, offset + count)
+        .forEach((text, index) =>
+          drawText(page, {
+            x: 56,
+            top: currentTop + 34 + index * 14,
+            text,
+            fontSize: 10.5,
+            color: palette.ink,
+          })
+        );
+      offset += count;
+      currentTop += height + 14;
+      if (offset < lines.length) currentTop = startNewPage(false);
+    }
+  }
+
   if ((params.summaryRows ?? []).length > 0) {
     const summaryRows = params.summaryRows ?? [];
     const summaryWidth = 228;
@@ -1138,7 +1279,7 @@ export function buildProcurementPdfBase64(params: {
     const summaryHeight = summaryRows.length * summaryRowHeight + 20;
 
     if (currentTop + summaryHeight > PAGE_HEIGHT - PAGE_MARGIN_BOTTOM - 26) {
-      currentTop = startNewPage();
+      currentTop = startNewPage(!params.preserveItemText);
     } else {
       currentTop += 14;
     }

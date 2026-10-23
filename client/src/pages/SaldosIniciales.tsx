@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { downloadWorkbook } from "@/lib/excel-export";
+import { downloadBase64Document } from "@/lib/document-download";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -31,6 +32,7 @@ import {
   ChevronsUpDown,
   Eye,
   FileSpreadsheet,
+  FileDown,
   Package,
   Plus,
   Search,
@@ -419,6 +421,7 @@ export default function SaldosIniciales() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [resolvingSapIndex, setResolvingSapIndex] = useState<number | null>(
     null
   );
@@ -766,6 +769,37 @@ export default function SaldosIniciales() {
       setResolvingAppendSapIndex(current =>
         current === index ? null : current
       );
+    }
+  };
+
+  const downloadOpeningBalancePdf = async () => {
+    if (
+      !detail ||
+      detail.openingBalance.id !== selectedId ||
+      isDetailFetching ||
+      addItemsMutation.isPending ||
+      isDownloadingPdf
+    )
+      return;
+    setIsDownloadingPdf(true);
+    try {
+      const document = await utils.openingBalances.getDocument.fetch({
+        id: detail.openingBalance.id,
+      });
+      if (
+        !downloadBase64Document({
+          base64: document.content,
+          fileName: document.name,
+          mimeType: document.mimeType,
+        })
+      )
+        throw new Error("empty pdf");
+    } catch {
+      toast.error(
+        "No se pudo descargar el PDF del saldo inicial. Intente nuevamente."
+      );
+    } finally {
+      setIsDownloadingPdf(false);
     }
   };
 
@@ -1367,23 +1401,42 @@ export default function SaldosIniciales() {
             <DialogTitle className="text-left">
               {detail?.openingBalance.balanceNumber || "Saldo inicial"}
             </DialogTitle>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-11 w-full sm:h-9 sm:w-auto"
-              onClick={() => void exportOpeningBalanceExcel()}
-              disabled={
-                !detail ||
-                detail.openingBalance.id !== selectedId ||
-                isDetailFetching ||
-                addItemsMutation.isPending ||
-                isExportingExcel
-              }
-            >
-              <FileSpreadsheet className="mr-2 h-4 w-4" aria-hidden="true" />
-              {isExportingExcel ? "Exportando..." : "Exportar a Excel"}
-            </Button>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-11 w-full sm:h-9 sm:w-auto"
+                onClick={() => void downloadOpeningBalancePdf()}
+                disabled={
+                  !detail ||
+                  detail.openingBalance.id !== selectedId ||
+                  isDetailFetching ||
+                  addItemsMutation.isPending ||
+                  isDownloadingPdf
+                }
+              >
+                <FileDown className="mr-2 h-4 w-4" aria-hidden="true" />
+                {isDownloadingPdf ? "Generando PDF..." : "Descargar PDF"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-11 w-full sm:h-9 sm:w-auto"
+                onClick={() => void exportOpeningBalanceExcel()}
+                disabled={
+                  !detail ||
+                  detail.openingBalance.id !== selectedId ||
+                  isDetailFetching ||
+                  addItemsMutation.isPending ||
+                  isExportingExcel
+                }
+              >
+                <FileSpreadsheet className="mr-2 h-4 w-4" aria-hidden="true" />
+                {isExportingExcel ? "Exportando..." : "Exportar a Excel"}
+              </Button>
+            </div>
           </DialogHeader>
 
           {detail ? (
