@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
+import { repairOpeningBalanceNumber } from "./openingBalanceNumberRepair";
 
 const testUrl = process.env.OPENING_BALANCES_TEST_DATABASE_URL;
 const describeDatabase = testUrl ? describe : describe.skip;
@@ -38,6 +39,15 @@ describeDatabase(
     beforeEach(async () => {
       await client.query(
         'TRUNCATE TABLE "openingBalances", "openingBalanceItems", "inventoryItems", "projectWarehouseAssignments", projects, warehouses, users RESTART IDENTITY CASCADE'
+      );
+      await client.query(
+        readFileSync(
+          new URL(
+            "../drizzle/20261023155836_retire_opening_balance_folio.sql",
+            import.meta.url
+          ),
+          "utf8"
+        )
       );
       await client.query(`INSERT INTO users (id, "openId", name) VALUES (1, 'test-admin', 'Test Admin');
       INSERT INTO warehouses (id, code, name, "displayName", "isSharedWarehouse") VALUES
@@ -137,11 +147,11 @@ describeDatabase(
       }
     );
 
-    it("does not reuse a preserved 024 folio whose corrected header belongs to 018", async () => {
+    it("skips the retired 024 folio after correcting its header number to 018", async () => {
       await client.query(`UPDATE projects SET code='018' WHERE id=1;
         UPDATE projects SET code='024' WHERE id=2;
         INSERT INTO "projectWarehouseAssignments" ("projectId","warehouseId","isPrimary") VALUES(2,2,false);
-        INSERT INTO "openingBalances" ("balanceNumber","projectId","warehouseId","createdById",notes) VALUES('SI-024-00000001',1,1,1,'Preserved historical folio');`);
+        INSERT INTO "openingBalances" ("balanceNumber","projectId","warehouseId","createdById",notes) VALUES('SI-018-00000001',1,1,1,'Corrected historical folio');`);
       const historical = (
         await client.query(
           'SELECT to_jsonb(balance) data FROM "openingBalances" balance'
@@ -159,10 +169,115 @@ describeDatabase(
       expect(
         (
           await client.query(
-            'SELECT to_jsonb(balance) data FROM "openingBalances" balance WHERE "balanceNumber"=\'SI-024-00000001\''
+            'SELECT to_jsonb(balance) data FROM "openingBalances" balance WHERE "balanceNumber"=\'SI-018-00000001\''
           )
         ).rows
       ).toEqual(historical);
+    });
+
+    it("blocks direct reuse of retired folios at the database boundary", async () => {
+      await expect(
+        client.query(
+          `INSERT INTO "openingBalances" ("balanceNumber","projectId","warehouseId","createdById") VALUES('SI-024-00000001',1,1,1)`
+        )
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "ob_no_retired_balance_number",
+      });
+    });
+
+    it("renumbers the authorized legacy balance atomically, preserves all stock and reserves the old folio", async () => {
+      await client.query(`ALTER TABLE "openingBalances" DROP CONSTRAINT ob_no_retired_balance_number;
+        INSERT INTO warehouses(id,code,name,"displayName") VALUES(23,'018','El Zamorano','018 - El Zamorano');
+        INSERT INTO projects(id,code,name,status,"warehouseId") VALUES(22,'018','Proyecto 018','activo',23),(26,'024','Proyecto 024','activo',23);
+        INSERT INTO "projectWarehouseAssignments"("projectId","warehouseId","isPrimary") VALUES(22,23,true),(26,23,true);
+        INSERT INTO "openingBalances"(id,"balanceNumber","projectId","warehouseId","createdById",notes) VALUES(4,'SI-024-00000001',22,23,1,'Original notes');
+        INSERT INTO "openingBalanceItems"("openingBalanceId","projectId","sapItemCode","itemName",quantity,unit,"storageLocation") VALUES(4,22,'09020032','FILTRO COMBUSTIBLE',1.25,'und','2C1');
+        INSERT INTO "inventoryItems"("projectId","warehouseId","sapItemCode",name,"currentStock",unit,"storageLocation") VALUES(22,23,'09020032','FILTRO COMBUSTIBLE',1.25,'und','2C1');`);
+      const initial = await repairOpeningBalanceNumber(client, {
+        apply: false,
+      });
+      expect(initial.before.header.balanceNumber).toBe("SI-024-00000001");
+      await expect(
+        repairOpeningBalanceNumber(client, {
+          apply: true,
+          beforeApply: async () => {
+            throw new Error("backup failure");
+          },
+          beforeCommit: async () => {},
+        })
+      ).rejects.toThrow("backup failure");
+      await expect(
+        repairOpeningBalanceNumber(client, {
+          apply: true,
+          beforeApply: async () => {},
+          beforeCommit: async () => {
+            throw new Error("audit failure");
+          },
+        })
+      ).rejects.toThrow("audit failure");
+      expect(
+        (await repairOpeningBalanceNumber(client, { apply: false })).before
+      ).toEqual(initial.before);
+      expect(
+        (
+          await client.query(
+            "SELECT count(*)::int count FROM pg_constraint WHERE conrelid='public.\"openingBalances\"'::regclass AND conname='ob_no_retired_balance_number'"
+          )
+        ).rows[0].count
+      ).toBe(0);
+      await expect(
+        repairOpeningBalanceNumber(client, {
+          apply: true,
+          beforeApply: async () => {
+            await client.query(
+              'UPDATE "inventoryItems" SET "currentStock"=999 WHERE "warehouseId"=23'
+            );
+          },
+          beforeCommit: async () => {},
+        })
+      ).rejects.toThrow("inventory");
+      expect(
+        (await repairOpeningBalanceNumber(client, { apply: false })).before
+      ).toEqual(initial.before);
+      await client.query(
+        `INSERT INTO "openingBalances"(id,"balanceNumber","projectId","warehouseId","createdById") VALUES(5,'SI-018-00000001',22,1,1)`
+      );
+      await expect(
+        repairOpeningBalanceNumber(client, { apply: false })
+      ).rejects.toThrow("otro saldo");
+      await client.query('DELETE FROM "openingBalances" WHERE id=5');
+      const result = await repairOpeningBalanceNumber(client, {
+        apply: true,
+        beforeApply: async () => {},
+        beforeCommit: async () => {},
+      });
+      expect(result.after.header).toMatchObject({
+        id: 4,
+        projectId: 22,
+        warehouseId: 23,
+        balanceNumber: "SI-018-00000001",
+        notes: "Original notes",
+      });
+      expect(result.after.items).toEqual(initial.before.items);
+      expect(result.after.inventory).toEqual(initial.before.inventory);
+      expect(result.after.otherHeaders).toEqual(initial.before.otherHeaders);
+      const repeated = await repairOpeningBalanceNumber(client, {
+        apply: true,
+        beforeApply: async () => {},
+        beforeCommit: async () => {},
+      });
+      expect(repeated.changed).toBe(false);
+      expect(repeated.alreadyApplied).toBe(true);
+      expect(repeated.after).toEqual(result.after);
+      await expect(
+        client.query(
+          `UPDATE "openingBalances" SET "balanceNumber"='SI-024-00000001' WHERE id=4`
+        )
+      ).rejects.toMatchObject({ code: "23514" });
+      expect(await database.generateOpeningBalanceNumber(26)).toBe(
+        "SI-024-00000002"
+      );
     });
 
     it("serializes two simultaneous warehouses of one project without duplicating their folios", async () => {

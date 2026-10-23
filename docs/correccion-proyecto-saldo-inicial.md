@@ -11,7 +11,7 @@ La bodega El Zamorano está compartida por los proyectos 018 y 024. El formulari
 5. Publicar el código y comprobar la capacidad `explicitOpeningBalanceProject` en `/health` antes de regularizar el saldo.
 6. Bajo transacción y bloqueo, recapturar el saldo ID 4, sus líneas y el inventario de bodega 23. Cambiar únicamente el proyecto del encabezado de 26/024 a 22/018 y `updatedAt`. Guardar evidencia durable anterior y posterior y comprobar invariantes antes de confirmar.
 
-Se conserva el folio emitido `SI-024-00000001` por trazabilidad. Las nuevas aperturas usan el proyecto elegido; el generador comprueba todos los folios existentes para no reutilizar el conservado. No se cambian notas, fechas históricas, artículos, cantidades, destinos, existencias ni otras operaciones.
+En la intervención del 22/10/2026 se conservó el folio emitido `SI-024-00000001` por trazabilidad. Las nuevas aperturas usan el proyecto elegido. La autorización posterior de renumeración se describe al final; no cambia notas, fechas históricas, artículos, cantidades, destinos, existencias ni otras operaciones.
 
 ## Recuperación
 
@@ -32,3 +32,17 @@ Código publicado en main `1f8c71bcbd4fae5ecb625817f0004058ffc70504`. Despliegue
 Regularización confirmada en Cloud a las 21:41 UTC: saldo ID 4, encabezado 22/018, folio original `SI-024-00000001`. Únicamente se actualizaron `projectId` y `updatedAt`; no hubo cambios de esquema, permisos ni RLS. Las 26 líneas (176,00 unidades acumuladas), notas, fechas históricas y las 1.149 filas del inventario coinciden exactamente con el respaldo bloqueado y la imagen posterior preparada. Listado y detalle reales de la aplicación resuelven el proyecto 018.
 
 Auditoría durable: `opening-project-20261022T214111762Z-9c8c473c/` dentro del respaldo, con antes, después, manifiesto y resultado confirmado. Verificaciones: `deployment.json` y `production-verification.json`. No se crearon saldos ni movimientos de prueba en producción. El cliente solo necesita recargar la aplicación; no debe volver a ingresar las líneas existentes.
+
+## Renumeración autorizada el 23/10/2026
+
+El usuario autorizó cambiar únicamente el folio del saldo ID 4 de `SI-024-00000001` a `SI-018-00000001`, conservando el proyecto 22/018 y la bodega 23. La búsqueda de referencias en las 73 tablas públicas/privadas encontró el folio anterior solamente en `openingBalances`; las líneas y el kardex resuelven su encabezado por ID.
+
+`shared/opening-balance-numbering.ts` reserva el folio anterior para que el generador lo salte. La restricción `ob_no_retired_balance_number` también impide reutilizarlo mediante SQL directo. No se crea un saldo ficticio ni una nueva fila de inventario. Para futuros cambios de la lista de folios retirados, mantener alineados el generador, el esquema y sus pruebas.
+
+El CLI `scripts/repair-opening-balance-number.ts` valida el destino Cloud, el SHA-256 del respaldo restaurado y, con `--apply`, la capacidad publicada `openingBalanceRetiredNumberGuard: 1`. Requiere `--backup-dir` absoluto. Sin `--apply` usa una transacción de solo lectura. Con `--apply` bloquea la bodega, el encabezado y los proyectos involucrados, verifica que el número nuevo esté libre y recaptura las líneas e inventario actuales. Antes de escribir persiste la imagen bloqueada; antes de confirmar persiste la auditoría preparada. Solo modifica `balanceNumber` y `updatedAt`, e instala y valida la restricción dentro de la misma transacción. No ejecutar la migración del folio por separado contra el saldo antiguo.
+
+Respaldo previo: `backups/opening-folio-20261023T155523228Z/application-before.dump`, 33.579.649 bytes, esquemas public/private; excluye los servicios internos de Auth/Storage y los binarios externos. Se restauraron sus 73 tablas en PostgreSQL local aislado. El ensayo real conservó las 169 líneas, las 1.251 filas de inventario de la bodega y todas las demás tablas; únicamente cambió `public.openingBalances`. Se comprobaron fallos de respaldo y auditoría con reversión, repetición sin modificaciones, rechazo del folio retirado y siguiente folio 024 igual a `SI-024-00000002`. La imagen bloqueada en producción se vuelve a capturar para preservar también entradas posteriores al respaldo.
+
+Recuperación: usar la imagen anterior y compararla con el encabezado preparado; restaurar únicamente folio y `updatedAt` mediante una transacción auditada. Para volver al folio retirado se requiere revisar expresamente su reserva y el generador. No restaurar tablas completas sobre movimientos posteriores ni retirar la reserva como una limpieza rutinaria. Los respaldos y auditorías están excluidos de Git.
+
+Estado de esta sección: protección preparada y ensayo local verificado; la ejecución y verificación en Cloud se registrarán después de confirmar la transacción.

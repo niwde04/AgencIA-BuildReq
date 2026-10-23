@@ -42,6 +42,7 @@ async function startServer() {
         legacyManualAdvances: 1,
         advanceAmortizationGuard: 1,
         explicitOpeningBalanceProject: 1,
+        openingBalanceRetiredNumberGuard: 1,
       },
       legacyManualCaptureEnabled:
         process.env.LEGACY_MANUAL_ADVANCES_ENABLED !== "false",

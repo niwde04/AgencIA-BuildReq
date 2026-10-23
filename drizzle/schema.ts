@@ -2457,6 +2457,10 @@ export const openingBalances = pgTable(
       table.projectId,
       table.warehouseId
     ),
+    retiredNumberCheck: check(
+      "ob_no_retired_balance_number",
+      sql`${table.balanceNumber} <> 'SI-024-00000001'`
+    ),
   })
 );
 

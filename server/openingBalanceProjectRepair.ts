@@ -121,7 +121,7 @@ function withoutMutableHeaderFields(row: RecordImage) {
   );
 }
 
-async function snapshot(
+export async function captureOpeningBalanceRepairSnapshot(
   client: Executor
 ): Promise<OpeningProjectRepairSnapshot> {
   const target = OPENING_PROJECT_REPAIR;
@@ -268,7 +268,7 @@ export async function repairOpeningBalanceProject(
         [target.warehouseId, target.oldProjectId, target.projectId]
       );
     }
-    const before = await snapshot(client);
+    const before = await captureOpeningBalanceRepairSnapshot(client);
     validateBefore(before);
     const alreadyApplied = before.header.projectId === target.projectId;
     let after = before;
@@ -289,7 +289,7 @@ export async function repairOpeningBalanceProject(
         updated.rowCount === 1,
         "El documento cambió durante la regularización."
       );
-      after = await snapshot(client);
+      after = await captureOpeningBalanceRepairSnapshot(client);
       validateAfter(before, after);
     }
     const result: OpeningProjectRepairResult = {

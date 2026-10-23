@@ -27,6 +27,7 @@ import {
   normalizeOpeningBalanceItems,
   type OpeningBalanceItemInput,
 } from "../shared/opening-balances";
+import { isRetiredOpeningBalanceNumber } from "../shared/opening-balance-numbering";
 import {
   assertValidTransferConversionDestination,
   TransferConversionValidationError,
@@ -6003,6 +6004,7 @@ export async function generateOpeningBalanceNumber(projectId: number) {
     projectCode: project.code,
     existingNumbers: rows.map(row => row.documentNumber),
     isDocumentNumberTaken: async documentNumber => {
+      if (isRetiredOpeningBalanceNumber(documentNumber)) return true;
       const [existing] = await db
         .select({ id: openingBalances.id })
         .from(openingBalances)
