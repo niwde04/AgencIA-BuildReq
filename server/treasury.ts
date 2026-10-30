@@ -1,6 +1,7 @@
 import { getInvoiceAdvanceReconciliationMap, getInvoiceContractualAmortizationMap, lockAdvanceOrder } from "./contractualAdvances";
 import { loadTreasuryPaymentCostMatrixEntries } from "./treasuryPaymentCostLevels";
-import { invoiceCommittedMoneySql } from "./invoiceMoney";
+import { invoiceCommittedMoneySql, invoiceSettlementNetSql } from "./invoiceMoney";
+import { getInvoiceSettlementMap } from "./invoiceSettlement";
 import { randomUUID } from "node:crypto";
 import {
   and,
@@ -646,7 +647,7 @@ async function assertTreasuryInvoiceBalances(tx: any, ids: number[]) {
   const result = await tx.execute(sql`
     select document, currency, payable, committed from (
       select i."invoiceDocumentNumber" as document, i.currency,
-        round(i."netPayable", 2) as payable,
+        ${invoiceSettlementNetSql(sql`i.id`, sql`i."netPayable"`)} as payable,
         ${invoiceCommittedMoneySql(sql`i.id`)} as committed
       from invoices i where i.id = any(${sql.param(ids)}::int[])
     ) balance where balance.payable < balance.committed limit 1
@@ -712,6 +713,7 @@ async function getInvoiceFinancialMap(
     executor,
     uniqueIds
   );
+  const settlementByInvoice = await getInvoiceSettlementMap(executor, uniqueIds);
 
   const amortizations = await getInvoiceContractualAmortizationMap(executor, uniqueIds);
   const qualities = await executor.select({ invoiceId: invoiceDocumentAdjustments.invoiceId, amount: invoiceDocumentAdjustments.amount }).from(invoiceDocumentAdjustments).where(and(inArray(invoiceDocumentAdjustments.invoiceId, uniqueIds), eq(invoiceDocumentAdjustments.adjustmentType, "quality_retention")));
@@ -740,7 +742,8 @@ async function getInvoiceFinancialMap(
       invoice.id,
       buildTreasuryMoneySummary({
         currency: invoice.currency,
-        invoiceNetPayable: invoice.netPayable,
+        invoiceNetPayable:
+          settlementByInvoice.get(invoice.id)?.amount ?? invoice.netPayable,
         paidAmount,
         reservedAmount,
         appliedAdvanceAmount: appliedAdvanceByInvoice.get(invoice.id) ?? 0,
@@ -875,10 +878,12 @@ export async function listTreasuryInvoiceReportPage(input: {
       asc(invoices.id)
     );
   const invoiceIds = candidates.map(invoice => invoice.invoiceId);
-  const [paymentsByInvoice, appliedAdvanceByInvoice] = await Promise.all([
-    getTreasuryInvoiceReportPayments(invoiceIds),
-    getInvoiceAppliedAdvanceMap(db, invoiceIds),
-  ]);
+  const [paymentsByInvoice, appliedAdvanceByInvoice, settlementByInvoice] =
+    await Promise.all([
+      getTreasuryInvoiceReportPayments(invoiceIds),
+      getInvoiceAppliedAdvanceMap(db, invoiceIds),
+      getInvoiceSettlementMap(db, invoiceIds),
+    ]);
   const searchTerm = String(input.search ?? "")
     .trim()
     .normalize("NFD")
@@ -890,7 +895,8 @@ export async function listTreasuryInvoiceReportPage(input: {
       payments.reduce((sum, payment) => sum + payment.amount, 0)
     );
     const treasuryPaymentStatus = getTreasuryPaymentStatus(
-      Number(invoice.netPayable ?? 0),
+      settlementByInvoice.get(invoice.invoiceId)?.amount ??
+        Number(invoice.netPayable ?? 0),
       paidAmount + (appliedAdvanceByInvoice.get(invoice.invoiceId) ?? 0)
     );
     const paymentStatus =
@@ -1849,6 +1855,10 @@ export async function getTreasuryBatchById(batchId: number) {
     documentAdjustmentsByInvoiceId.set(adjustment.invoiceId, current);
   });
   const detailedItems = items.map((item: any) => {
+    const invoiceFinancials =
+      item.sourceType === "purchase_order_advance"
+        ? advanceFinancialsById.get(item.purchaseOrderAdvanceId)
+        : invoiceFinancialsById.get(item.invoiceId);
     const documentAdjustments =
       item.sourceType === "purchase_order_advance"
         ? []
@@ -1856,9 +1866,13 @@ export async function getTreasuryBatchById(batchId: number) {
     return {
       ...item,
       invoiceNetPayableSnapshot: item.invoiceNetPayable,
-      ...(item.sourceType === "purchase_order_advance"
-        ? advanceFinancialsById.get(item.purchaseOrderAdvanceId)
-        : invoiceFinancialsById.get(item.invoiceId)),
+      ...invoiceFinancials,
+      // A batch's agreed payable is historical, even if later notes change the invoice.
+      invoiceNetPayableOriginal:
+        invoiceFinancials && "invoiceNetPayable" in invoiceFinancials
+          ? invoiceFinancials.invoiceNetPayable
+          : item.invoiceNetPayable,
+      invoiceNetPayable: item.invoiceNetPayable,
       otherRetentionAdjustments: documentAdjustments.filter(adjustment =>
         ["quality_retention", "advance_amortization"].includes(
           adjustment.adjustmentType
@@ -1984,7 +1998,10 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
           ...paymentItem,
           reportAmount: resolveTreasuryPaymentReportAmount(paymentItem),
         },
-        invoice,
+        invoice: {
+          ...invoice,
+          netPayable: paymentItem.invoiceNetPayable ?? invoice.netPayable,
+        },
       };
     });
   }
@@ -2173,7 +2190,7 @@ async function getTreasuryDraftSourceSnapshots(
       supplier: row.supplier,
       documentNumber: row.invoice.invoiceDocumentNumber,
       referenceNumber: row.invoice.invoiceNumber,
-      targetAmount: row.invoice.netPayable,
+      targetAmount: row.money.invoiceNetPayable,
       previousPaidAmount: row.money.paidAmount,
       appliedAdvanceAmount: row.money.appliedAdvanceAmount,
       contractualAmortizationAmount: row.money.contractualAmortizationAmount ?? 0,
@@ -2434,6 +2451,7 @@ export async function updateTreasuryDraft(input: {
           .update(treasuryPaymentItems)
           .set({
             ...values,
+            invoiceNetPayable: existing.invoiceNetPayable,
             status: "incluida",
             activeReservation: true,
             requestedAmount: amount,

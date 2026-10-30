@@ -9,6 +9,7 @@ import { buildSystemWorkbookPayload } from "@shared/system-workbook-report";
 import { z } from "zod";
 import * as db from "../db";
 import * as treasury from "../treasury";
+import { getInvoiceSettlementMap } from "../invoiceSettlement";
 import { protectedProcedure, router } from "../_core/trpc";
 import { applyProjectScope } from "../projectAccess";
 
@@ -55,6 +56,24 @@ const dateInputSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
   .nullish();
+
+async function operationalSettlementPayables(invoiceIds: number[]) {
+  const payables = new Map<number, number>();
+  if (!invoiceIds.length) return payables;
+  const database = await db.getDb();
+  if (!database)
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Base de datos no disponible",
+    });
+  for (const [id, settlement] of Array.from(
+    await getInvoiceSettlementMap(database, invoiceIds)
+  )) {
+    if (settlement.policy === "document_cents_v1")
+      payables.set(id, settlement.amount);
+  }
+  return payables;
+}
 
 export const reportsRouter = router({
   systemWorkbook: protectedProcedure
@@ -112,7 +131,10 @@ export const reportsRouter = router({
           dateTo,
           statusMode: input.statusMode,
         },
-        treasuryPaymentsByInvoice
+        treasuryPaymentsByInvoice,
+        await operationalSettlementPayables(
+          sourceInvoices.map(invoice => invoice.invoiceId)
+        )
       );
     }),
   systemPurchaseOrders: protectedProcedure
@@ -227,7 +249,10 @@ export const reportsRouter = router({
                 ? "all"
                 : "non_void",
         },
-        treasuryPaymentsByInvoice
+        treasuryPaymentsByInvoice,
+        await operationalSettlementPayables(
+          sourceInvoices.map(invoice => invoice.invoiceId)
+        )
       );
     }),
   dmcPurchases: protectedProcedure

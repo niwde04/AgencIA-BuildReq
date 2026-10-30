@@ -1,4 +1,5 @@
 import { assertContractualInvoiceReady, getContractualInvoiceContext, getInvoiceAdvanceReconciliationMap, lockInvoiceAdvanceOrder, prepareContractualAmortization, saveContractualSnapshot } from "./contractualAdvances";
+import { enrollNewInvoiceSettlement, getInvoiceSettlementMap } from "./invoiceSettlement";
 import { TRPCError } from "@trpc/server";
 import { createHash, randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -12628,6 +12629,7 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
     });
 
   await upsertSupplierFiscalDocumentRangeForInvoiceId(createdInvoice.id);
+  await enrollNewInvoiceSettlement(db, createdInvoice.id, params.receiptData.receivedById);
 
   if (invoiceLines.length > 0) {
     await db.insert(invoiceItems).values(
@@ -14657,7 +14659,7 @@ export async function listInvoices(filters?: {
     .orderBy(desc(invoices.createdAt), desc(invoices.id));
 
   const invoiceIds = rows.map(row => row.invoice.id);
-  if (invoiceIds.length === 0) return rows;
+  if (invoiceIds.length === 0) return [];
 
   const requestRows = await db
     .select({
@@ -14732,6 +14734,8 @@ export async function listInvoices(filters?: {
     requestedByUsers.map(user => [user.id, user])
   );
 
+  const settlementByInvoice = await getInvoiceSettlementMap(db, invoiceIds);
+
   return rows.map(row => {
     const requestedByIds = requestedByIdsByInvoiceId.get(row.invoice.id) ?? [];
     const requestedByUsers = requestedByIds
@@ -14740,6 +14744,8 @@ export async function listInvoices(filters?: {
 
     return {
       ...row,
+      settlement: settlementByInvoice.get(row.invoice.id),
+      settlementNetPayable: settlementByInvoice.get(row.invoice.id)?.amount.toFixed(2),
       materialRequests: requestsByInvoiceId.get(row.invoice.id) ?? [],
       requestedBy: requestedByUsers[0] ?? null,
       requestedByUsers,
@@ -15557,8 +15563,12 @@ export async function getInvoiceById(id: number) {
       : [],
   }));
 
+  const settlement = (await getInvoiceSettlementMap(db, [id])).get(id)!;
+
   return {
     ...rows[0],
+    settlement,
+    settlementNetPayable: settlement.amount.toFixed(2),
     items: itemsWithFixedAssetArticles,
     contractualAmortization: await getContractualInvoiceContext(db, id),
     advanceReconciliationReason: (await getInvoiceAdvanceReconciliationMap(db, [id])).get(id) ?? null,

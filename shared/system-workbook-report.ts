@@ -5,6 +5,7 @@ import {
 } from "./dmc-report";
 import { roundPurchaseOrderMoney } from "./purchase-orders";
 import { getInvoiceDocumentAdjustment } from "./invoice-document-adjustments";
+import { decimalToMinorUnits, type DecimalValue } from "./money";
 
 export const SYSTEM_ORDER_HEADERS = [
   "Orden Compra",
@@ -288,6 +289,29 @@ export function buildTreasuryInvoiceSummaryPayload(
   };
 }
 
+/** Allocate the official payable in integer cents, with no per-line rounding loss. */
+function allocateSettlementCents(amount: number, weights: DecimalValue[]) {
+  const cents = BigInt(decimalToMinorUnits(amount));
+  let normalized = (weights.length ? weights : [1]).map(weight =>
+    BigInt(Math.max(0, decimalToMinorUnits(weight, 4)))
+  );
+  let total = normalized.reduce((sum, weight) => sum + weight, BigInt(0));
+  if (total === BigInt(0)) {
+    normalized = normalized.map(() => BigInt(1));
+    total = BigInt(normalized.length);
+  }
+  let cumulativeWeight = BigInt(0);
+  let allocated = BigInt(0);
+  return normalized.map(weight => {
+    cumulativeWeight += weight;
+    const cumulativeCents =
+      (cents * cumulativeWeight + total / BigInt(2)) / total;
+    const lineCents = cumulativeCents - allocated;
+    allocated = cumulativeCents;
+    return Number(lineCents) / 100;
+  });
+}
+
 export function buildSystemWorkbookPayload(
   invoices: DmcReportSourceInvoice[],
   purchaseOrders: SystemPurchaseOrderLine[],
@@ -300,11 +324,20 @@ export function buildSystemWorkbookPayload(
   treasuryPaymentsByInvoice: ReadonlyMap<
     number,
     readonly SystemInvoiceTreasuryPayment[]
-  > = new Map()
+  > = new Map(),
+  settlementPayables: ReadonlyMap<number, number> = new Map()
 ): SystemWorkbookPayload {
   let registration = 0;
   const invoiceRows = invoices.flatMap(invoice => {
     const rows = buildDmcReportPayload([invoice]).rows;
+    const settlement = settlementPayables.get(invoice.invoiceId);
+    const settlementByItem =
+      settlement === undefined
+        ? undefined
+        : allocateSettlementCents(
+            settlement,
+            invoice.items.map(item => item.total)
+          );
     const adjustments = invoice.documentAdjustments ?? [];
     const quality = getInvoiceDocumentAdjustment(
       adjustments,
@@ -397,7 +430,7 @@ export function buildSystemWorkbookPayload(
           itemIndex === 0 ? money(invoice.otherRetentionTotal) : 0,
         "Descuentos documento":
           itemIndex === 0 ? money(invoice.documentDiscountTotal) : 0,
-        Neto_Pagar: money(row.netoPagar),
+        Neto_Pagar: settlementByItem?.[itemIndex] ?? money(row.netoPagar),
         "Fecha Vencimiento Crédito": dateValue(
           row.fechaVencimiento as Date | string | null
         ),

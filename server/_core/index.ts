@@ -43,6 +43,7 @@ async function startServer() {
         advanceAmortizationGuard: 1,
         explicitOpeningBalanceProject: 1,
         openingBalanceRetiredNumberGuard: 1,
+        invoiceSettlementDocumentCents: 1,
       },
       legacyManualCaptureEnabled:
         process.env.LEGACY_MANUAL_ADVANCES_ENABLED !== "false",

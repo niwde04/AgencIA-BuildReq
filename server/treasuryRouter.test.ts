@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
 import { appRouter } from "./routers";
 import * as db from "./db";
 import * as treasury from "./treasury";
+import * as settlement from "./invoiceSettlement";
 
 function createTreasuryContext(
   buildreqRole:
@@ -365,6 +366,83 @@ describe("treasury accounting correction permissions", () => {
 });
 
 describe("treasury invoice summary report", () => {
+  beforeEach(() => {
+    vi.spyOn(db, "getDb").mockResolvedValue({} as any);
+    vi.spyOn(settlement, "getInvoiceSettlementMap").mockResolvedValue(
+      new Map()
+    );
+  });
+
+  it("uses the document-cent payable consistently for the paid filter and operational report without repricing its fiscal source", async () => {
+    mockDisabledApprovalSettings();
+    const source = {
+      invoiceId: 2538,
+      invoiceDocumentNumber: "FT-023-00000164",
+      status: "registrada",
+      subtotal: "57492.2200",
+      taxAmount: "0.0000",
+      total: "57492.2200",
+      retentionTotal: "14373.0550",
+      otherRetentionTotal: "0.0000",
+      documentDiscountTotal: "0.0000",
+      netPayable: "43119.1650",
+      currency: "USD" as const,
+      items: [],
+      retentions: [],
+      documentAdjustments: [],
+      materialRequests: [],
+      subProjectLabels: [],
+    };
+    vi.spyOn(db, "listDmcReportSourceInvoices").mockResolvedValue([
+      source,
+    ] as any);
+    vi.mocked(settlement.getInvoiceSettlementMap).mockResolvedValue(
+      new Map([
+        [
+          2538,
+          {
+            policy: "document_cents_v1",
+            amount: 43119.16,
+            originalNetPayable: 43119.165,
+            difference: -0.01,
+          },
+        ],
+      ])
+    );
+    vi.spyOn(treasury, "getTreasuryInvoiceReportPayments").mockResolvedValue(
+      new Map([
+        [
+          2538,
+          [
+            {
+              batchId: 700,
+              batchNumber: "TES-2026-000700",
+              amount: 43119.16,
+              bankReference: "REF-700",
+              paidDate: new Date("2026-10-30T12:00:00Z"),
+            },
+          ],
+        ],
+      ])
+    );
+    const payload = await appRouter
+      .createCaller(createTreasuryContext("financiero"))
+      .treasury.invoiceSummaryReport({
+        currency: "USD",
+        paymentStatus: "paid",
+      });
+    expect(payload.invoices).toHaveLength(1);
+    expect(payload.invoices[0]).toMatchObject({
+      Estado: "Pagado",
+      "Neto a pagar": 43119.16,
+      "Monto pagado": 43119.16,
+      "Total factura": 57492.22,
+      "Retenciones fiscales": 14373.055,
+    });
+    expect(source.netPayable).toBe("43119.1650");
+    expect(source.retentionTotal).toBe("14373.0550");
+  });
+
   it("allows Financiero to export one row per filtered invoice", async () => {
     mockDisabledApprovalSettings();
     const invoiceSpy = vi

@@ -26,6 +26,8 @@ import * as XLSX from "xlsx";
 import { appRouter } from "./routers";
 import * as db from "./db";
 import * as treasury from "./treasury";
+import * as settlement from "./invoiceSettlement";
+import { decimalToMinorUnits } from "@shared/money";
 import type { TrpcContext } from "./_core/context";
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
@@ -1271,6 +1273,140 @@ describe("internal BuildReq workbook", () => {
 });
 
 describe("DMC report authorization", () => {
+  it.each(["systemInvoices", "systemWorkbook"] as const)(
+    "uses official cents in %s while preserving legacy values and fiscal DMC",
+    async endpoint => {
+      const items = ["19164.0733", "19164.0733", "19164.0734"].map(
+        (total, index) => ({
+          id: index + 1,
+          itemName: `Line ${index + 1}`,
+          taxCode: "isv_0",
+          subtotal: total,
+          taxAmount: "0.0000",
+          total,
+          taxBreakdown: [],
+          dmcDestination: "costo" as const,
+        })
+      );
+      const base = {
+        status: "registrada",
+        subtotal: "57492.2200",
+        taxAmount: "0.0000",
+        total: "57492.2200",
+        retentionTotal: "14373.0550",
+        netPayable: "43119.1650",
+        items,
+      };
+      const sources = [
+        sarInvoice({
+          ...base,
+          invoiceId: 100,
+          invoiceNumber: "001-001-01-00000100",
+        }),
+        sarInvoice({
+          ...base,
+          invoiceId: 101,
+          invoiceNumber: "001-001-01-00000101",
+        }),
+        sarInvoice({
+          ...base,
+          invoiceId: 102,
+          invoiceNumber: "001-001-01-00000102",
+          netPayable: "0.0000",
+        }),
+      ];
+      const originalSources = structuredClone(sources);
+      const fiscalBefore = buildDmcReportPayload(sources);
+      vi.spyOn(db, "listDmcReportSourceInvoices").mockResolvedValue(sources);
+      vi.spyOn(db, "listSystemReportPurchaseOrderLines").mockResolvedValue([]);
+      vi.spyOn(db, "getDb").mockResolvedValue({} as any);
+      vi.spyOn(treasury, "getTreasuryInvoiceReportPayments").mockResolvedValue(
+        new Map()
+      );
+      const settlements = vi
+        .spyOn(settlement, "getInvoiceSettlementMap")
+        .mockResolvedValue(
+          new Map([
+            [
+              100,
+              {
+                policy: "document_cents_v1",
+                amount: 43119.16,
+                originalNetPayable: 43119.165,
+                difference: -0.01,
+              },
+            ],
+            [
+              101,
+              {
+                policy: "legacy",
+                amount: 43119.17,
+                originalNetPayable: 43119.165,
+                difference: 0,
+              },
+            ],
+            [
+              102,
+              {
+                policy: "document_cents_v1",
+                amount: 0,
+                originalNetPayable: 0,
+                difference: 0,
+              },
+            ],
+          ])
+        );
+      const caller = appRouter.createCaller(createUserContext());
+      const payload = await caller.reports[endpoint]({
+        dateFrom: null,
+        dateTo: null,
+      });
+      const invoiceRows = (number: string) =>
+        payload.invoices.filter(row => row["Nro. Factura"] === number);
+      const officialRows = invoiceRows("001-001-01-00000100");
+      expect(officialRows).toHaveLength(3);
+      expect(
+        officialRows.every(
+          row =>
+            Number(row.Neto_Pagar) * 100 ===
+            Math.round(Number(row.Neto_Pagar) * 100)
+        )
+      ).toBe(true);
+      expect(
+        officialRows.reduce(
+          (sum, row) => sum + decimalToMinorUnits(Number(row.Neto_Pagar)),
+          0
+        )
+      ).toBe(4311916);
+      expect(
+        invoiceRows("001-001-01-00000101").map(row => row.Neto_Pagar)
+      ).toEqual(
+        buildSystemWorkbookPayload([sources[1]], []).invoices.map(
+          row => row.Neto_Pagar
+        )
+      );
+      expect(
+        invoiceRows("001-001-01-00000102").map(row => row.Neto_Pagar)
+      ).toEqual([0, 0, 0]);
+      expect(payload.summary.netPayable).toBe(86238.325);
+      expect(settlements).toHaveBeenCalledOnce();
+      expect(settlements).toHaveBeenCalledWith(
+        expect.anything(),
+        [100, 101, 102]
+      );
+      const fiscalAfter = await caller.reports.dmcPurchases({
+        dateFrom: null,
+        dateTo: null,
+        statusMode: "non_void",
+      });
+      expect(fiscalAfter.rows).toEqual(fiscalBefore.rows);
+      expect(fiscalAfter.totalsByCurrency).toEqual(
+        fiscalBefore.totalsByCurrency
+      );
+      expect(settlements).toHaveBeenCalledOnce();
+      expect(sources).toEqual(originalSources);
+    }
+  );
   it("builds each internal module report with its own filtered source", async () => {
     const invoiceSpy = vi
       .spyOn(db, "listDmcReportSourceInvoices")

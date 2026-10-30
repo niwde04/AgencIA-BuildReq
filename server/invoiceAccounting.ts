@@ -10,6 +10,7 @@ import { getDb } from "./db";
 import { listInvoicesPage, type InvoicePageFilters } from "./paginatedLists";
 import { getInvoiceAppliedAdvanceMap } from "./purchaseOrderAdvances";
 import { getTreasuryInvoiceReportPayments } from "./treasury";
+import { getInvoiceSettlementMap } from "./invoiceSettlement";
 import {
   invoiceAccountingBalance,
   summarizeInvoiceRetentions,
@@ -64,6 +65,7 @@ export async function listInvoiceAccountingQueue(filters: InvoicePageFilters) {
     database,
     ids
   );
+  const settlements = await getInvoiceSettlementMap(database, ids);
   const qualities = ids.length
     ? await database
         .select({
@@ -77,6 +79,11 @@ export async function listInvoiceAccountingQueue(filters: InvoicePageFilters) {
   return {
     ...page,
     items: page.items.map(({ invoice, project, supplier }) => {
+      const settlement = settlements.get(invoice.id);
+      const paymentNet =
+        settlement?.policy === "document_cents_v1"
+          ? settlement.amount
+          : Number(invoice.netPayable);
       const appliedAdvance = advances.get(invoice.id) ?? 0;
       const paid = (payments.get(invoice.id) ?? []).reduce(
         (sum, payment) => sum + payment.amount,
@@ -107,7 +114,9 @@ export async function listInvoiceAccountingQueue(filters: InvoicePageFilters) {
           Number(invoice.otherRetentionTotal)
         ),
         discount: Number(invoice.documentDiscountTotal),
-        net: Number(invoice.netPayable),
+        net: paymentNet,
+        originalNet: Number(invoice.netPayable),
+        settlementNet: settlement?.amount ?? Number(invoice.netPayable),
         appliedAdvance,
         contractualAmortization: amortizations.get(invoice.id) ?? 0,
         qualityRetention: Number(
@@ -116,7 +125,7 @@ export async function listInvoiceAccountingQueue(filters: InvoicePageFilters) {
           )?.amount ?? 0
         ),
         balance: invoiceAccountingBalance(
-          Number(invoice.netPayable),
+          paymentNet,
           appliedAdvance,
           paid
         ),
