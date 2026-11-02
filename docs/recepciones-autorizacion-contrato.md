@@ -10,7 +10,7 @@ La autorización contiene fecha límite, motivo, respaldo adjunto a la misma OC,
 
 1. Abrir la OC contractual emitida o recibida en Órdenes de Compra. En el bloque **Facturación posterior al contrato**, Administración Central puede crear la autorización.
 2. Adjuntar el respaldo o seleccionar un archivo existente de la misma OC, indicar motivo, vigencia, facturas adicionales e importe opcional. Usar cero facturas adicionales cuando basta habilitar nuevas fechas y todavía queda programación original disponible.
-3. Registrar la recepción con la fecha real de la factura. Recepciones muestra el vencimiento original y la autorización separados, junto al cupo y saldo disponibles. El importe final se vuelve a comprobar en el servidor.
+3. En Recepciones, completar la fecha real de la factura. Si requiere permiso, el motivo aparece también junto a **Registrar recepción**. Después de que Central guarde la autorización, pulsar **Consultar autorización** para cargarla sin volver a seleccionar la OC ni reiniciar los valores de las líneas. Registrar cuando cumpla fecha, cupo e importe; el servidor vuelve a comprobarlos.
 4. Para cerrar el permiso, revocarlo con motivo. El historial, respaldo y facturas ya recibidas se conservan. Antes de crear una autorización sucesora debe revocarse la anterior, incluso si ya venció.
 
 La fecha y el importe de una factura excepcional pueden corregirse dentro del alcance que la admitió, aun después de revocarlo para nuevas recepciones. Un trigger comprueba el saldo acumulado vigente bajo bloqueo de la OC. No se puede trasladar su vínculo OC/recepción ni reactivar una factura excepcional anulada. Una factura contractual ordinaria tampoco puede convertirse en posterior al vencimiento cambiando su fecha: requiere anular y registrar una recepción autorizada mediante el flujo correspondiente.
@@ -27,7 +27,7 @@ La fecha y el importe de una factura excepcional pueden corregirse dentro del al
 
 ## Activación y recuperación
 
-La migración es explícita y aditiva. Debe aplicarse en el entorno elegido antes de habilitar nuevas autorizaciones. Este trabajo prepara código, migración y commits locales; no aplica cambios a las bases remotas ni despliega la aplicación.
+La migración es explícita y aditiva. Debe aplicarse en cada entorno antes de habilitar nuevas autorizaciones. Se activó en Cloud de BuildReq el 02/11/2026; ver el registro de verificación al final. No hay activación automática de otros entornos ni autorizaciones individuales creadas por la migración.
 
 Con `DATABASE_URL` configurada para el entorno elegido, inspeccionar el destino y luego aplicar explícitamente:
 
@@ -36,7 +36,7 @@ pnpm db:migrate-purchase-order-billing --expect-host HOST --expect-database BASE
 pnpm db:migrate-purchase-order-billing --expect-host HOST --expect-database BASE --apply
 ```
 
-Sustituir `HOST` y `BASE` por los valores exactos del destino. El primer comando es de solo lectura; el segundo instala `drizzle/20261102120000_purchase_order_billing_authorizations.sql` en una transacción y verifica tablas, RLS y ausencia de grants al navegador. Las tablas pendientes mantienen el flujo original y la interfaz informa que falta activar la migración. No hay migración automática al arrancar.
+Sustituir `HOST` y `BASE` por los valores exactos del destino. En Supabase con pooler, comprobar además la referencia del proyecto en el usuario de conexión y las URL de la aplicación: host y base pueden compartirse entre proyectos. El primer comando es de solo lectura; el segundo instala `drizzle/20261102120000_purchase_order_billing_authorizations.sql` en una transacción y verifica tablas, RLS y ausencia de grants al navegador. Si faltan las tablas, el panel informa **La autorización de facturación aún no está disponible en este entorno** y no muestra el botón de autorizar. No hay migración automática al arrancar.
 
 Para deshabilitar una autorización se utiliza la revocación con motivo, conservando el historial y los documentos ya recibidos. Un rollback de aplicación conserva las tablas y datos de auditoría; no se deben borrar usos ni modificar facturas históricas para volver a la regla original.
 
@@ -52,3 +52,12 @@ Verificación ejecutada el 02/11/2026:
 - Prueba PostgreSQL de retenciones pendiente de demo, `enforces the document at commit`, aprobada mediante su runner desechable. Alineamiento de esquema previo: diez casos aprobados; detalle en [alineamiento-integridad-esquema.md](alineamiento-integridad-esquema.md).
 - Navegador con API simulada: 17 escenarios en 320, 390, 768 y 1440 px, roles, respaldo, alta/revocación, cupo cero, importe opcional y límites de recepción; sin errores JavaScript ni desbordes finales. Evidencia local fuera de Git: `output/receipt-billing/visual-review.json`.
 - Suite general final: 1.157 pruebas aprobadas, 207 omitidas y ocho fallos preexistentes. Los mismos ocho se reprodujeron sobre el main original `0d0473b`: tres expectativas sensibles a CRLF en migraciones, fecha de documento de proveedor, texto del PDF de asesor, firma del rechazo de Contabilidad y dos expectativas de ajustes documentales. No se modificaron esas funcionalidades ni sus pruebas para ocultar los fallos.
+
+### Activación en Cloud de BuildReq
+
+El 02/11/2026 se aplicó la migración versionada mediante el runner explícito, en una transacción con bloqueo de migración y tiempo máximo de espera de locks de diez segundos. Destino verificado: proyecto `ovaergjxbzrirmdwnwot`, base `postgres`, coincidente con la configuración de `buildreq.aibdev.com` y con la OC consultada. Las dos tablas no existían antes de la operación; el servicio devuelve ahora `ready: true`.
+
+- Verificación posterior a las 12:51, hora de Honduras: dos tablas con RLS, siete FK y cinco checks validados, índices y tres triggers habilitados. Tablas, secuencias y funciones privadas sin permisos para los roles del navegador; cuatro consultas reales con `SET LOCAL ROLE anon/authenticated` rechazadas con `42501`.
+- La OC `OC-017-00000233` conserva condiciones y estado, así como su factura registrada. La operación no creó autorizaciones individuales, facturas ni recepciones; al verificar, las tablas nuevas estaban vacías. Administración Central debe guardar cada permiso en la interfaz.
+- Antes de aplicar: 39 pruebas focalizadas y diez pruebas PostgreSQL locales aprobadas, incluida migración doble; base temporal eliminada y clúster local detenido. El servicio real de consulta confirma disponibilidad, historial vacío y ausencia de autorización para esa OC. `/health` respondió 200.
+- Evidencia operativa local, fuera de Git: `output/billing-activation/preflight.json`, `verification.json` y `service-readiness.json`. No se probó un alta de autorización ni de factura en producción.
