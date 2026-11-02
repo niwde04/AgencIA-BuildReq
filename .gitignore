@@ -103,6 +103,9 @@ jspm_packages/
 tmp/
 temp/
 .codex-dev/
+/.codex-worktrees/
+/.tmp/
+/output/
 
 # Database
 *.db

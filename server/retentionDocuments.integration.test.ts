@@ -1272,7 +1272,6 @@ suite(
       ).toEqual(original);
     });
     it("enforces the document at commit and denies direct browser database privileges", async () => {
-      await service.prepareInvoiceRetentionPrint(1, admin);
       await expect(
         client.query(
           'update invoices set status=\'registrada\', "accountedAt"=now(),"accountedById"=1 where id=1'
@@ -1282,6 +1281,19 @@ suite(
         (await client.query("select status from invoices where id=1")).rows[0]
           .status
       ).toBe("pendiente_contabilizar");
+      await service.prepareInvoiceRetentionPrint(1, admin);
+      await expect(
+        client.query(
+          'update invoices set status=\'registrada\', "accountedAt"=now(),"accountedById"=1 where id=1'
+        )
+      ).rejects.toThrow(/comprobante/);
+      expect(
+        (
+          await client.query(
+            'select snapshot->>\'accountedAt\' "accountedAt" from "retentionDocuments" where "invoiceId"=1'
+          )
+        ).rows[0].accountedAt
+      ).toBeNull();
       for (const role of ["anon", "authenticated"]) {
         const result = await client.query(
           `select has_table_privilege($1,'"retentionDocuments"','SELECT') allowed,has_table_privilege($1,'"retentionDocuments"','INSERT') writable`,

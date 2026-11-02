@@ -1,6 +1,6 @@
 # Conciliación por entorno y casos pendientes
 
-La corrección GEO no se ha aplicado. El programa detuvo la operación porque la evidencia de tres TES corresponde a Cloud, mientras SSH contiene solo dos. No se copiarán pagos entre bases ni se generará nuevamente el anticipo.
+GEO fue regularizado únicamente en Cloud el 30/09/2026 a las 19:51:21 UTC, después del despliegue confirmado por el usuario y de volver a validar los tres TES, deducciones, notas, reservas y calidad. SSH permanece sin regularizar porque contiene solo dos TES. No se copiaron pagos entre bases ni se generó nuevamente el anticipo.
 
 | Concepto actual | Cloud, L | SSH, L |
 |---|---:|---:|
@@ -10,11 +10,13 @@ La corrección GEO no se ha aplicado. El programa detuvo la operación porque la
 | TES-2026-000501, compensación | 130,490.39 | No existe |
 | Total cubierto y contabilizado | 1,163,051.75 | 1,032,561.36 |
 | Pendiente de cubrir | 0.00 | 130,490.39 |
-| Aplicación directa actual | 1,163,051.75 | 1,032,561.36 |
+| Aplicación directa actual | 0.00 | 1,032,561.36 |
+| Aplicación contractual actual | 515,343.12 | 0.00 |
+| Pendiente de amortizar | 647,708.63 | 0.00 |
 | Neto documental | 1,442,960.73 | 1,442,960.73 |
-| Saldo neto menos aplicación actual | 279,908.98 | 410,399.37 |
+| Disponible de factura | 1,442,960.73 | 410,399.37 |
 
-El resultado autorizado, cuando se instale la aplicación compatible en Cloud y se reconfirme la evidencia, es: por pagar de factura L1,442,960.73; anticipo por entregar L0.00; amortizado L515,343.12; pendiente de amortizar L647,708.63; calidad retenida L103,068.62. Este es el resultado previsto, no un saldo ya corregido en producción.
+Resultado comprobado en Cloud: por pagar de factura L1,442,960.73 (antes L279,908.98); anticipo por entregar L0.00; amortizado L515,343.12; pendiente de amortizar L647,708.63; calidad retenida L103,068.62. La factura, TES, deducciones y adjuntos permanecen intactos. Hay una sola aplicación contractual vinculada y un único evento de auditoría `contractual-geo-897-1953-v1`. Comparación de 16 tablas sin cambios fuera de los registros autorizados. Respaldo y evidencia: `output/contractual-advances/geo-cloud-20260930T195054Z/`.
 
 ## Otras facturas para revisión individual
 

@@ -1093,6 +1093,9 @@ export const purchaseOrderItems = pgTable(
   },
   table => ({
     purchaseOrderIdx: index("poi_purchase_order_idx").on(table.purchaseOrderId),
+    fixedAssetStatusIdx: index("poi_fixed_asset_status_idx").on(
+      table.fixedAssetStatus
+    ),
   })
 );
 
@@ -1371,6 +1374,12 @@ export const receipts = pgTable(
   },
   table => ({
     sourceIdx: index("rec_source_idx").on(table.sourceType, table.sourceId),
+    draftSourceIdx: index("rec_draft_source_idx").on(
+      table.sourceType,
+      table.sourceId,
+      table.projectId,
+      table.status
+    ),
     projectIdx: index("rec_project_idx").on(table.projectId),
     statusIdx: index("rec_status_idx").on(table.status),
     createdPageIdx: index("rec_created_page_idx").on(
@@ -2328,7 +2337,9 @@ export const warehouseExits = pgTable(
   {
     id: serial("id").primaryKey(),
     exitNumber: varchar("exitNumber", { length: 64 }).notNull().unique(),
-    projectId: integer("projectId").notNull(),
+    projectId: integer("projectId")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
     warehouseId: integer("warehouseId").references(() => warehouses.id, {
       onDelete: "set null",
     }),
@@ -2340,7 +2351,9 @@ export const warehouseExits = pgTable(
       }
     ),
     materialRequestId: integer("materialRequestId"),
-    createdById: integer("createdById").notNull(),
+    createdById: integer("createdById")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
     emittedById: integer("emittedById"),
     cancelledById: integer("cancelledById"),
     status: warehouseExitStatusEnum("status").default("borrador").notNull(),
@@ -2373,6 +2386,10 @@ export const warehouseExits = pgTable(
     ),
     statusIdx: index("we_status_idx").on(table.status),
     createdByIdx: index("we_created_by_idx").on(table.createdById),
+    createdPageIdx: index("we_created_page_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
   })
 );
 
@@ -2383,7 +2400,9 @@ export const warehouseExitItems = pgTable(
   "warehouseExitItems",
   {
     id: serial("id").primaryKey(),
-    warehouseExitId: integer("warehouseExitId").notNull(),
+    warehouseExitId: integer("warehouseExitId")
+      .notNull()
+      .references(() => warehouseExits.id, { onDelete: "cascade" }),
     warehouseId: integer("warehouseId").references(() => warehouses.id, {
       onDelete: "set null",
     }),
@@ -2441,9 +2460,15 @@ export const openingBalances = pgTable(
   {
     id: serial("id").primaryKey(),
     balanceNumber: varchar("balanceNumber", { length: 64 }).notNull().unique(),
-    projectId: integer("projectId").notNull(),
-    warehouseId: integer("warehouseId").notNull(),
-    createdById: integer("createdById").notNull(),
+    projectId: integer("projectId")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    warehouseId: integer("warehouseId")
+      .notNull()
+      .references(() => warehouses.id, { onDelete: "restrict" }),
+    createdById: integer("createdById")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
     openingDate: timestamp("openingDate").defaultNow().notNull(),
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -2471,7 +2496,9 @@ export const openingBalanceItems = pgTable(
   "openingBalanceItems",
   {
     id: serial("id").primaryKey(),
-    openingBalanceId: integer("openingBalanceId").notNull(),
+    openingBalanceId: integer("openingBalanceId")
+      .notNull()
+      .references(() => openingBalances.id, { onDelete: "cascade" }),
     projectId: integer("projectId").references(() => projects.id, {
       onDelete: "restrict",
     }),

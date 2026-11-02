@@ -38,6 +38,8 @@ El procedimiento bloquea la factura, usa su responsable original de contabilizac
 
 La imagen actual incluye el código de servidor pero no los scripts ni `tsconfig.json`. Para ejecutar este mantenimiento con `tsx`, copiar únicamente ese script a `/app/scripts/` y `tsconfig.json` a `/app/` desde el checkout del mismo commit desplegado. Ambos archivos quedan disponibles en Git para reproducir el procedimiento. La recuperación crea un borrador; conserva el flujo fiscal normal de revisión y contabilización.
 
+Ejecutado en SSH el 29 de septiembre de 2026 (Honduras), con el commit `532eebc`: se creó **NC-018-00000001**, ID 1, por **L 4,568.4000**, en borrador. La verificación confirmó su presencia en el listado autorizado y que factura, retenciones, pagos, anticipos y configuración permanecieron iguales al respaldo previo. Evidencia local: `output/retention-cutoff/`. Una reversión de código conserva este documento y sus relaciones; no requiere restaurar datos ni resetear consecutivos.
+
 ## Devoluciones
 
 `generateSupplierReturnCreditNote` bloquea la devolución, crea la NC, consume existencias y actualiza la devolución en una sola transacción. Usa `reverseLogisticsItems.sourceReceiptItemId` y los importes de su renglón de factura para proponer base/ISV proporcionales bajo NC-C01. Valida cantidades acumuladas devueltas.
