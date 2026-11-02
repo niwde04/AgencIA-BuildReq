@@ -1,5 +1,9 @@
 import { trpc } from "@/lib/trpc";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
+import {
+  buildFixedAssetsExportColumns,
+  collectFixedAssetsExport,
+} from "@/lib/fixed-assets-export";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { isProcurementApproverRole } from "@shared/buildreq-roles";
 import {
@@ -58,7 +62,7 @@ import {
   Save,
   Search,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 
@@ -297,6 +301,9 @@ export default function Articulos() {
   const [fixedAssetIsLeasingDraft, setFixedAssetIsLeasingDraft] =
     useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isExportingFixedAssets, setIsExportingFixedAssets] = useState(false);
+  const exportInProgressRef = useRef(false);
+  const isExportingAnyExcel = isExportingExcel || isExportingFixedAssets;
 
   const buildreqRole = (user as any)?.buildreqRole || "";
   const isProcurementApprover = isProcurementApproverRole(buildreqRole);
@@ -647,7 +654,9 @@ export default function Articulos() {
   };
 
   const exportArticlesExcel = async () => {
-    if (total === 0 || isExportingExcel) return;
+    if (total === 0 || exportInProgressRef.current) return;
+
+    exportInProgressRef.current = true;
 
     setIsExportingExcel(true);
     try {
@@ -779,9 +788,56 @@ export default function Articulos() {
     } catch {
       toast.error("No se pudo exportar el archivo Excel");
     } finally {
+      exportInProgressRef.current = false;
       setIsExportingExcel(false);
     }
   };
+
+  const fixedAssetExportTypeAllowed =
+    listInput.tipoArticulo === undefined || listInput.tipoArticulo === 3;
+  const fixedAssetExportFiltersPending =
+    search.trim() !== debouncedSearch || isFetching || isPlaceholderData;
+  const exportFixedAssetsExcel = async () => {
+    if (
+      exportInProgressRef.current ||
+      !fixedAssetExportTypeAllowed ||
+      fixedAssetExportFiltersPending ||
+      isLoading ||
+      error ||
+      total === 0
+    )
+      return;
+
+    exportInProgressRef.current = true;
+    setIsExportingFixedAssets(true);
+    try {
+      const rows = await collectFixedAssetsExport(
+        input => utils.articles.list.fetch(input),
+        listInput
+      );
+      if (rows.length === 0) {
+        toast.info(
+          "No hay activos fijos que coincidan con los filtros actuales"
+        );
+        return;
+      }
+      await downloadExcel(
+        buildDatedExcelFileName("activos-fijos-formato"),
+        "Formato",
+        buildFixedAssetsExportColumns(projectById),
+        rows
+      );
+      toast.success(
+        `Se exportaron ${rows.length.toLocaleString("es-HN")} activo(s) fijo(s)`
+      );
+    } catch {
+      toast.error("No se pudo exportar el Excel de activos fijos");
+    } finally {
+      exportInProgressRef.current = false;
+      setIsExportingFixedAssets(false);
+    }
+  };
+
 
   return (
     <div className="space-y-6">
@@ -806,12 +862,36 @@ export default function Articulos() {
             variant="outline"
             onClick={() => void exportArticlesExcel()}
             disabled={
-              isLoading || Boolean(error) || total === 0 || isExportingExcel
+              isLoading || Boolean(error) || total === 0 || isExportingAnyExcel
             }
             className="gap-2"
           >
             <Download className="h-4 w-4" />
             {isExportingExcel ? "Exportando..." : "Exportar Excel"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void exportFixedAssetsExcel()}
+            disabled={
+              isLoading ||
+              Boolean(error) ||
+              total === 0 ||
+              isExportingAnyExcel ||
+              !fixedAssetExportTypeAllowed ||
+              fixedAssetExportFiltersPending
+            }
+            title={
+              !fixedAssetExportTypeAllowed
+                ? "Selecciona Todos los tipos o Activo fijo para exportar activos fijos"
+                : "Exporta todos los activos fijos que coinciden con los filtros actuales"
+            }
+            className="gap-2"
+          >
+            <Download aria-hidden="true" className="h-4 w-4" />
+            {isExportingFixedAssets
+              ? "Exportando activos fijos..."
+              : "Exportar activos fijos"}
           </Button>
           {canCreate ? (
             <Button onClick={() => setCreateDialogOpen(true)} className="gap-2">
@@ -826,10 +906,10 @@ export default function Articulos() {
         className={
           isPendingFixedAssetsView
             ? "grid grid-cols-1 gap-3 md:grid-cols-[minmax(240px,1fr)_160px]"
-            : "grid grid-cols-1 gap-3 md:grid-cols-[minmax(240px,1fr)_180px_160px_190px_210px]"
+            : "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-[minmax(240px,1fr)_180px_160px_190px_210px]"
         }
       >
-        <div className="relative">
+        <div className={isPendingFixedAssetsView ? "relative" : "relative md:col-span-2 xl:col-span-4 2xl:col-span-1"}>
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder={
@@ -1116,14 +1196,14 @@ export default function Articulos() {
                 </table>
               </div>
 
-              <div className="flex flex-col gap-4 border-t border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-4 border-t border-border px-4 py-4 xl:flex-row xl:items-center xl:justify-between">
                 <p className="text-sm text-muted-foreground">
                   Mostrando {rangeStart.toLocaleString("es-HN")} a{" "}
                   {rangeEnd.toLocaleString("es-HN")} de{" "}
                   {total.toLocaleString("es-HN")} registros
                 </p>
-                <Pagination className="mx-0 w-auto justify-end">
-                  <PaginationContent>
+                <Pagination className="mx-0 min-w-0 w-full justify-start xl:w-auto xl:justify-end">
+                  <PaginationContent className="max-w-full flex-wrap justify-start xl:justify-end">
                     <PaginationItem>
                       <PaginationPrevious
                         href="#"
