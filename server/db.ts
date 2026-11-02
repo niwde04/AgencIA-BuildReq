@@ -3,6 +3,7 @@ import { enrollNewInvoiceSettlement, getInvoiceSettlementMap } from "./invoiceSe
 import { TRPCError } from "@trpc/server";
 import * as purchaseOrderBilling from "./purchaseOrderBilling";
 import { getContractBillingDecision } from "../shared/purchase-order-billing";
+import { getFixedAssetExportDescription } from "./fixedAssetExportDescriptions";
 import { createHash, randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { performance } from "node:perf_hooks";
@@ -23893,6 +23894,10 @@ export async function listArticles(filters?: ArticleListFilters) {
     .offset(offset);
   const items = rows.map(row => ({
     ...row.article,
+    fixedAssetExportDescription:
+      row.article.tipoArticulo === 3
+        ? getFixedAssetExportDescription(row.article)
+        : undefined,
     financialGroupDescription: row.financialGroupDescription,
     projectCode: row.projectCode,
     projectName: row.projectName,

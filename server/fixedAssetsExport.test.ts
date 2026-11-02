@@ -27,6 +27,34 @@ const asset: FixedAssetExportArticle = {
 };
 
 describe("fixed assets template export", () => {
+  it("uses the original asset description supplied by the server without appending its attributes", () => {
+    const workbook = buildWorkbook(XLSX, [
+      {
+        sheetName: "Formato",
+        columns: buildFixedAssetsExportColumns(projectById),
+        rows: [
+          {
+            ...asset,
+            description:
+              "APLICADOR BITUMEN HIERRO GENERICA TX50150 SERIE CHASIS 1113",
+            fixedAssetExportDescription: "APLICADOR BITUMEN HIERRO",
+            fixedAssetBrand: "GENERICA",
+            fixedAssetModel: "TX50150",
+            fixedAssetChassisSeries: "1113",
+          },
+        ],
+      },
+    ]);
+    const sheet = XLSX.read(
+      XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }),
+      { type: "buffer" }
+    ).Sheets.Formato;
+    expect(sheet.C2.v).toBe("APLICADOR BITUMEN HIERRO");
+    expect(sheet.D2.v).toBe("GENERICA");
+    expect(sheet.E2.v).toBe("TX50150");
+    expect(sheet.F2.v).toBe("1113");
+  });
+
   it("writes exactly the twelve template fields in order and preserves SAP codes and serials as text", () => {
     const workbook = buildWorkbook(XLSX, [
       {

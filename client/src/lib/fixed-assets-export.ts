@@ -15,6 +15,7 @@ export type FixedAssetExportArticle = ArticleProjectReference & {
   itemGroup?: string | null;
   itemCode: string;
   description: string;
+  fixedAssetExportDescription?: string | null;
   fixedAssetBrand?: string | null;
   fixedAssetModel?: string | null;
   fixedAssetChassisSeries?: string | null;
@@ -65,7 +66,7 @@ export function buildFixedAssetsExportColumns(
     { header: "Codigo SAP", value: row => row.itemCode, width: 23.57 },
     {
       header: "Descripcion del articulo",
-      value: row => row.description,
+      value: row => row.fixedAssetExportDescription ?? row.description,
       width: 45.57,
     },
     {

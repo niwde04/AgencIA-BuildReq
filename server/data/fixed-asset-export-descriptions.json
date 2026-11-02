@@ -1,0 +1,2315 @@
+{
+  "version": 1,
+  "metadata": {
+    "sourceBasename": "Articulos BuildReq Activos Fijos 06072026.xlsx",
+    "sheetName": "ARTICULOS",
+    "sourceSHA256": "1458d918df4a2e7b91f98cb040f76990fe35a7704b181fdbbfdbae17a9192412"
+  },
+  "records": [
+    {
+      "itemCode": "020100001",
+      "descriptionHash": "df0f4cd9aaaac14b8a409cd8e693da63df7bd6866d51931ceae220ab2c3b3e54",
+      "description": "APLICADOR BITUMEN HIERRO"
+    },
+    {
+      "itemCode": "020100002",
+      "descriptionHash": "d03d526824aec101bf91ce93dc5a675aec46f2ac74acf235cc443e5b12ab8f70",
+      "description": "BARREDORA"
+    },
+    {
+      "itemCode": "020100003",
+      "descriptionHash": "5825ca0aa276f9e306d7fd75439a0874dc467a7786e6cbbdd319e1bd22dbab72",
+      "description": "BARREDORA"
+    },
+    {
+      "itemCode": "020100004",
+      "descriptionHash": "da82f0cde5a490f113e40309f1768223474c9afa10e40a39ddaf85b3bb6fcc5f",
+      "description": "BARREDORA"
+    },
+    {
+      "itemCode": "020100005",
+      "descriptionHash": "04f8d676cd1e092db05f406185ea1020de6f1a038c9af11013f9b4e0cbb52a46",
+      "description": "BOMBA AGUA CENTRIFUGA"
+    },
+    {
+      "itemCode": "020100006",
+      "descriptionHash": "9a35cb32c36d27aa88339bb9f8d7a014de3841e62b564b6bf8813b2b776d48dd",
+      "description": "BOMBA SUMERGIBLE AGUA"
+    },
+    {
+      "itemCode": "020100007",
+      "descriptionHash": "7824449164e3c791cacbf25090ccd9af2b51858677c158ecd49798397b9b571b",
+      "description": "BOMBA TRANSFERENCIA BEARCAT"
+    },
+    {
+      "itemCode": "020100008",
+      "descriptionHash": "97e86608c4cdc7c8e1ca3eb10004d356acb3771990459fb01ba28de0913e5569",
+      "description": "BORRADORA PINTURA GRACO"
+    },
+    {
+      "itemCode": "020100009",
+      "descriptionHash": "0cf79a634af25e619b1750aa9c1420b8f23843882909be3064616593d1f50147",
+      "description": "BORRADORA PINTURA GRACO"
+    },
+    {
+      "itemCode": "020100010",
+      "descriptionHash": "8457afb36057dfb386a7102b15207565e067c8f9fdf250821ce8db64e91ccf16",
+      "description": "CALDERO"
+    },
+    {
+      "itemCode": "020100011",
+      "descriptionHash": "d123098588b4c4630571e6fc83fe57ba177bc8c3133f569fe3910c8b991cb6b4",
+      "description": "CALDERO"
+    },
+    {
+      "itemCode": "020100012",
+      "descriptionHash": "b29dcbbfa95efcdb20a5f163e7ad210dfcfbaf898576ae67f7f8dbfc302dc85e",
+      "description": "CALDERO"
+    },
+    {
+      "itemCode": "020100013",
+      "descriptionHash": "4392c99bf97aa8d27c1cceebf4b0bb2b433860bf8c360411f07144fadcb091a0",
+      "description": "CARRITO MODULAR T/LINEDRIVER160CC PORTATIL"
+    },
+    {
+      "itemCode": "020100014",
+      "descriptionHash": "1319faca2a6cdd469cf47360ba8b429c2b1ff4a8d84be10e4452d393d82d5077",
+      "description": "CHAPEADORA CORTACESPED"
+    },
+    {
+      "itemCode": "020100015",
+      "descriptionHash": "aa73bbdc7a9e41c7e1a9983aa21c7d51666ff6aa9107acbcfa627850d268df85",
+      "description": "CHAPEADORA CORTACESPED"
+    },
+    {
+      "itemCode": "020100016",
+      "descriptionHash": "cac2c7b4a7df69f0c6efb92209d939f751943d6946ba19f09412cbbf02741ff1",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100017",
+      "descriptionHash": "6f18dc06821f9ab1fb5228c8b4548eba8516261323e743e51381e14bcd788405",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100018",
+      "descriptionHash": "32b581dd890f85c272973e65df8fdb23b52c11bbfb2112314cca6b2c7468be9e",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100019",
+      "descriptionHash": "8617f232572e49c85f6752983b576db413890bf33b3ef6fc14770ee134fa92dc",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100020",
+      "descriptionHash": "65bba64c11fa705c29b4d5bd7a2941a765ea0912a719d99996535cdc3cd8b591",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100021",
+      "descriptionHash": "06259e589a8719d3d4c2ddea308380a6e5cf3078f9d328cdf43601fe470e8db5",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100022",
+      "descriptionHash": "01f092a64650305c55fe5ad79507751c99b2f14817e4700c0713632e8259266c",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100023",
+      "descriptionHash": "fa50c4f65f8e3c0489af15b2ed31e3236323b766c6542956b9614e2f3bafbc97",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100024",
+      "descriptionHash": "8ec25b1f75b07502fe6f26c84c00e03a2544286b13b8bceecf1fb085d232633d",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100025",
+      "descriptionHash": "86d39e48855c392502f014173db94e78e2bb62a583a860f1590c2377ae652739",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100026",
+      "descriptionHash": "ba3f54b049de4bbe5b7272e42d26698b82700243f0ad3591a873edaf3b7e07c1",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100027",
+      "descriptionHash": "03efda2f303f3369497b45f7f6d63d4a0ad23556634c3e718ac7e5cd21c89fb2",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100028",
+      "descriptionHash": "792127c26cb138238cc487268f7761b5ee889c2fc32c4b90c014d4ffad1b3133",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100029",
+      "descriptionHash": "8a7e4c84fc2362dac23088b89e34f6c4b26a6eb75e06d0afb070bd0c07837969",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100030",
+      "descriptionHash": "d99470428062f9f3cd6529faea37214280887c92d9b7df777835de526b85014d",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100031",
+      "descriptionHash": "e5ce41f4ca01593a736d10f29b4b469333068c110cc001774212aeaee443c0e3",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100032",
+      "descriptionHash": "b5ab873e584532a3ada4622cf5c9f9ca820009fa84ae8bbc7af8659a4721b8e9",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100033",
+      "descriptionHash": "7cd03b247573630db6ab7e9ed41090a266ac479e524e6d50648e29968a1d2017",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100034",
+      "descriptionHash": "82ac7a70fd5a359341890eaacafa5036548dcb3da1bd2ee8f406c7d298de3db3",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100035",
+      "descriptionHash": "ddea0c2709e3ce58a896c43f327db08ec0153c8e3b2aa6b38d9c4250525458a8",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100036",
+      "descriptionHash": "f6c75b083931d187022b887eb4a21d411edb9db60c1a7c5351891a0b792af0f4",
+      "description": "COMPACTADOR VIBRATORIO"
+    },
+    {
+      "itemCode": "020100037",
+      "descriptionHash": "72173630a07224043d3a72a95e07150f3b2ff01a9fcd91f72d5648f5ac8a560f",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100038",
+      "descriptionHash": "2a9f5399990bd9b169b5800dd02f28d20cd6d5012b8a5cdb00831e953723368b",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100039",
+      "descriptionHash": "101808fabdf32fe4d82a57c267f1cb2e72d862ab1c0ef8e2d161b63ab450837f",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100040",
+      "descriptionHash": "6a4cccbcf9bc2a8dc54b1456c5852d545a0a7a45dae89f04ffccb0f0ac348d2a",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100041",
+      "descriptionHash": "e6cf86d9ce5f717f5aa6450ecb3bd38057a9be1d424b60f001f5d956d020d592",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100042",
+      "descriptionHash": "6fda2a1ead41da602fb39a1ef83961223dac0f2369842fc123c6bc924a9e9164",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100043",
+      "descriptionHash": "f4177f776f9fe00d989c44fddd654bab21525a10eb1531f8acc6d924fca86f8b",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100044",
+      "descriptionHash": "900fabdb835a6f291bea8d64243c174cdda215bf05c370cb6df7b1d5860a5487",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100045",
+      "descriptionHash": "be40b41a04593b444e1ca2967f28289a3e0ad69e95f858736cb6f75f8d4cdfc0",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100046",
+      "descriptionHash": "53f36a1b995be2c08cfad4f3ea847378f9db39adbe1a85dab915e56682d5c5eb",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100047",
+      "descriptionHash": "8c230e9e487feb31043d0f4a91fc29a3dd5d7243531c6af7f237fe38dc94be50",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100048",
+      "descriptionHash": "9d6b210504037659fb08109ed85ec1c743dce6b2d64afb99351cbd2422918366",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100049",
+      "descriptionHash": "d0d761c0fc3dfa36bcde16629053072a326853976844cfa6605a240c508a3471",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100050",
+      "descriptionHash": "5669d0db70ebaa8287a510c01e7d15331f02e17bd78835a1830d0bba7b554174",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100051",
+      "descriptionHash": "5915d5b28296f4821c394bfa606d0d8cf1c46ba7996079c92b3592e8fa4bb145",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100052",
+      "descriptionHash": "18b9ed3698ec1f48206e53aec9033dd0c508f76f61d5b004e093db1de35e8fdc",
+      "description": "COMPRESOR"
+    },
+    {
+      "itemCode": "020100053",
+      "descriptionHash": "1513e5d5978388d03f90092ecb90ad2598ee0e9e624ce0646549222352769e64",
+      "description": "CONCRETERA 2 BOLSAS"
+    },
+    {
+      "itemCode": "020100054",
+      "descriptionHash": "6229ccf76b9e7dbd62b8d3b7d2dc295f098c45e29380fd926812b1fc39c68841",
+      "description": "CONCRETERA 2 BOLSAS"
+    },
+    {
+      "itemCode": "020100055",
+      "descriptionHash": "c4678af13643d0d4a9d7b7457a607e033874d0f2eafa7ba77752c249d171134f",
+      "description": "CONCRETERA 2 BOLSAS"
+    },
+    {
+      "itemCode": "020100056",
+      "descriptionHash": "9aeeb20202a78e53ceab78be829067780d1fe855641ec5671e281e40965b9206",
+      "description": "CONCRETERA 2 BOLSAS"
+    },
+    {
+      "itemCode": "020100057",
+      "descriptionHash": "c635b0aaf89c5dccaabe2dc714f719f8efc372817ac5e4c152a65070cdfe0ba4",
+      "description": "CONCRETERA 2 BOLSAS"
+    },
+    {
+      "itemCode": "020100058",
+      "descriptionHash": "b01880b1824048715bf899c083fd2dc02f832922839054db2f08af501fee81c7",
+      "description": "CONCRETERA 2 BOLSAS"
+    },
+    {
+      "itemCode": "020100059",
+      "descriptionHash": "5061042618176babecd81784b080df168acc7b62f2324a620f289ec81824e4db",
+      "description": "CONCRETERA 2 BOLSAS"
+    },
+    {
+      "itemCode": "020100060",
+      "descriptionHash": "3b4431d8fe463b1f92c8da6a8dfc1d0507fd447dea8856ae1843bbed62d15579",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100061",
+      "descriptionHash": "1a9e7d5035fc826a322e1e69705bb08d8249a322f01ddaa01c57d8cddbec0d8b",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100062",
+      "descriptionHash": "9b9c7cbbbe49ff8665835a9ec15622ed85570770fe48fe19d6800a8b0a50e27d",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100063",
+      "descriptionHash": "4998cead49a1001769df1c389a26d941ac478581c92d71069b60255af25ebc09",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100064",
+      "descriptionHash": "26fc71d4bcb2369576a6c6c742b9c4620e62aad7620209cf8303a3702fb4dfff",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100065",
+      "descriptionHash": "f99a78bfc7ae12bf4320a1144723f6fa0e23f4a29e47c5fb803a4f98640bfb95",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100066",
+      "descriptionHash": "ab014ebf91b0c1245d32305da4305256b03a5891f575dc258214fc053838b249",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100067",
+      "descriptionHash": "56594590f7691be757c2f9d00dd72598ea7ebf5eab2cfba8381aabe3b5a8250c",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100068",
+      "descriptionHash": "6cf65519356e93b34eb8940a8f4998c9247e7c2aa4ca2a80c55b0fe50baa3771",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100069",
+      "descriptionHash": "9bb70cc0cb42efdc8302ae7fb560de7207774036c74016afc8d58e291b3751b5",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100070",
+      "descriptionHash": "54cc610f47f926b53a6e56f4f4e69d59675cbcd97ef7daeb30b24293996b358e",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100071",
+      "descriptionHash": "d8c10a220909a7d7d1f9a46d86e9a86ad1f06bc585787ba08aec937fb1cb0b37",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100072",
+      "descriptionHash": "2f853f7c1d8453e0da2dc8137d7c144e0f0f2e97786a13d0d4b1ceb333fe1711",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100073",
+      "descriptionHash": "aa78ddb811ccf5a6055ce9f79fc872df5e2c44f5c4a48e1dd7be02093d5c24ad",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100074",
+      "descriptionHash": "42349d3c75adc0453f58fd96ccf7bfd8eadd60b332a811061256e5bbe3593b62",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100075",
+      "descriptionHash": "c0f8e3c27773e997854daeee76952d4ddf3146f19abb0917528dad43f38a6bff",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100076",
+      "descriptionHash": "d0f8bac25806674018cff8b881f88e6b574587796cfad1352080ff8b28494cec",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100077",
+      "descriptionHash": "26126a3b925b77a93566ac70d786ecce5386b282896d8c08c1bcd4fb820ec1d0",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100078",
+      "descriptionHash": "5e06fe9ef68ee07199c34e6f1723a8443fa91f4bb982f6b2772e4cff63371771",
+      "description": "CORTADORA CONCRETO"
+    },
+    {
+      "itemCode": "020100079",
+      "descriptionHash": "e52684937112fab3e676eb51c0d6b2a6cc92ee3e0422eec54e41219b15d96520",
+      "description": "ENFIADOR DE AGUA CHILLER 40 TON SOLO FRIO 440/3/60 R410A CARRIER 30RAP0406D-00100"
+    },
+    {
+      "itemCode": "020100080",
+      "descriptionHash": "8ae1b2f5e69853ed61a00404e3652be411769017e6db8f93c421c371a0cc7ec9",
+      "description": "ENFRIADOR DE AGUA"
+    },
+    {
+      "itemCode": "020100081",
+      "descriptionHash": "3788fe52cfb59d95da4dadf4b932cda22c1af6c67f7f4e2971b90a038382c860",
+      "description": "ENFRIADOR DE AGUA"
+    },
+    {
+      "itemCode": "020100082",
+      "descriptionHash": "5d1fe6b79431028c9d4be5ef1b046a359318dd6ea6315498fa01778c29fdec97",
+      "description": "ENFRIADOR DE AGUA"
+    },
+    {
+      "itemCode": "020100083",
+      "descriptionHash": "75b7a9225c56d3d0b11575adf725840cfee2897745a8aa1f706f41607313e83d",
+      "description": "ESCOBA MECANICA HIDRAULICA"
+    },
+    {
+      "itemCode": "020100084",
+      "descriptionHash": "459e5e1608679930f2858adeb8508a35057ad514ca3700fca1add4cb8c314892",
+      "description": "ESCOBA MECANICA HIDRAULICA"
+    },
+    {
+      "itemCode": "020100085",
+      "descriptionHash": "5821e770f8576ea0b85976ae22f502c9ed819b9b3a3db0390976ebda280137dc",
+      "description": "ESPARCIDOR DE ASFALTO MOVIL"
+    },
+    {
+      "itemCode": "020100086",
+      "descriptionHash": "fc6632afa4572332def5217feadf4fa4c9bc5797072300dd7babed8ceedc3db2",
+      "description": "FRANJADORA"
+    },
+    {
+      "itemCode": "020100087",
+      "descriptionHash": "d75b157b46c5d38d6fee39d2900bb654d39d29b70cab24db587c22fd7cfc3fde",
+      "description": "FRANJADORA"
+    },
+    {
+      "itemCode": "020100088",
+      "descriptionHash": "58f1087d53f45810f894e70de85abc569880ad3d85257571e165f0b4aa1620ca",
+      "description": "FRANJADORA"
+    },
+    {
+      "itemCode": "020100089",
+      "descriptionHash": "6aa2fe59da218fc1c2b3b23b348b07bbd68207880fbcc40a22595ac66c626bfa",
+      "description": "FRANJADORA"
+    },
+    {
+      "itemCode": "020100090",
+      "descriptionHash": "ac3f1e308465bfc112cd802d9e6367a0384a4a387950d213e89cb4bb409eaee5",
+      "description": "FRESADORA"
+    },
+    {
+      "itemCode": "020100091",
+      "descriptionHash": "17fa3df9ca3b9f3efe6343850c950c29982dd6f186ab713da0a8821795d1c638",
+      "description": "FRESADORA"
+    },
+    {
+      "itemCode": "020100092",
+      "descriptionHash": "ad9841aa5f10ca3fcccd1dfc8f16c2122ca9db71b0687205e026d423d61b785f",
+      "description": "FRESADORA"
+    },
+    {
+      "itemCode": "020100093",
+      "descriptionHash": "36c1d27a949454cc5a21a2bd45be32aabe848c6bc0abe58dc39d67b2845936da",
+      "description": "FRESADORA"
+    },
+    {
+      "itemCode": "020100094",
+      "descriptionHash": "21814543c4eaf9c124be7d852b4f416580739dd083d643cb1a28bb3faa57b5cf",
+      "description": "FRESADORA DE DOS CABEZALES"
+    },
+    {
+      "itemCode": "020100095",
+      "descriptionHash": "a7788f8423da5a73cb3aa4e6441566cb64a5f3a19e8fbce50942cfbc0e1902ca",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100096",
+      "descriptionHash": "da445d6e0fbb80ad2c8e6d37a63d762feeb4cc13b15eb5c34ecef7869c1ffa46",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100097",
+      "descriptionHash": "ec275b2caef50ba2c28ed9571c72e5e53d68d04ac580b91d62193825ee386688",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100098",
+      "descriptionHash": "a110151f1ca80e1a80325fb9dbd1809b02817381f01997171530a1c5f62c1a5b",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100099",
+      "descriptionHash": "c12dc0f78b9fdc77df734d256f149da8cc30200d530a7e341569dedd7d11f60e",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100100",
+      "descriptionHash": "62cc98170b701c0b50dece2dd43869cc8097e87667c175153a2326729abf0b77",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100101",
+      "descriptionHash": "789214c25a8893874e5cccf907d22645388b346fbcf3a64ed1ca4718c9d1b6ee",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100102",
+      "descriptionHash": "b150bf99b21c52f4aa63404ad967cd165c748fef33175cb9c70884ae2550925a",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100103",
+      "descriptionHash": "5b4b89098313b5a2574490cef6f8ca609972501bd3591963d4f946a91eddcbe2",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100104",
+      "descriptionHash": "2da8b3dc9388943f210edaeebea91f3535164ebc878fb28b0b237fd2e08a6c08",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100105",
+      "descriptionHash": "92cebe6418f6f04e02ba7fb50d5f4d8d59672ba71ec8b8de8136c9918bc375fc",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100106",
+      "descriptionHash": "a41b683554abd9596885d440f90d9801c2276c2296a79c7d6682a7000a9a0b2f",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100107",
+      "descriptionHash": "8185ed5813dc1d4a4dfdc92746b27d9b6bda62b11250c071f1e0da260b9a3318",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100108",
+      "descriptionHash": "f05984c8566a21635d429c390152dd4d255b563d41af737fed0f174bfe25c67f",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100109",
+      "descriptionHash": "c31864ba1fadad2111050c0caff4f9dd5405352b9be330e54b13e99aa4f80e91",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100110",
+      "descriptionHash": "e6bf150e3272277b565ae46cff9f3c0832cc831c33e95de5ace2bffdf9d31b41",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100111",
+      "descriptionHash": "755ee8a4cedf30bc697fa8b3d73bf879ba0559660e5b440f8cd72ad8623148f8",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100112",
+      "descriptionHash": "03a5861554be6927ff56e96d04e006ab3a4974a46beeec04cd2fef5664637f6e",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100113",
+      "descriptionHash": "59dae92a79e9bdd88de3836da4c7af9745284dbc97dee60ea387b8bef7e986ea",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100114",
+      "descriptionHash": "18eaa7c59de07614659b4113edaaa546e7af74c728b6ecc87021d646da0881c7",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100115",
+      "descriptionHash": "74dd40e2fb96f23ae7a4cd8dfe70d2ed1ac0e97ae9b585dc553d67a6b848e218",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100116",
+      "descriptionHash": "13976f0b7d2db638354c4433a6bae21051c50f72f4d24f1988bc048d9444c9bb",
+      "description": "GENERADOR ELECTRICO PORTATIL"
+    },
+    {
+      "itemCode": "020100117",
+      "descriptionHash": "24a07778e03bb1726c20e76dc1129bf3efbb5479e34cf8a7c74d714a346f253b",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100118",
+      "descriptionHash": "c0ffa01a523e7006f28ad0d9b38dfd0f2525b5ccacc810cede61bec34b4360ff",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100119",
+      "descriptionHash": "0b58db5338c2fd830f59029a91b8759765f8f7ea2beb5843085b35f71031373b",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100120",
+      "descriptionHash": "971f9c59dab3aa1d5be3a22bc52fd0bca0b479986ec20076895631e331a5d274",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100121",
+      "descriptionHash": "daedcbdb5939fd4c578fe535906667f4eb19717c2ff0663a21dde97b8fe5f2bb",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100122",
+      "descriptionHash": "aa216aac9e60e362b44488a99640aea61ce938cc4aa24afed7e56746ce9cd0d8",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100123",
+      "descriptionHash": "2f01964caadb3536f2555dcd5c8446da87f676521bb39e024bf129766fc1bd52",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100124",
+      "descriptionHash": "142926b2a1344c435b17fdb95e305838d5b9c922a0c964dd16f3f1788f13ec7c",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100125",
+      "descriptionHash": "d4f3f84873a80faddd8c9858503e96a1eb096f30013e70ae36cd602acf5b1983",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100126",
+      "descriptionHash": "abdacc74cd97d808eaaa29d43157a5989a688e2d2dfd5fb540ae268a2d47c81e",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100127",
+      "descriptionHash": "cc3291c5c5e562394bb63ba426e1c7f237c8dc50a5c4a1cd518633f004a0cede",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100128",
+      "descriptionHash": "90ac24bcebbb21269fa719ea584569640a1671e9b7e9a25ca38182440624a2f0",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100129",
+      "descriptionHash": "0fa958c35837a2446d27c0a4a727442e7218b31ad816557221642f3b67fe6c93",
+      "description": "MARTILLO HIDRAULICO"
+    },
+    {
+      "itemCode": "020100130",
+      "descriptionHash": "f2d0dc1c88bbcb0b6297d32ecb65e8436359990949763becd9a146273fa6749a",
+      "description": "MOTOBOMBA"
+    },
+    {
+      "itemCode": "020100131",
+      "descriptionHash": "19bcbdbf939c179094eddc26b54626e09676cccc5447f037dbe3d27cdd806984",
+      "description": "PANTALLA"
+    },
+    {
+      "itemCode": "020100132",
+      "descriptionHash": "083a8d675f1086fa8ae8b7e85bf498e4b514cddf887b9d4acacb42839f874ed7",
+      "description": "PANTALLA"
+    },
+    {
+      "itemCode": "020100133",
+      "descriptionHash": "58fb054429dffd2e4154ae8210704f71f29c781617804ac641f5ffd9eb92496c",
+      "description": "PANTALLA"
+    },
+    {
+      "itemCode": "020100134",
+      "descriptionHash": "0f8a8f1673e0463720ef8abb76b7ae035da7880bc4c39cea194d36ea29e821ad",
+      "description": "PANTALLA"
+    },
+    {
+      "itemCode": "020100135",
+      "descriptionHash": "6f76c8fd5f038ed8a001769367a8a0f906eb90aed72cf17e956613626cac23fc",
+      "description": "PANTALLA"
+    },
+    {
+      "itemCode": "020100136",
+      "descriptionHash": "a6eefdc8fbce63bc20d56ed7ac87527c5c95545746d61e0b913e0ba26d5cf0c8",
+      "description": "PANTALLA"
+    },
+    {
+      "itemCode": "020100137",
+      "descriptionHash": "4b524235014a48460e7351cbef689e45532e62af6b1aa3f9bccaca330ed73896",
+      "description": "REGLA VIBRATORIA"
+    },
+    {
+      "itemCode": "020100138",
+      "descriptionHash": "e495f41ad7c71fc1f428abe9fd8c2dc1b223066e71ad3af1908a828967f20930",
+      "description": "REGLA VIBRATORIA"
+    },
+    {
+      "itemCode": "020100139",
+      "descriptionHash": "0020fe9257525e1326139462e9dad770f5ef90f56b1d70433c14c0a352db2d54",
+      "description": "REGLA VIBRATORIA"
+    },
+    {
+      "itemCode": "020100140",
+      "descriptionHash": "91ffc3f91f40579a0554daa2b19e718f1b5996b430c49b33ccb5897e5f9a648c",
+      "description": "RODILLO HIDRAULICO PARA MINICARGADORA"
+    },
+    {
+      "itemCode": "020100141",
+      "descriptionHash": "5a39f8bae1be17211e3a48b06c2f757c198df480f8f6a56cad83a2d80d8c1eeb",
+      "description": "RODILLO MANUAL"
+    },
+    {
+      "itemCode": "020100142",
+      "descriptionHash": "90987c8ca88f64732c89e7111646750bf7910d2f81b725eb966f7c359cc8e062",
+      "description": "RODILLO MANUAL"
+    },
+    {
+      "itemCode": "020100143",
+      "descriptionHash": "2f3f56111f3d307634281a5b65f3dc066433d16c7cdc1bbfd755ec9a72dae123",
+      "description": "RODILLO VIBRATORIO DOBLE TAMBOR"
+    },
+    {
+      "itemCode": "020100144",
+      "descriptionHash": "62a5e778a6a5870efec3ccd02144fd2c044deb18f6483fc31d39859dbe455fdd",
+      "description": "RODILLO VIBRATORIO DOBLE TAMBOR"
+    },
+    {
+      "itemCode": "020100145",
+      "descriptionHash": "7422afbd5ac1708d1ae6eab1857c98d96fe9a2b26cd1383a643d6683036ce567",
+      "description": "SELLADORA DE GRIETAS"
+    },
+    {
+      "itemCode": "020100146",
+      "descriptionHash": "a68ccce42ecb4227b3022551665d35e48c7403e4e9dd0a6c85960c5621d7c77f",
+      "description": "SELLADORA DE GRIETAS"
+    },
+    {
+      "itemCode": "020100147",
+      "descriptionHash": "68fa3c2146206e8d32997bd494b75b15d7afd1fcd8279f79c2c87640cb551eed",
+      "description": "SELLADORA DE GRIETAS"
+    },
+    {
+      "itemCode": "020100148",
+      "descriptionHash": "7784926f6a39c329cd414d49a2047bc82094e4a72b9ee9fc2d65ed2d5b3b771d",
+      "description": "SOLDADORA ELECTRICA"
+    },
+    {
+      "itemCode": "020100149",
+      "descriptionHash": "f116c4b531a5339353b2c48cc3bc4d1e62be7ab08a4f079b253fcdab0e3c442d",
+      "description": "SOLDADORA ELECTRICA"
+    },
+    {
+      "itemCode": "020100150",
+      "descriptionHash": "fdd5c103c1ef238a97e1068230c287207694ac1828cb66a392534685084d763a",
+      "description": "SOLDADORA ELECTRICA"
+    },
+    {
+      "itemCode": "020100151",
+      "descriptionHash": "58597960112b772f77000e16ac04cc7b4a1de973d4504186c3456f4f8b72920f",
+      "description": "SOLDADORA ELECTRICA"
+    },
+    {
+      "itemCode": "020100152",
+      "descriptionHash": "4f4b3174f2fc6a1c718aebb2c1b00ad1fb81b1914f10b59f0bf18f0a2584b607",
+      "description": "SOLDADORA ELECTRICA"
+    },
+    {
+      "itemCode": "020100153",
+      "descriptionHash": "fde61c00e1f1fa3bcdea686f1b09bec5537811781a3b322c214c26732686acb1",
+      "description": "SOLDADORA MOTOR"
+    },
+    {
+      "itemCode": "020100154",
+      "descriptionHash": "0c5cc7d56c351777c1e5a7006d89202866c7053ed72f65bea7ccec9df1d21f8f",
+      "description": "SOLDADORA MOTOR"
+    },
+    {
+      "itemCode": "020100155",
+      "descriptionHash": "44bc7dc5a21d4d6c78632c4d6509d905cad8882450367876699b27432ad29aec",
+      "description": "SOLDADORA MOTOR"
+    },
+    {
+      "itemCode": "020100156",
+      "descriptionHash": "5f66c1836040fca2b347f2800c0d9bf62170c999a5b6ccae0a1db688a4468d69",
+      "description": "SOLDADORA MOTOR"
+    },
+    {
+      "itemCode": "020100157",
+      "descriptionHash": "d1f59fcdae67509b9da286df7fa06672695103c51b2530b2d5a2591d0a1ca728",
+      "description": "SOLDADORA MOTOR"
+    },
+    {
+      "itemCode": "020100158",
+      "descriptionHash": "7ddaefc9fd08efb29c1a2ebf752f73545c055405dbf0d5571666af7edf8336d0",
+      "description": "SOLDADORA MOTOR"
+    },
+    {
+      "itemCode": "020100159",
+      "descriptionHash": "f6ee3f152f15547c356f51f53c8d8ebdf6cbd027379ef209f78addd32ca0d364",
+      "description": "SOLDADORA MOTOR"
+    },
+    {
+      "itemCode": "020100160",
+      "descriptionHash": "af1704483fb5c654f3afe5a2b39e104e44800ae97f916e0ffefda0ff0b64ea09",
+      "description": "SOLDADORA MOTOR"
+    },
+    {
+      "itemCode": "020100161",
+      "descriptionHash": "cb20378ef1a4d6fc8e1045bd00d0b4d2610bbe2c499f20cc0f9e39392ef437e3",
+      "description": "SOLDADORA MOTOR"
+    },
+    {
+      "itemCode": "020100162",
+      "descriptionHash": "0eb5413185189ed02028370390bf0558a16786d66f869e44a2ab43a9a509cdf7",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100163",
+      "descriptionHash": "38dd73ea0bf65592177da155ea1b19a3669aad40428d1d707757b640ac66fbf3",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100164",
+      "descriptionHash": "715958f3539d5e1205e8b126146d43810dee6c80dfdf0af91d23e75d6cc459ab",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100165",
+      "descriptionHash": "34e4145597ee0c51cc152b131f7067170a961eb5baa1418e1fae2df136177fce",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100166",
+      "descriptionHash": "4cce49866695adcca88c9f4e75e45f227415bc4a0cdf8deccfb21265556bfcb6",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100167",
+      "descriptionHash": "347de468020a67dceb1fd74c4b52caed4b3abcd86e438a2b880f623f320c0561",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100168",
+      "descriptionHash": "c66fc5272ff22f7393146474a2c0a619e10ef35ef15adb701781964fa7099b1e",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100169",
+      "descriptionHash": "a3faf29faf687e7d29b7bba2f7f97a51ad9ce02a5fbbe4182a8eaca38c92db70",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100170",
+      "descriptionHash": "74bd3754a7c8defef681c9aa13481caa56fb084fc097b7d4dd6864a5abc1f6b5",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100171",
+      "descriptionHash": "5f303377662ae1df8daa82ee930f63dc4a4c70687f6e065759422fd713e44d15",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100172",
+      "descriptionHash": "1d702b779da28480b62b0218bd86d9fde4c1710d0a655af3dbd41871431d144f",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100173",
+      "descriptionHash": "27b0bf57de2b1d5d0ec3a5be17b8bb4cfb9be617c3f72269a6ba7cd19bc2027e",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100174",
+      "descriptionHash": "99db810bbbe5fc1a2907b71d45f76a2aa3f00a3faa039fd9b1a73fc57ca6d314",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100175",
+      "descriptionHash": "c9b95b015007fc270410b4072a3412e8faecfac2632c12d1f50652869d6be83e",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100176",
+      "descriptionHash": "b42a1c6d10f242c73a5e966965b515d9d3b82174d0798ad67153a6c0f69e4ce9",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100177",
+      "descriptionHash": "a48deb275b92ab53c688a98bd5c6b7eb0f9176b70d5d71bb6b49e0ac7c2c602b",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100178",
+      "descriptionHash": "f3ca4f7cabb332279293f0b13a3af83940d63742dca824e6b65f1196d34c1ccd",
+      "description": "TORRE ILUMINACION"
+    },
+    {
+      "itemCode": "020100179",
+      "descriptionHash": "1e584fc91745ae8a66b6f147659468a7f9bc5a1338fe7f52ffab67e619171723",
+      "description": "TRITURADORA DE RESIDUOS"
+    },
+    {
+      "itemCode": "020100180",
+      "descriptionHash": "35d873a2912ce02b7f65487fc986fabe60fcdc1bce720478b7f4e251dc5adca5",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100181",
+      "descriptionHash": "f921e969fd753a6e9390f4e6db7701b55de1170d76a93f91cca5fd0c18f72944",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100182",
+      "descriptionHash": "cf513c855d6e0ab95af91683ee6134615fc47cb20cde1c35a24d4615014f856b",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100183",
+      "descriptionHash": "9d0e0cbcf51976017ee03f46be52eabd779f3fde9c6a5a45ca4432c29db1b54d",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100184",
+      "descriptionHash": "8e712856b8bb358eaea255762e1e4d80e601abc04117b4a2e0c0ce36df5a650e",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100185",
+      "descriptionHash": "6b9a61aa85d709cec7ebc939eb0fbca19378fc08434ffdc8778c90929617c778",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100186",
+      "descriptionHash": "6d32837d88b8741ee776c133733d57b8fa12e944f0d9386af3bc076d0af150e3",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100187",
+      "descriptionHash": "0eec4c3959415e1c4ae45f03e5e6403e943ee7defbd3c0683ca5bc7bb8bac49b",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100188",
+      "descriptionHash": "a499f7a2a0ea15fb4322df296d6c45eb4a07c051f0e931f335f177238893d3b1",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100189",
+      "descriptionHash": "766b96329b8c5fc904dc723f94a97a304fdee465fff6aeac892111fbea16aaa3",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100190",
+      "descriptionHash": "7bd469add8babb3522319216a407aff60e3bd43bdf1301ca37ff31727cb08a85",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100191",
+      "descriptionHash": "0024fa082899a5ca635dc85f95db7277aadcacbaed2ee56f6cfce1f116f86538",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100192",
+      "descriptionHash": "eabfcfd9bfe92b10e630434f55262249f5313d8e6779ff7332eb999996468ffd",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100193",
+      "descriptionHash": "ddc6a186d5823f28bf4c370d1f9056e2b4cce55afeab3aab101595e09f54ef08",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100194",
+      "descriptionHash": "9743eb82bfc0b090002097bf564f056926cf583cda060674a53c9f192dc80d3e",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100195",
+      "descriptionHash": "5499bb3ba41aa7a74c098d43b5ca5311ae8034b3ecd492f0ef2a17cab82989ab",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100196",
+      "descriptionHash": "37395eaf7c0378b8e7165a5ac230b2c6b8b98c80f1a79ec5273b636df114e3b3",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100197",
+      "descriptionHash": "d0216c5f059ad7a284da072b3a4cdb01e48056ce440e84e92e99a23818907363",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100198",
+      "descriptionHash": "7f7c17ea7bf8cea8f62c868e7beddc60ece9c5ce7315524c8b4869c36df7543b",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100199",
+      "descriptionHash": "e093f602dc3385f53d785288851f1bd3eabf1ccf1a4fb24ebb2eeac58a4b2e38",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100200",
+      "descriptionHash": "7256384a2d646ab597cd71f83a6010c1e61ae6c07f0d132de9be6ec5c64ff333",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100201",
+      "descriptionHash": "b724a2ca64a4a97e53938e2fbd3a44692fb06d033562cc66a5120f065f6469d9",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100202",
+      "descriptionHash": "23029effab0d5fc58285815f16246d8ec7a4647eed221cf3186dd65ef2816b8a",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100203",
+      "descriptionHash": "da74d7225a67dc69c6b2320d23e36e921700648f34d2e10d00ac37c4ed3b321a",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100204",
+      "descriptionHash": "0bb8346a482166b66b6cbc664cb134325d3a7b53044e964e1297001c7b93aa0a",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "020100205",
+      "descriptionHash": "0aaac8be8e74a92d261213889a6abac9b9a650879080be32f331b346034e04a9",
+      "description": "VIBRADOR CONCRETO"
+    },
+    {
+      "itemCode": "070100001",
+      "descriptionHash": "dbf55550a545676b561f2da0671054ef0285ffdf93180d7cacc6f635da594a13",
+      "description": "TRACTOR AGRICOLA"
+    },
+    {
+      "itemCode": "070100002",
+      "descriptionHash": "55327e03ec1a0bf74abdcdaf32995b85095af9c964899f3b0ca8403f25cebd40",
+      "description": "TRACTOR AGRICOLA"
+    },
+    {
+      "itemCode": "070200001",
+      "descriptionHash": "3267bfef2072c44ce5a4b60abb588fd6fc80d2dc0015396b31195d9458dbef45",
+      "description": "ZARANDA VIBRATORIA TRIO INCLINED SCREEN 25HP"
+    },
+    {
+      "itemCode": "070200002",
+      "descriptionHash": "0ee91c86bffef930db72c1d7d75f9e52e4d13daf934024493d61f9e878d52bb9",
+      "description": "ZARANDA VIBRATORIA TRIO INCLINED SCREEN 25HP"
+    },
+    {
+      "itemCode": "070200003",
+      "descriptionHash": "18ab4b7b0ead6f2c789bda80747266fd209ba7ef53276ccf0c9dec3b9867f923",
+      "description": "TRITURADORA TERCIARIA"
+    },
+    {
+      "itemCode": "070200004",
+      "descriptionHash": "fc8989de62b5991e1286d54c7c42a8269fa5696ba4ec416a10490afda2857155",
+      "description": "TRITURADORA SECUNDARIA"
+    },
+    {
+      "itemCode": "070200005",
+      "descriptionHash": "36098e248c3ef59a37489a95af851a10fd6a1cdccafb44249b804911b41dbf18",
+      "description": "TRITURADORA SECUNDARIA"
+    },
+    {
+      "itemCode": "070200006",
+      "descriptionHash": "8093748b15fb6d6df0e48e74c38ebfbcea75b3200a5b8eb9d657d76c6ab48656",
+      "description": "TRITURADORA SECUNDARIA"
+    },
+    {
+      "itemCode": "070200007",
+      "descriptionHash": "9b206613efbbe737f4d16c8b141369ebfccefe702bf1408b3a8f061774c0d4a4",
+      "description": "TRITURADORA PRIMARIA"
+    },
+    {
+      "itemCode": "070200008",
+      "descriptionHash": "2ecf5edb4f9b68438d0dcdaa237f1ba6bb52abc8819e07f3772c29bafed429c0",
+      "description": "TRITURADORA PRIMARIA"
+    },
+    {
+      "itemCode": "070200009",
+      "descriptionHash": "25db4cd0be08f9c50cf301e285123de7efd4e7c33abccbc3dfc6476600a24bb5",
+      "description": "TRACTOR"
+    },
+    {
+      "itemCode": "070200010",
+      "descriptionHash": "abfc17c91c04bbb7a7d96068149d93d96b4f41bfb659a81435095cdb566466ed",
+      "description": "TRACTOR"
+    },
+    {
+      "itemCode": "070200011",
+      "descriptionHash": "bb56668ed80f144a602a65813b52d38c7f734fac9ad915981a11bd1b71193991",
+      "description": "TRACTOR"
+    },
+    {
+      "itemCode": "070200012",
+      "descriptionHash": "6610795d5caeee615cef2d63b83e6548cd5ad95f5f91f142433b4f8d21658f23",
+      "description": "RODILLO TANDEM DOBLE BOLA"
+    },
+    {
+      "itemCode": "070200013",
+      "descriptionHash": "108c106cb4170ee35d349082c7523d04f6dd368f1f533dd7e2476963b0216eb7",
+      "description": "RODILLO TANDEM DOBLE BOLA"
+    },
+    {
+      "itemCode": "070200014",
+      "descriptionHash": "e9ba8263a554f28fff3039e865ce1f474ca54e669279be7e2e207d17ea1fa5e3",
+      "description": "RODILLO NEUMATICO"
+    },
+    {
+      "itemCode": "070200015",
+      "descriptionHash": "fede06ce7fc4028d1fb4ffbb349a8863ef250e00e637a7bbc0ad0f8d4833617c",
+      "description": "RODILLO NEUMATICO"
+    },
+    {
+      "itemCode": "070200016",
+      "descriptionHash": "6c32ed007efdd29a6f0617ac9fc5e314c955644199277337c3f10a922423b479",
+      "description": "RODILLO NEUMATICO"
+    },
+    {
+      "itemCode": "070200017",
+      "descriptionHash": "550d7d515d5575f056613be3b2a2a0959c5aebc2c80188cd48330d7294dfbf12",
+      "description": "RODILLO MIXTO"
+    },
+    {
+      "itemCode": "070200018",
+      "descriptionHash": "7f2ec0cbc4646d821a12599fd028c44454c0ecac1e2253ea47b98f395862b34c",
+      "description": "RODILLO MIXTO"
+    },
+    {
+      "itemCode": "070200019",
+      "descriptionHash": "f4d8e224a1afa8cb594b7dd2e3209611b83e7b281e7ff4019f896891bc9f798b",
+      "description": "RODILLO MIXTO"
+    },
+    {
+      "itemCode": "070200020",
+      "descriptionHash": "144015de3b4d7828ed10dc80f9bd84f181de01f4071da6671d1ff26df0ef9f03",
+      "description": "RODILLO MIXTO"
+    },
+    {
+      "itemCode": "070200021",
+      "descriptionHash": "41086a600c649cb3ef16353bab6514c5cddf72d0e6904b0705b8a1532e6be70c",
+      "description": "RODILLO MIXTO"
+    },
+    {
+      "itemCode": "070200022",
+      "descriptionHash": "a58a9f438f3f3e310ec6ea3b18b3d7005c98b55d616b9b388022d6024f38f355",
+      "description": "RODILLO MIXTO"
+    },
+    {
+      "itemCode": "070200023",
+      "descriptionHash": "95e8eddf737fa9a6dfd6027171adee305676b7553081c4dbfcdb6175de69de2e",
+      "description": "RODILLO MIXTO"
+    },
+    {
+      "itemCode": "070200024",
+      "descriptionHash": "ea43a816250794a2964cc69706c26abcd0da80cbf1458cb389407427828fe06c",
+      "description": "RODILLO MIXTO"
+    },
+    {
+      "itemCode": "070200025",
+      "descriptionHash": "5298cd3d4be52ffa88407ba957ced9050fff856850acf2134073ddee43172446",
+      "description": "RODILLO MIXTO"
+    },
+    {
+      "itemCode": "070200026",
+      "descriptionHash": "a3b8189a31933f81aafafde66d78389722dd0a402df710faf8ebeac248be6538",
+      "description": "RODILLO MIXTO"
+    },
+    {
+      "itemCode": "070200027",
+      "descriptionHash": "e14a0539baf7967cb25f8358d42a796b00861d3fddb43ba1780c2456c9e3c181",
+      "description": "RODILLO MIXTO"
+    },
+    {
+      "itemCode": "070200028",
+      "descriptionHash": "0395af613562c07e6fd861bf67381b990ea7e28ab95679f6bdf1c604b949b34a",
+      "description": "RETROEXCAVADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200029",
+      "descriptionHash": "d0f99107769e8010fd47bd0cc00b42ebee1d3a186688ff5eb028fc7c1bd24ba8",
+      "description": "RETROEXCAVADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200030",
+      "descriptionHash": "3d1c226de3c53affe3a7caec9369e76626e85082a80967bbcc0f8e2c19ace861",
+      "description": "RETROEXCAVADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200031",
+      "descriptionHash": "a947db38627b3c7be4abb5c5a0d1d640846bae22eef84612550f0f1d47b45a34",
+      "description": "RETROEXCAVADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200032",
+      "descriptionHash": "9102a0c2ea435c1bdfb31bf819903d47edc3bcf85e80d3e8a793745d4de127a3",
+      "description": "RETROEXCAVADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200033",
+      "descriptionHash": "c141b3645ba54497fda233c7002ce844d0eb488aa2ac0459dc0d2b0a67221d08",
+      "description": "RETROEXCAVADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200034",
+      "descriptionHash": "3150851ebf9ff1c3ebd6760d2ffeed1cc736f78563d398e833163ed15020c229",
+      "description": "RETROEXCAVADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200035",
+      "descriptionHash": "6ce2fc205eadbb3fd2a8ae2aac2105449071c1ad931df58e36d79bda9ef6c662",
+      "description": "RECICLADORA DE SUELOS"
+    },
+    {
+      "itemCode": "070200036",
+      "descriptionHash": "cbdfc5412ea688be49255eee5e1c12b8968b865e14315ea33b70bf9ec4db3c7c",
+      "description": "RECICLADORA DE SUELOS"
+    },
+    {
+      "itemCode": "070200037",
+      "descriptionHash": "c82d937cbeaaee41af22710698105db72c972b0610b37899ca5c8b2fd2b38cf0",
+      "description": "PLANTA HORMIGON"
+    },
+    {
+      "itemCode": "070200038",
+      "descriptionHash": "363a2ce2b31cbf20e09a1ed09c770b1dee14e66dd7333ad8209b4415f3ce2d91",
+      "description": "PLANTA HORMIGON"
+    },
+    {
+      "itemCode": "070200039",
+      "descriptionHash": "1a1545326504c13e362a2973b0bdc565b41baeeaa629f58a74fbfd90afe37a6f",
+      "description": "PLANTA HORMIGON"
+    },
+    {
+      "itemCode": "070200040",
+      "descriptionHash": "1545e23d052a103d4d03ad381c51d8a9ad3df558bde25af42cc96549381fe6a6",
+      "description": "PLANTA HORMIGON"
+    },
+    {
+      "itemCode": "070200041",
+      "descriptionHash": "eaf72761cf019bf4fce37dabc54de3820f087e502005119162ad39d6998b635f",
+      "description": "PLANTA DE LECHADA A DIESEL"
+    },
+    {
+      "itemCode": "070200042",
+      "descriptionHash": "9b302e170c29802ee2f65956cfae63b94b8edb2b92a13ce678a71982ed0bdf4d",
+      "description": "PLANTA ASFALTICA"
+    },
+    {
+      "itemCode": "070200043",
+      "descriptionHash": "9be3f5575af9cc3bda41c5adaeb9bad940965dacc3fabf9f28d0448144d22968",
+      "description": "PLANTA ASFALTICA"
+    },
+    {
+      "itemCode": "070200044",
+      "descriptionHash": "49434f161af9ce935e07158792e276f0983a7d3e1a7f20d55382fe73d51e31bf",
+      "description": "PAVIMENTADORA HORMIGON"
+    },
+    {
+      "itemCode": "070200045",
+      "descriptionHash": "62147b4df2947c302885aa3da993bfab233aa8a1c68642aaba0bdd05126c0bcb",
+      "description": "PAVIMENTADORA HORMIGON"
+    },
+    {
+      "itemCode": "070200046",
+      "descriptionHash": "e46d7dc3843a8caafc4c685ba565a215079641cb911a87790ec6ba11bfd38e16",
+      "description": "PAVIMENTADORA CONCRETO TRIPLE ROLLER"
+    },
+    {
+      "itemCode": "070200047",
+      "descriptionHash": "6e5cb526785b736d310a64ea3048ef688516f17aa6b2c00f9b09e8976210102b",
+      "description": "PAVIMENTADORA ASFALTO"
+    },
+    {
+      "itemCode": "070200048",
+      "descriptionHash": "f20650d8441c3566848ef4d06f4f49982fae9ec06dcea40e06d0ca174079aae4",
+      "description": "PAVIMENTADORA"
+    },
+    {
+      "itemCode": "070200049",
+      "descriptionHash": "5dcb6d666f9a06d4bdd402d8f7bfcf5d47842b75faf02cb1a6c756550a94817e",
+      "description": "MOTONIVELADORA"
+    },
+    {
+      "itemCode": "070200050",
+      "descriptionHash": "41797984f58f073a0af5994028b0d1d0b16e0fa6611b8f2d66f9d45936bba71c",
+      "description": "MOTONIVELADORA"
+    },
+    {
+      "itemCode": "070200051",
+      "descriptionHash": "f6319794f39963363cb99f675a63d0f2388e049f7f51b49bd78d99a5804f071b",
+      "description": "MOTONIVELADORA"
+    },
+    {
+      "itemCode": "070200052",
+      "descriptionHash": "0670045df738da655bce8f645dd1d8e56b71f29e10e670880e8017d65f5986c3",
+      "description": "MOTONIVELADORA"
+    },
+    {
+      "itemCode": "070200053",
+      "descriptionHash": "aff5fda56128f1d6bd91930d4851a66f4223bb09c46e61610e2d86111aa11309",
+      "description": "MOTONIVELADORA"
+    },
+    {
+      "itemCode": "070200054",
+      "descriptionHash": "5de233439b446daf25b16966277eb69b9972ff22ed5ec6c2f0653f9227323612",
+      "description": "MOTONIVELADORA"
+    },
+    {
+      "itemCode": "070200055",
+      "descriptionHash": "41e01eefd83e766df0981b2799dc1e973a4fe0f431bee8521d81219f812bf194",
+      "description": "MOLDE DE BORDILLADORA"
+    },
+    {
+      "itemCode": "070200056",
+      "descriptionHash": "3bcdfa9c6b538ee0745edcebc739fb861abc5722d733d7211524277c2d596f87",
+      "description": "MINICARGADORA"
+    },
+    {
+      "itemCode": "070200057",
+      "descriptionHash": "b017478db7448c9aa2946d65e882a95a29c8b70474846d462bdcf4540c9edaae",
+      "description": "MINICARGADORA"
+    },
+    {
+      "itemCode": "070200058",
+      "descriptionHash": "8f8bb0bdd8aadf4488d119c4749bf22d008047c9795f2823b3d6213018784ca4",
+      "description": "MINICARGADORA"
+    },
+    {
+      "itemCode": "070200059",
+      "descriptionHash": "017af72d81d87ad6cd37ee7f4a31038daaeb253020610a6cd118c341b25a8bcc",
+      "description": "MINICARGADORA"
+    },
+    {
+      "itemCode": "070200060",
+      "descriptionHash": "3477f940422ceb6e354ee73caa4214b401c7b986daadad8e08e1c1d05ac31b3a",
+      "description": "MINICARGADORA"
+    },
+    {
+      "itemCode": "070200061",
+      "descriptionHash": "38d58edd413956187c7b635d76a49a45af2d80d70837b71bd9e2f5b5ffeae2d1",
+      "description": "MINICARGADORA"
+    },
+    {
+      "itemCode": "070200062",
+      "descriptionHash": "9b0d0d00fbcdd05ec4bee08e6170d054de0348ba4484f9b1a37f0945fbcfcb59",
+      "description": "MINICARGADORA"
+    },
+    {
+      "itemCode": "070200063",
+      "descriptionHash": "875aa233a6658454bcd3dbb04aef0fa2ad397a7e13fff8ff3a5590f9b98ef713",
+      "description": "MINICARGADORA"
+    },
+    {
+      "itemCode": "070200064",
+      "descriptionHash": "e25357ea677be48354a899304f48fabab962640fc3bd1b0ec665963641f312cb",
+      "description": "LAVADORA ARENA"
+    },
+    {
+      "itemCode": "070200065",
+      "descriptionHash": "fbf9439f49585430c4cbbe921dbf0a3a89aa909f39ec39981ff6061df1812d54",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200066",
+      "descriptionHash": "53786569f76ffb49e1aa3fc4d3f46a22c5f21901b1f56d2f6f1af3f702febebc",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200067",
+      "descriptionHash": "2ced41f68de1d451ed372782fe6054558e1b12a2d1c82517ef18174d1354b7aa",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200068",
+      "descriptionHash": "0eb8c537741397b5719cdd6d5dda0f44e764888fb2a1108fc532d4f95e331ee0",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200069",
+      "descriptionHash": "9ef09f80b55b3f7c3797aa8e5af93d39c3a012c5c51f1beb802ff5be707cac6c",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200070",
+      "descriptionHash": "9854919af6806b0dd958e16aaae2c194e7a461eb532a7a3483a6eb29a9add1a1",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200071",
+      "descriptionHash": "f155fbbdc3165037aace373747e322edc7d5d71699ec5a90a7e340b3ccdee4fc",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200072",
+      "descriptionHash": "72b92821b5ed94d0cf2dfc2a7144f4969761c732341e50a76503ee81610f9fa6",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200073",
+      "descriptionHash": "7d3077882b6ea3eb202a84442dd42052739e5128a01fa79187232c2d9c01af3e",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200074",
+      "descriptionHash": "d6b3c26f5e32c56b90447d267f0b2ab723d0702c4aad3f9dcdc6d93a503b8e3a",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200075",
+      "descriptionHash": "de85e5095df5655db01d79e05d1dad454e3c6bb149956749465c6de349a40bfb",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200076",
+      "descriptionHash": "3adeb3e01a59a44326c0a859ea8fb8e1decb65e2a859d8e98971de550439d26d",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200077",
+      "descriptionHash": "9368efe7cca851131a9de2bb4603d723c3a3c082271f355e156c30c25ed90faa",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200078",
+      "descriptionHash": "082133e1b2c0af55de179919e9851edb80ccf4a005e58b97115ea60f6fb73255",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200079",
+      "descriptionHash": "3b5dd251acc2a671d7d563cd27d731d191f9cd6d65fab44a72539a92b2dea69d",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200080",
+      "descriptionHash": "58c7637cd2861057901b62fb44fb8b2c2bb5ec4a27c891c512f5ffc9265fa474",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200081",
+      "descriptionHash": "5aaadad62098892dd78693226a7712501e61df8b82975133ecbf8bba485c4420",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200082",
+      "descriptionHash": "93949ea187912f5ad0bd5838a04411f7a5ac66fc711590ec69b1779a30582cb2",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200083",
+      "descriptionHash": "ac678901d3c47708569c2799f192312503bd0eb40072316db7e2d53a326fe03e",
+      "description": "GENERADOR ELECTRICO"
+    },
+    {
+      "itemCode": "070200084",
+      "descriptionHash": "52756677a57aff4200f347e0412fb69824ea8d023577d61674af2dc25fd90fc7",
+      "description": "FRESADORA"
+    },
+    {
+      "itemCode": "070200085",
+      "descriptionHash": "83bcfc534149e90ec4657197659bd280809101be888792025194ac6ac0d396db",
+      "description": "FRESADORA"
+    },
+    {
+      "itemCode": "070200086",
+      "descriptionHash": "deda29c926b34033dff9969dec45ca9acd7b2b7b6586c5a729932c782c26ab3a",
+      "description": "EXCAVADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200087",
+      "descriptionHash": "85cbecf76ff914ad211f336ef85af9c6e0b38c66a096b8324cbacd97c2dc4ce6",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200088",
+      "descriptionHash": "39385017285b1fecc6b8ba6a2c59737bbcb77c272df56f463bcb7e32efd31431",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200089",
+      "descriptionHash": "2a84fe43c6fd674f606fbb6e960e715d44e44f05ebad6482dfc435922c27dcb6",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200090",
+      "descriptionHash": "4d5c3fc2fcd188cbd3fc89326a91041a52279300a88ff3b921bd47a10daad48f",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200091",
+      "descriptionHash": "87f09a033c98e4ca5603ce9409e55ce2fc552c42453b93da246869085e42cdc9",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200092",
+      "descriptionHash": "2fea891a3420f93bcbbe2d143a604cca5c7b573286767b087c0b71f2b8a45c46",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200093",
+      "descriptionHash": "76e0d0e47cb8bc230b8609c393e05c7cbeb2b34bede54d1e55de2ef306799fb8",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200094",
+      "descriptionHash": "0b2fa37bc0755168f2221c0abc4c21cecfb861fb0f817fce4bc384bf6a886ca0",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200095",
+      "descriptionHash": "1f6ef54f76f589322ee722eb20f0b5737e5a0dfbb98dba7f35a743676d87bdc9",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200096",
+      "descriptionHash": "340ec3384ea2945fadb46d3c34c7034b6c9c725fbe20c5134a3aaa7fedbca50b",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200097",
+      "descriptionHash": "b6a63ecfd6be139fae843214209999f36bb41ca3d2e1e83fc66222f93b7e64a8",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200098",
+      "descriptionHash": "16836bf539fa612b7d43a3725ace165fe9b425ce0ad0e0c3bae229e2dba66fd7",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200099",
+      "descriptionHash": "31e8b0ef8252ae7a0c82cebd1912273d90d3334dcf889ba1893b45efcc546739",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200100",
+      "descriptionHash": "c5132663dab1112c6049193adc9376e1888f3d0ee5f5d3c90e732809d43f61ea",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200101",
+      "descriptionHash": "47c7fe9552853e2a6ed720e72e9a4230d599cf1a07ab3c729e509383c8ea748c",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200102",
+      "descriptionHash": "04a9bddcea86f6e8ea2d888885194198bdb63c286fd72eed3fa1c96f1fa9a75d",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200103",
+      "descriptionHash": "6d1fcf777f56b5e28d5d391a542e8c6bf90e984357572bd5ba20dd8438bd7fde",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200104",
+      "descriptionHash": "85f452662a5ad5b3150fde4664833c87fb02a430f831c2edc2a44bcec99ecb34",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200105",
+      "descriptionHash": "c6ac645986d2bff8e0b2723deae1a887b63c0d0782a2d7bdc17cb6d66afe730a",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200106",
+      "descriptionHash": "313fdd341fe2c4b3c914a0d19ac07f2eaf97a5ee7c2cba96c74bdfa724c40279",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200107",
+      "descriptionHash": "0153f763369193848c5e7e7de43e6d9a5cc6ddf2323dcb6781b63801d4f0e491",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200108",
+      "descriptionHash": "69666ecace657122cb33310f01d5c1d8753c51f2088b0a20153e243d85cf291c",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200109",
+      "descriptionHash": "5527277defe2ec212ff2c25dca50fe907642233185726d899d35a315b4808011",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200110",
+      "descriptionHash": "e3eafdd925ca3bdabb8305a8f4e25ffe6119fff67f19e7ca5bfd34c00b09e1ba",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200111",
+      "descriptionHash": "300c5c15d36da8f5a8bd142fdd8df5ae1e9a6ccd89656d624fd91b45dcc2722c",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200112",
+      "descriptionHash": "c4bd69a2d59cfd7dd2d8bb49ad0a748955e48c7c9283bc09f37fb4a4de15a550",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200113",
+      "descriptionHash": "65a91befb6fa8a631df172f294da5a55bd6b048b67fb3f66c5a32abb232d2963",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200114",
+      "descriptionHash": "fe5806af6e94b36771eecbcb7cdbf7654ffa398d4db828e36c266c23190aa7f4",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200115",
+      "descriptionHash": "4cabb306e68fe9145b773a68eff61f3803487b83ea9b2d37f79375308016efc4",
+      "description": "EXCAVADORA CADENAS"
+    },
+    {
+      "itemCode": "070200116",
+      "descriptionHash": "1ca8aadd5a3fd09c5966c10161870cbd2e4aa58ed979bda5ee1a65026aed952d",
+      "description": "CARGADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200117",
+      "descriptionHash": "ef0f771334cadcfebbdee8085614abb44e5fc4df11e358c49838e13e0329a199",
+      "description": "CARGADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200118",
+      "descriptionHash": "1873e844ec7d76305225ca098fbf85d5971508de98344ab926e173ade220f155",
+      "description": "CARGADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200119",
+      "descriptionHash": "da366f0163a4fdb13041e31b565d2042d49d1866b86d613443cacf026309a479",
+      "description": "CARGADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200120",
+      "descriptionHash": "7abdea9287cd26e33128b9e86c4b1ac982bf3d82b640fb1af8222c10be51003e",
+      "description": "CARGADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200121",
+      "descriptionHash": "0fd4b51e96f52a8a6777d6630d02a583988ce77893e0928ee4774809e1b62bd2",
+      "description": "CARGADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200122",
+      "descriptionHash": "9ff89d741d20887f9d386bddd9b6afcc688ae0f103a52d8e53d19e20f96d8426",
+      "description": "CARGADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200123",
+      "descriptionHash": "1dc39527141871bba07595cd73845e68e353e929314786c3f273c92a310ee7f6",
+      "description": "CARGADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200124",
+      "descriptionHash": "a7db3d94d7ff59e8a3dd29c6d2ce752931aab116994bc1fd4155d6b1e1b3a107",
+      "description": "CARGADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200125",
+      "descriptionHash": "2b1eb1b50cbeba01eb6a50be77740c1ddf930e9db935e62dcb8adc0cde813df2",
+      "description": "CARGADORA RUEDAS"
+    },
+    {
+      "itemCode": "070200126",
+      "descriptionHash": "5969efe6f9c63749b223c11c08bc99f1d894939e0c9a6e929379a5abc2228ca0",
+      "description": "BORDILLADORA PARA CONCRETO"
+    },
+    {
+      "itemCode": "070200127",
+      "descriptionHash": "272c16dbdf4c2fabc62966e47173d2a7c67c7f709b84ac4fc884313f8190124a",
+      "description": "BOMBA LANZA HORMIGON"
+    },
+    {
+      "itemCode": "070200128",
+      "descriptionHash": "2c2189d57ad63289f9f9605ea538b052e1009aa5ec2bf70e8b48b15aca8e244c",
+      "description": "BOMBA LANZA HORMIGON"
+    },
+    {
+      "itemCode": "070300001",
+      "descriptionHash": "214268e0d7e08e2dea96dbdb3a44ad41a482dbfadeec1a2405e6d7b8aa3cd4f0",
+      "description": "PLATAFORMA"
+    },
+    {
+      "itemCode": "070300002",
+      "descriptionHash": "8680e427561dd2d5d0d4df770dfe252334ce84e2b14e4215927e3c73b93a9d47",
+      "description": "PLATAFORMA"
+    },
+    {
+      "itemCode": "070300003",
+      "descriptionHash": "630e1ec10fc51be6ee11929166c1beec3840281061e603a195d63f2d5b268754",
+      "description": "PLATAFORMA"
+    },
+    {
+      "itemCode": "070300004",
+      "descriptionHash": "fbdb93543c702efc7618a963f2b7f626b1794e626946171fa15516c3249c3e6b",
+      "description": "PLATAFORMA"
+    },
+    {
+      "itemCode": "070300005",
+      "descriptionHash": "0340e3a511f092e4911165107bd7b49d7225228ff9422c5e52c659309a7dff73",
+      "description": "PLATAFORMA"
+    },
+    {
+      "itemCode": "070300006",
+      "descriptionHash": "061760621a6f3f12534cdf2830cef046f2dd091a8e9b056cd07adb481ab325b1",
+      "description": "PLATAFORMA"
+    },
+    {
+      "itemCode": "070300007",
+      "descriptionHash": "da08c0321cc2f469a7d582f5d3142cded15c9374481777548bfebe2b639aab4d",
+      "description": "PLATAFORMA"
+    },
+    {
+      "itemCode": "070300008",
+      "descriptionHash": "e2762b5c6edefd9c75210481f810a1d525cb23d7a38d98610cf7b1ee11234eaa",
+      "description": "PLATAFORMA"
+    },
+    {
+      "itemCode": "120100001",
+      "descriptionHash": "79152caa1afe2bb3768e263511610845852d730b66295927a3d9ab685e32238f",
+      "description": "CABEZAL"
+    },
+    {
+      "itemCode": "120100002",
+      "descriptionHash": "052e708f4e04511734fb39d9ad8ba9890bfbb813b9accb1bf0aa559426aa0576",
+      "description": "CABEZAL"
+    },
+    {
+      "itemCode": "120100003",
+      "descriptionHash": "9311dde89552c4fd467dead1176909da1fe3929df83001cd9f7cfa70172df76d",
+      "description": "CABEZAL"
+    },
+    {
+      "itemCode": "120100004",
+      "descriptionHash": "df0f209ed48df1db088f023791e578f7fd9315802f11500e388a54b80d4ef531",
+      "description": "CABEZAL"
+    },
+    {
+      "itemCode": "120100005",
+      "descriptionHash": "7d3a5b22e4f62be061e81a123d04fdb201701a5784194c3e010d28b45791d688",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100006",
+      "descriptionHash": "70557741073df527e3f787b8175ee77e6ab7d106a15d73f73493304624c4bb3d",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100007",
+      "descriptionHash": "2f49d5769c0d8ec1e0b9b265af036496431d563c15fbfb1804a810255e754578",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100008",
+      "descriptionHash": "d7fca12b3aedbf600f3ae18c9beddbf0775f96d869614483a4b094a07495fa0b",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100009",
+      "descriptionHash": "21c38f12e14d7b67ba2f067a38ff89acbd4e48cc334b2ed1bb3976447944ab02",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100010",
+      "descriptionHash": "086a8bacb58ef771b6cbaa66f608e1dbc2036754614109c1f51312708c212a76",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100011",
+      "descriptionHash": "c8678c23aedd13004f852c3bbb1528691e3f3b818571b88fa7aebb6828f61985",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100012",
+      "descriptionHash": "622af08fad9415367f0da6dd10531d54d283c508aeac1b48dfe849c93dfa2c1b",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100013",
+      "descriptionHash": "089b41e74c8eee29b22866ad3f05c66dfb7f6b31363599a9afc4a1f1dd203ee4",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100014",
+      "descriptionHash": "49915eab20a03c0729c25c86d9a096db6e556ef43c0db2244a92977209cff138",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100015",
+      "descriptionHash": "1e5463cdd994ffd9480151e132c72097664b8e76b13ca69341af9b8228f29b3d",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100016",
+      "descriptionHash": "7d4964efe4ac48b388e729cf4c62deba65925ff222c7e827a260af59c757ec77",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100017",
+      "descriptionHash": "6b748eb2bf91509f55821ca4b1811a2133a4e0bb77c360dae685eb8cb8fe6ef9",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100018",
+      "descriptionHash": "7d836c88142417eb5f8e5ae48742d855985d7d0c11e1425c8464d37ab4e28043",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100019",
+      "descriptionHash": "c94a9249162b16d4f5617d18278fcf729e4ed7a3e6f20760402571e32d08ab1e",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100020",
+      "descriptionHash": "5b838fa812b010b554b6e0d1917b17aff50ff967893e6b33c6301a52a829967c",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100021",
+      "descriptionHash": "c2f1e874e960542bfcc3a02959cb27acff9f71bb0ee89b86c7799fc6f2444a93",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100022",
+      "descriptionHash": "38a5ebc855625b0d267b4725aae90cc8aa5535ddf47e9cf0ff6f6274ee3e24e2",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100023",
+      "descriptionHash": "53d1fdddb93a5edbde00aa0b08725ac4ce8ae18f48bafc1fbc1c20bba74a3888",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100024",
+      "descriptionHash": "3b4eb0b59063f33ce87e4c7e36aad5f3978c5f8588d23a0728bd161860181f5f",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120100025",
+      "descriptionHash": "1a68ae4de1a70328951ffe325e2cbefebf947ea089c6a0b45c7c6fbd214088dd",
+      "description": "CAMION BOMBA"
+    },
+    {
+      "itemCode": "120100026",
+      "descriptionHash": "f3dc776071e1480fab4246165c45d039efcd7bf3d644ead196de19f076050a52",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100027",
+      "descriptionHash": "f2d5cd034a9a562aacd664d0323703a33f6807855f8262233dda308636276ad0",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100028",
+      "descriptionHash": "85cd20a98c34dcd8e87766a57a1ca62d95a49bf95d09eb583db53255c99264e9",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100029",
+      "descriptionHash": "0dc2305ee599373dcbe5a22104bff333e12972666fd0f7d79e081afd964ae138",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100030",
+      "descriptionHash": "50d34006f3672f9999ad3aa17592000264a94603e3c7abb01891799c4716a6e9",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100031",
+      "descriptionHash": "9d8fef0b1a7d4602e72c1b9fa21d45b8a44e53a4674a2a99f26a005eeb4f7fa1",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100032",
+      "descriptionHash": "b5fe23fc60de2a94ba23751695c4e2eaa59d360f36e172767ec021980303a8a9",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100033",
+      "descriptionHash": "bb604f7b0bb9f480c8ef92002b8c7be2a87f71f9e161c9c0f34cc9c4679980eb",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100034",
+      "descriptionHash": "6afbaf48e71765d58695367a06e1489b3159bc88afefed8064c058785a8e9e0a",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100035",
+      "descriptionHash": "3c981e4ae6039fcb22c8a1c506bdefbe41205fc3eb0df00f1b3528dcbba801a0",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100036",
+      "descriptionHash": "307fde36b56cd1629620378dd7d162650cb4a927b88ca8ed3e71230ab9e18ddd",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100037",
+      "descriptionHash": "5ea3ed412071789bce3a6b5d2d9e83f7f8e44d0d4cfe503f288b98385d41788b",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100038",
+      "descriptionHash": "bf216f1968e763ff6d85f3bdbf264b1447d54338f7dc334f2b75c2bb1ea7bbef",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100039",
+      "descriptionHash": "45d6bde009e5a92212cad6757f0c6e1acc4a20f8540ccd7c2cf6b33acb788390",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100040",
+      "descriptionHash": "2b3a5cbd4c332c89cd783490dc056aee0158c591dd2eddcd5035b466e7a9e3ee",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100041",
+      "descriptionHash": "4bb61859236a31a4702d05bca7b318fbb6ecf72575133a00fa43a57531dc39dc",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100042",
+      "descriptionHash": "edd12f3c2fa413dffa4b0f6e50b8c60fe75cf208034aa32452ba4628833c75bd",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100043",
+      "descriptionHash": "a244875c804a8b1811f89df57b71bc8e6278487c3d43b76b0748d637250c8495",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100044",
+      "descriptionHash": "4389dbf5f8b274a22428e50082737294fce9f776e1edcccb8ffd0afe82fd5f87",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100045",
+      "descriptionHash": "85ecc2a7dddcf1d92b2ac0f3807b538e96bd2224e12479eadd14e023c974e70d",
+      "description": "CAMION CONCRETERO MIXER"
+    },
+    {
+      "itemCode": "120100046",
+      "descriptionHash": "ce9735349d9ff49c0de5d4b88efa452a077d361654072b54a191f3f086358e13",
+      "description": "CAMION DISTRIBUIDOR ASFALTO"
+    },
+    {
+      "itemCode": "120100047",
+      "descriptionHash": "aac598083d7ab32f4b4aad3c30ca9ec59a0d8d7045287a92dcdda451b8f97358",
+      "description": "CAMION DISTRIBUIDOR ASFALTO"
+    },
+    {
+      "itemCode": "120100048",
+      "descriptionHash": "877ca0c529c5fd4d8646d4eb21fc3812f865ea69c97bfe46c3706a187b893862",
+      "description": "CAMION TANQUE HIDROCLEANER"
+    },
+    {
+      "itemCode": "120100049",
+      "descriptionHash": "92ac23e8c598cee5024ccc6a8179a21bfdb0c73a0851469803652852f7b77eb5",
+      "description": "CAMION TANQUE HIDROCLEANER"
+    },
+    {
+      "itemCode": "120100050",
+      "descriptionHash": "7dccc1ae1b9fd43a8196020aedb73b415b473d85e23e6597196a935525ed4d12",
+      "description": "CAMION TANQUETA AGUA"
+    },
+    {
+      "itemCode": "120100051",
+      "descriptionHash": "0be5e7bcab39b37919f19d1741fdce670c064bcd6be1bb8765231c426c376f10",
+      "description": "CAMION TANQUETA AGUA"
+    },
+    {
+      "itemCode": "120100052",
+      "descriptionHash": "d2214b1468a6bf088ae801642d07e8088d963f04a731cd84b98725610439d4e0",
+      "description": "CAMION TANQUETA AGUA"
+    },
+    {
+      "itemCode": "120100053",
+      "descriptionHash": "ed3eea1ccb36d929778aabc32379fea9ad74cf63e3d4428ea09be877ab30638c",
+      "description": "CAMION TANQUETA AGUA"
+    },
+    {
+      "itemCode": "120100054",
+      "descriptionHash": "fa4e1585d6fa958919c8e6d55ccccdfbf0ab288d4cfcb0f49052accf7b49f4d1",
+      "description": "CAMION TANQUETA AGUA"
+    },
+    {
+      "itemCode": "120100055",
+      "descriptionHash": "363613edbd0fe07c801d6d60e2e650586d28a8a44a275478d8bc39b5e6891fca",
+      "description": "CAMION TANQUETA AGUA"
+    },
+    {
+      "itemCode": "120100056",
+      "descriptionHash": "543729f7878a39885e5718adf73ef145fff0e1dc486362836e0ecc44a61e949b",
+      "description": "CAMION TANQUETA AGUA"
+    },
+    {
+      "itemCode": "120100057",
+      "descriptionHash": "8fe5704361991c1848750b5538a5c307039e694fd623f44df38f4ad222cfc1ca",
+      "description": "CAMION TANQUETA AGUA"
+    },
+    {
+      "itemCode": "120100058",
+      "descriptionHash": "ead6866454fc4e59107fa9fbfc1b837dd0d6164d50be9ea8dc7a7f8f99a6cc2e",
+      "description": "CAMION TANQUETA AGUA"
+    },
+    {
+      "itemCode": "120100059",
+      "descriptionHash": "42af07d0a242dee0851a48f110f241bda1645a80e09a302af1af4022ad82829d",
+      "description": "TRAILETA VOLQUETA"
+    },
+    {
+      "itemCode": "120100060",
+      "descriptionHash": "6a74e44c45f6f6c6ad15e2969324de617328db579467800321196ae7b389e8f3",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100061",
+      "descriptionHash": "56c2cea370b65255b164b248760fe2a89ba7068631fdb561f048f835375a4c58",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100062",
+      "descriptionHash": "09d50ebfee35723f136dbd6138ab11c60c7c9e940c314aa7cb723fc089a4c9b8",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100063",
+      "descriptionHash": "84b6fc2004064ae990b6f9dd6aab6241df400e8570bf4f61ab2e2f93d495cb45",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100064",
+      "descriptionHash": "11138e3a5cd1a52584a64d0fad316f1b96e4604a8a4c7419ebdd08e39fcfd500",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100065",
+      "descriptionHash": "551c110038b21be1e3a97ec4a875a49b68eed735bc037b012cb615483cbe836e",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100066",
+      "descriptionHash": "1b7317b36f86e90c4a5d7a915cea24b2aa0c77a6844d6b82e82ad0890ae530b5",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100067",
+      "descriptionHash": "f5354ba12e2222ee477dfe56fb8dacba77db95d4c35a701a8541a07ef4f18172",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100068",
+      "descriptionHash": "e1548ee7b5d6195e88d079cad1f414888e66fff698b7aa460cbccc7518234bdf",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100069",
+      "descriptionHash": "34fa08d28c24172be27e582c5aa72bc0b9c5eb4b71e833fddf2eda8b0a529e5a",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100070",
+      "descriptionHash": "681dd5b7c0b505b9b81b3991586685911314dc47edf64a733cd748ea60e3c510",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100071",
+      "descriptionHash": "e0fa37b827fdcab226083c6d37e384cebce0476aec9e3e5f81bf7594f3cb22df",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100072",
+      "descriptionHash": "2841c56c107a7c1864f425ee2b2b8da94c90c11a2892d933e0e9e8a3fd24272e",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100073",
+      "descriptionHash": "c8224a327a612a9be4e161464d00f0aa58130911dc270617051fa79849d62dff",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100074",
+      "descriptionHash": "e0a4ddc98e6ecfcc57f0491440ecd75561ae69691493edc19f25b386345b7fdc",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100075",
+      "descriptionHash": "f7ee0b55c821c84c1899c83afd62e6965f5a1e1ac23b0799ad2b089525e1464c",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100076",
+      "descriptionHash": "114b97f1bcc5dc1157f69a12854a5d23e0eb81800c59c7caca94443551263976",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100077",
+      "descriptionHash": "1edaed7b6b89128211497a0a0e20171833b3bce874a2cb5f425e0806b0d2d355",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100078",
+      "descriptionHash": "719728efb7404d4a51c25fdb63b98ea3ec03475e8c37ddd5677a410e51ec35e5",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100079",
+      "descriptionHash": "f6afcd2302c910b7b2b31d08efb2412b1b7d54fdfdd3dc09f44de95a245fd465",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100080",
+      "descriptionHash": "e888839dcfe8f6f6b14ba9e9ba9fb9718f2c8ccf85fb18d4cb5c746afa5cc2ce",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100081",
+      "descriptionHash": "664536e13840b13bffd08c3c6ecf7e10bf5f5aae919efb328104bad66a264291",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100082",
+      "descriptionHash": "df0244392dba37a760ce75d340bc287c5ef465f942576bbfb686fb2c8f29760f",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100083",
+      "descriptionHash": "c8179d50d9161773980f87f3b4dcb3b6afbb13b101555146c809fb040b782ff7",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120100084",
+      "descriptionHash": "0c5e1f9bd618cf14911bec33748fd673a09af734fad5c2353744266649b7986e",
+      "description": "VOLQUETA"
+    },
+    {
+      "itemCode": "120200001",
+      "descriptionHash": "5e9d5a4eb84809b24b5f8840880659ac72c3dc6280260c099eb3d08dc4275642",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120200002",
+      "descriptionHash": "01dd0e789fbf4edc86f92cc3ed834f10d4ea7d337139d8caa5e0a202cafe3cda",
+      "description": "CAMION"
+    },
+    {
+      "itemCode": "120200003",
+      "descriptionHash": "57fb0e474587c134a2dc5cdf8ab5a17cde42a8a0c813a2b0f923095c521089dd",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200004",
+      "descriptionHash": "1642592a92a3256ad86f795f6e143d95ee79c0439141a6b8fda80a9a4ac4d3d5",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200005",
+      "descriptionHash": "18e3cfbb4906658c76fb4991df515f1894013ffc27354f906e8f769f3e816f8d",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200006",
+      "descriptionHash": "bcc1b289ec673998260061747b8e8cf15778919fe6ed29a358dafadd31cf68bc",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200007",
+      "descriptionHash": "c342e4f5ff3ba037a611ef913f619ea4aa3f3e4187fabb3f6af050ec74165857",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200008",
+      "descriptionHash": "b231da384dd71dea788d21d53b852ee52ee26334ef74ea8fcb6e453b51466720",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200009",
+      "descriptionHash": "96875d1d4734f935e1fe2b44b41ec16b8346d34cf944fb591aab595721f67ee5",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200010",
+      "descriptionHash": "acd8c4a5a106f188e3d55e7137d7404eb49628bf4cebff44ccd027c9ccfb90f3",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200011",
+      "descriptionHash": "1bdfb08e081b26b45f071fe407f51c2f7fdb23e5d813db7e2d7de23454483170",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200012",
+      "descriptionHash": "e6d5ab43ccea19d47b38baecfde145be1de231301e3b55085600e791362c0355",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200013",
+      "descriptionHash": "ad018458f14c3708cc64dcc3f07fd0293d9bae649ca39af6fb095ec54a10e0c6",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200014",
+      "descriptionHash": "4a40cc02ab8b447072f99b2b470e4cefa1257aaf6c48aa511c205ba0acdd2342",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200015",
+      "descriptionHash": "f1360a54062d94155c0acbfd1da3c8bef7a7c9dcbc04735c89b2bb260afc9b78",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200016",
+      "descriptionHash": "3d0ecfa41a3bd0216fb33429d2dde2f55cc4f1b8157f66a00f5ed5cbd82ab376",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200017",
+      "descriptionHash": "b55768bf069649134a49c43501f7c3f23e7fe02e7dedb47196e8a1f8adb438fe",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200018",
+      "descriptionHash": "dbebaf190137ba9ab6e06e6f42b934624cf59b1de0915dc1a478d180a50ad091",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200019",
+      "descriptionHash": "6af13d465c8938489ee78d0b0dba784d255da9571a749edf3c50e960bf676132",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200020",
+      "descriptionHash": "d1ce7d7c2235596d910720eee8c8cffdc844b003d5fe57d1d13da50e090cef86",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200021",
+      "descriptionHash": "3ffea6ca1096ff16b7f68b10d217e6cf09e445d15a22a5465d93e363e108614c",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200022",
+      "descriptionHash": "c736f07ddef85a8bf0ece37549e39bd77cd38eaf74a56f681f94b1e395defe3e",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200023",
+      "descriptionHash": "1eb054714dcf7b2398fafcbf7e7cef6e01ba2c299b47728e06eac64e1db2c01f",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200024",
+      "descriptionHash": "bd8c27c724c7e274b3988370ed06ea4c35e0df91e61bededbd7447894b2470ea",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200025",
+      "descriptionHash": "33d869060a40f1c387018db14977d240929936e9c6e123303a7b733a6d6fd3b8",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200026",
+      "descriptionHash": "42202a3b99e062e6dc85d66bd79e63c3bbc7eba3363c7ef5521aeb51274310cd",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200027",
+      "descriptionHash": "d14e1a099f1c540a4de0066251e5618bc3a890b8009c8226322bffb5dd923197",
+      "description": "CAMIONETA / PICKUP"
+    },
+    {
+      "itemCode": "120200028",
+      "descriptionHash": "f6a843eb9fc8db72c25b7c666407fa45054c88f4a5e5a13f34ae6694b709062f",
+      "description": "CUATRIMOTO"
+    },
+    {
+      "itemCode": "120200029",
+      "descriptionHash": "2762e36243e7e9ee3a5d89bb61fee38768da93475e7806bc06c9527bf070ea7b",
+      "description": "CUATRIMOTO"
+    },
+    {
+      "itemCode": "120200030",
+      "descriptionHash": "0c14c866d6e93bf9ee92b61f8039123c14dcbe5041434dbb3a0f53cadd5c4d2a",
+      "description": "JEEP"
+    },
+    {
+      "itemCode": "120200031",
+      "descriptionHash": "283b17fc7f169bc1ec1f204b5348d3a8a9c58a27b69c61b7fa3b2350beb38f55",
+      "description": "PANEL"
+    },
+    {
+      "itemCode": "120200032",
+      "descriptionHash": "edc559138c460617fa11d18aa76bc90bc7d205a7d789f99c5d49e70b5c5ac67d",
+      "description": "PANEL"
+    },
+    {
+      "itemCode": "120200033",
+      "descriptionHash": "1098e0018710904055b69384693a72c1d7bae6dd7b2ab3673c9fb50a866df142",
+      "description": "PANEL"
+    },
+    {
+      "itemCode": "120200034",
+      "descriptionHash": "69d2984f15eb3420276c5594c27a52b5bd5547ce1436f2f1f8e0ef67d0b5de87",
+      "description": "PANEL"
+    }
+  ]
+}
