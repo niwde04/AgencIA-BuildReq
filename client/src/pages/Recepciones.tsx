@@ -1527,6 +1527,12 @@ export default function Recepciones() {
     setReceiptCorrectionReason("");
   }, [viewReceiptId]);
 
+  // Refetched timestamps are new Date objects. Only changed item values should
+  // reinitialize the receipt drafts when the billing authorization is refreshed.
+  const sourceItemsRevision = useMemo(
+    () => JSON.stringify(activeSourceDetail?.items ?? []),
+    [activeSourceDetail?.items]
+  );
   const sourceItems = useMemo(
     () =>
       (activeSourceDetail?.items ?? []).filter((item: any) =>
@@ -1534,7 +1540,7 @@ export default function Recepciones() {
           ? !item.receiptClosed
           : getPendingQuantity(item) > 0
       ),
-    [activeSourceDetail, isContractPurchaseOrder]
+    [sourceItemsRevision, isContractPurchaseOrder]
   );
   const getReceivableQuantity = (item: any) =>
     isContractPurchaseOrder
@@ -7579,6 +7585,11 @@ export default function Recepciones() {
                     size="lg"
                     className="min-w-[240px] text-sm font-semibold sm:h-11 sm:text-base"
                     onClick={handleRegisterReceipt}
+                    aria-describedby={
+                      contractReceiptBlockReason
+                        ? "receipt-contract-submit-block"
+                        : undefined
+                    }
                     disabled={
                       registerMutation.isPending ||
                       !sourceId ||
@@ -7593,6 +7604,46 @@ export default function Recepciones() {
                       ? "Registrando..."
                       : "Registrar recepción"}
                   </Button>
+                  {contractReceiptBlockReason ? (
+                    <div
+                      id="receipt-contract-submit-block"
+                      className="mt-2 w-full max-w-lg space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-left text-xs"
+                    >
+                      <p className="font-medium text-destructive">
+                        {contractReceiptBlockReason}
+                      </p>
+                      {contractBillingDecision?.requiresAuthorization ? (
+                        <>
+                          <p className="text-foreground">
+                            Solicite a Administración Central que revise la
+                            autorización en la orden de compra, sección
+                            “Facturación posterior al contrato”. Después de que
+                            guarde la autorización, pulse “Consultar
+                            autorización”.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="min-h-11 whitespace-normal"
+                            disabled={purchaseOrderDetailFetching}
+                            onClick={async () => {
+                              const result = await refetchPurchaseOrderDetail();
+                              if (result.error) {
+                                toast.error(
+                                  `No se pudo consultar la autorización: ${result.error.message}`
+                                );
+                              }
+                            }}
+                          >
+                            {purchaseOrderDetailFetching
+                              ? "Consultando…"
+                              : "Consultar autorización"}
+                          </Button>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {fixedAssetReceiptBlockReason ? (
                     <p className="mt-2 max-w-md text-right text-xs text-amber-700">
                       {fixedAssetReceiptBlockReason}
