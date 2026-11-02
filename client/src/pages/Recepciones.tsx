@@ -977,14 +977,28 @@ function getTransferDestinationLabel(transferDetail: any, fallback: string) {
       : fallback;
 }
 
+function formatContractReceiptProgress(summary: {
+  registeredInvoiceCount: number;
+  expectedInvoiceCount: number;
+  remainingInvoiceCount: number;
+}) {
+  const registered = summary.registeredInvoiceCount;
+  const expected = summary.expectedInvoiceCount;
+  const remaining = summary.remainingInvoiceCount;
+  return `${registered} ${registered === 1 ? "factura registrada" : "facturas registradas"} de ${expected} ${expected === 1 ? "programada" : "programadas"} · ${remaining} ${remaining === 1 ? "pendiente" : "pendientes"}`;
+}
+
 function formatPurchaseOrderReceiptSourceLabel(row: any) {
   const orderNumber = row?.purchaseOrder?.orderNumber ?? "Orden pendiente";
   const supplierName = row?.supplier?.name || "Proveedor pendiente";
+  const contractLabel = row?.purchaseOrder?.appliesContract
+    ? " — OC con contrato"
+    : "";
   const contractStatus =
-    row?.purchaseOrder?.appliesContract && row?.contractSummary?.statusLabel
-      ? ` — ${row.contractSummary.statusLabel}`
+    row?.purchaseOrder?.appliesContract && row?.contractSummary
+      ? ` — ${formatContractReceiptProgress(row.contractSummary)}`
       : "";
-  return `${orderNumber} — ${supplierName}${contractStatus}`;
+  return `${orderNumber}${contractLabel} — ${supplierName}${contractStatus}`;
 }
 
 function formatTransferReceiptSourceLabel(row: any) {
@@ -1372,23 +1386,37 @@ export default function Recepciones() {
           contractEndDate: purchaseOrderDetail?.purchaseOrder.contractEndDate,
         })
       : false;
-  const contractReceiptBlockReason = isContractPurchaseOrder
+  const contractEndDateLabel = formatDateLabel(
+    purchaseOrderDetail?.purchaseOrder.contractEndDate
+  );
+  const contractDocumentDateInvalid =
+    isContractPurchaseOrder &&
+    Boolean(documentDate) &&
+    !contractDocumentDateWithinTerm;
+  const contractReceiptValidationError = isContractPurchaseOrder
     ? purchaseOrderContractSummary.expectedInvoiceCount <= 0
       ? "La OC de contrato no tiene una programación de pagos válida."
       : purchaseOrderContractSummary.isFullyInvoiced
         ? "La OC de contrato ya alcanzó el total de facturas programadas."
-        : documentDate && !contractDocumentDateWithinTerm
-          ? "La fecha del documento fiscal es posterior al vencimiento del contrato."
-          : purchaseOrderContractSummary.isExpired && !documentDate
-            ? "El contrato ya venció. Ingrese la fecha del documento fiscal para validar si fue emitido dentro de la vigencia."
-            : ""
+        : contractDocumentDateInvalid
+          ? `La fecha del documento es posterior al vencimiento del contrato (${contractEndDateLabel}).`
+          : ""
     : "";
+  const contractReceiptDocumentDateRequired =
+    isContractPurchaseOrder &&
+    purchaseOrderContractSummary.isExpired &&
+    !documentDate;
+  const contractReceiptWarningMessage = contractReceiptDocumentDateRequired
+    ? `Contrato vencido el ${contractEndDateLabel}. Ingresa la fecha real del documento para comprobar si puede recibirse.`
+    : "";
+  const contractReceiptBlockReason =
+    contractReceiptValidationError || contractReceiptWarningMessage;
   const contractReceiptStatusMessage =
     isContractPurchaseOrder &&
     purchaseOrderContractSummary.isExpired &&
     contractDocumentDateWithinTerm
-      ? "Documento fiscal dentro de vigencia: su fecha es igual o anterior al vencimiento del contrato."
-      : "OC con contrato: " + purchaseOrderContractSummary.statusLabel + ".";
+      ? `La fecha del documento es igual o anterior al vencimiento del contrato (${contractEndDateLabel}).`
+      : `Contrato vigente hasta el ${contractEndDateLabel}.`;
 
   const {
     data: receiptPurchaseOrderDetail,
@@ -2412,7 +2440,7 @@ export default function Recepciones() {
   const sourceStatusLabel = sourceStatusKey
     ? sourceType === "purchase_order"
       ? isContractPurchaseOrder
-        ? purchaseOrderContractSummary.statusLabel
+        ? formatContractReceiptProgress(purchaseOrderContractSummary)
         : PURCHASE_ORDER_STATUS_LABELS[sourceStatusKey] || sourceStatusKey
       : TRANSFER_STATUS_LABELS[sourceStatusKey] || sourceStatusKey
     : null;
@@ -5072,13 +5100,9 @@ export default function Recepciones() {
                   {sourceStatusLabel ? (
                     <Badge
                       variant="outline"
-                      className={`text-sm ${
+                      className={`max-w-full whitespace-normal text-left text-sm leading-relaxed ${
                         isContractPurchaseOrder
-                          ? purchaseOrderContractSummary.isExpired
-                            ? "border-rose-300 bg-rose-50 text-rose-700"
-                            : purchaseOrderContractSummary.expiresSoon
-                              ? "border-amber-300 bg-amber-50 text-amber-800"
-                              : "border-cyan-300 bg-cyan-50 text-cyan-700"
+                          ? "border-border bg-muted text-foreground"
                           : getSourceStatusColor(sourceType, sourceStatusKey)
                       }`}
                     >
@@ -5089,7 +5113,7 @@ export default function Recepciones() {
               </DialogHeader>
 
               <div className="min-w-0 space-y-5">
-                <div className="grid gap-3 md:grid-cols-12">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
                   <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
                     <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                       Tipo de origen
@@ -5137,7 +5161,9 @@ export default function Recepciones() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="purchase_order">
-                          Orden de Compra
+                          {isContractPurchaseOrder
+                            ? "OC con contrato"
+                            : "Orden de Compra"}
                         </SelectItem>
                         <SelectItem value="transfer">Traslado</SelectItem>
                       </SelectContent>
@@ -5195,12 +5221,10 @@ export default function Recepciones() {
                                         row
                                       );
                                     const searchValue = [
-                                      row.purchaseOrder.orderNumber,
+                                      label,
                                       row.supplier?.supplierCode,
-                                      row.supplier?.name,
                                       row.project?.code,
                                       row.project?.name,
-                                      row.contractSummary?.statusLabel,
                                     ]
                                       .filter(Boolean)
                                       .join(" ");
@@ -5214,13 +5238,13 @@ export default function Recepciones() {
                                         className="py-2.5"
                                       >
                                         <Check
-                                          className={`mr-2 h-4 w-4 ${
+                                          className={`mr-2 h-4 w-4 shrink-0 ${
                                             sourceId === value
                                               ? "opacity-100"
                                               : "opacity-0"
                                           }`}
                                         />
-                                        <span className="truncate">
+                                        <span className="min-w-0 whitespace-normal break-words">
                                           {label}
                                         </span>
                                       </CommandItem>
@@ -5268,7 +5292,7 @@ export default function Recepciones() {
                     </Popover>
                     <p className="text-sm leading-relaxed text-muted-foreground">
                       {sourceType === "purchase_order"
-                        ? "Solo aparecen órdenes emitidas con saldo pendiente o contratos vigentes por facturar."
+                        ? "Órdenes emitidas con saldo pendiente y OC con contrato pendientes de facturar. Los contratos vencidos requieren una fecha de documento igual o anterior a su vencimiento."
                         : "Solo aparecen traslados confirmados con saldo pendiente por recibir."}
                     </p>
                   </div>
@@ -5289,10 +5313,20 @@ export default function Recepciones() {
                     <p className="text-sm font-semibold leading-snug sm:text-base">
                       {sourceNeededByLabel}
                     </p>
+                    {isContractPurchaseOrder ? (
+                      <div className="space-y-1.5 border-t border-border/70 pt-2">
+                        <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Vencimiento del contrato
+                        </p>
+                        <p className="text-sm font-semibold leading-snug sm:text-base">
+                          {contractEndDateLabel}
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-12">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
                   <div
                     className={`space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 ${
                       sourceType === "transfer"
@@ -5332,7 +5366,9 @@ export default function Recepciones() {
                     }`}
                   >
                     <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                      Estado del origen
+                      {isContractPurchaseOrder
+                        ? "Facturas del contrato"
+                        : "Estado del origen"}
                     </Label>
                     <p className="text-sm font-semibold leading-snug sm:text-base">
                       {sourceStatusLabel || "Pendiente de selección"}
@@ -5455,15 +5491,31 @@ export default function Recepciones() {
 
                 {isContractPurchaseOrder ? (
                   <div
+                    id="receipt-contract-status"
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
                     className={`flex items-start gap-2 rounded-xl border p-3 text-sm ${
-                      contractReceiptBlockReason
-                        ? "border-rose-300 bg-rose-50 text-rose-700"
-                        : purchaseOrderContractSummary.expiresSoon
-                          ? "border-amber-300 bg-amber-50 text-amber-800"
-                          : "border-cyan-300 bg-cyan-50 text-cyan-700"
+                      contractReceiptValidationError
+                        ? "border-destructive/40 bg-destructive/10 text-destructive"
+                        : contractReceiptWarningMessage ||
+                            purchaseOrderContractSummary.expiresSoon
+                          ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+                          : "border-border bg-muted/40 text-foreground"
                     }`}
                   >
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    {contractReceiptBlockReason ||
+                    purchaseOrderContractSummary.expiresSoon ? (
+                      <AlertTriangle
+                        aria-hidden="true"
+                        className="mt-0.5 h-4 w-4 shrink-0"
+                      />
+                    ) : (
+                      <Check
+                        aria-hidden="true"
+                        className="mt-0.5 h-4 w-4 shrink-0"
+                      />
+                    )}
                     <span>
                       {contractReceiptBlockReason ||
                         contractReceiptStatusMessage}
@@ -5628,6 +5680,18 @@ export default function Recepciones() {
                             id="receipt-document-date"
                             type="date"
                             value={documentDate}
+                            aria-describedby={
+                              isContractPurchaseOrder
+                                ? "receipt-contract-status"
+                                : undefined
+                            }
+                            aria-invalid={
+                              contractDocumentDateInvalid || undefined
+                            }
+                            aria-required={
+                              isFiscalDocument ||
+                              contractReceiptDocumentDateRequired
+                            }
                             onChange={event =>
                               setDocumentDate(event.target.value)
                             }
