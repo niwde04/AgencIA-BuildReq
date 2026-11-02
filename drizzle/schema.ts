@@ -3266,3 +3266,10 @@ export const advanceFinancialEvents = pgTable("advanceFinancialEvents", {
   operationKey: varchar("operationKey", { length: 200 }).unique(),
   createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
 }, t => ({ orderIdx: index("advance_events_order_idx").on(t.purchaseOrderId, t.id) }));
+
+// Foreign-key callbacks in the separate module are lazy, as with the notes schema.
+export {
+  invoiceSettlementActivations,
+  invoiceSettlementPolicies,
+  invoiceSettlementSettings,
+} from "./invoice-settlement-schema";

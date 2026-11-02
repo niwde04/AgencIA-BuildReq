@@ -1,5 +1,10 @@
 import { canReadRetentionDocuments } from "../shared/retention-documents";
-import { invoiceNoteBalanceSql } from "./invoiceMoney";
+import {
+  invoiceCommittedMoneySql,
+  invoiceNoteBalanceSql,
+  invoiceSettlementNetSql,
+  invoiceSettlementPolicyExistsSql,
+} from "./invoiceMoney";
 import { TRPCError } from "@trpc/server";
 import { sql, type SQL } from "drizzle-orm";
 import { getDb } from "./db";
@@ -878,6 +883,20 @@ export async function recalculateInvoiceNotes(
     await tx.execute(
       sql`with totals as (select coalesce(sum(a.amount) filter(where n.type='credit' and n.origin<>'retentions'),0) credit,coalesce(sum(a.amount) filter(where n.type='debit'),0) debit from "financialNoteInvoices" a join "financialNotes" n on n.id=a."noteId" where a."invoiceId"=${id} and n.status='registrada' and n."deletedAt" is null) update invoices i set "creditNoteTotal"=t.credit,"debitNoteTotal"=t.debit,"netPayable"=i.total-i."retentionTotal"-i."otherRetentionTotal"-i."documentDiscountTotal"-t.credit+t.debit,"updatedAt"=now() from totals t where i.id=${id}`
     );
+    // A four-decimal source can still be valid while its document-cent target
+    // drops below an existing reservation. Verify the actual cash obligation in
+    // this transaction rather than allowing an extra cent through a raw balance.
+    const [settlement] = await noteRows<{ exceeded: boolean }>(
+      tx,
+      sql`select (i."netPayable"<0 or ${invoiceSettlementNetSql(sql`i.id`, sql`i."netPayable"`)}
+          < ${invoiceCommittedMoneySql(sql`i.id`)}) as exceeded
+        from invoices i where i.id=${id}
+          and ${invoiceSettlementPolicyExistsSql(sql`i.id`)}`
+    );
+    if (settlement?.exceeded)
+      bad(
+        "La operación dejaría un saldo menor que los pagos, anticipos o reservas existentes"
+      );
   }
 }
 export async function transitionFinancialNote(

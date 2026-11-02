@@ -3,6 +3,7 @@ import {
   getInvoiceAdvanceReconciliationMap,
   lockAdvanceOrder,
 } from "./contractualAdvances";
+import { getInvoiceSettlementMap } from "./invoiceSettlement";
 import { randomUUID } from "node:crypto";
 import {
   and,
@@ -1144,6 +1145,10 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
           Number.MAX_SAFE_INTEGER) || left.id - right.id
   );
   const invoiceIds = invoiceRows.map((invoice: any) => invoice.id);
+  const settlementByInvoice = await getInvoiceSettlementMap(
+    input.executor,
+    invoiceIds
+  );
   const [applicationRows, invoicePaymentRows] = await Promise.all([
     input.executor
       .select()
@@ -1225,7 +1230,9 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
       // Contractual consumption is already deducted inside invoice.netPayable.
       const remainingCents =
         decimalToMinorUnits(
-          contractual ? snapshot.amount : invoice.netPayable
+          contractual
+            ? snapshot.amount
+            : (settlementByInvoice.get(invoice.id)?.amount ?? invoice.netPayable)
         ) -
         decimalToMinorUnits(invoiceApplied.get(invoice.id) ?? 0) -
         (contractual

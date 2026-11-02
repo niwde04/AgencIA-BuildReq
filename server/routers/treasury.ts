@@ -18,6 +18,7 @@ import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { buildTreasuryInvoiceReportPdfBase64 } from "../_core/documents";
 import * as db from "../db";
 import * as treasury from "../treasury";
+import { getInvoiceSettlementMap } from "../invoiceSettlement";
 import { listInvoiceAccountingQueue } from "../invoiceAccounting";
 import {
   assertInvoicePendingAccounting,
@@ -266,16 +267,31 @@ async function buildTreasuryInvoiceSummaryReport(
   const sourceInvoices = await db.listDmcReportSourceInvoices(
     applyProjectScope(invoiceFilters, user)
   );
+  let settlements: Awaited<ReturnType<typeof getInvoiceSettlementMap>> = new Map();
+  if (sourceInvoices.length) {
+    const database = await db.getDb();
+    if (!database) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Base de datos no disponible",
+      });
+    }
+    settlements = await getInvoiceSettlementMap(
+      database,
+      sourceInvoices.map(invoice => invoice.invoiceId)
+    );
+  }
   const paymentsByInvoice = await treasury.getTreasuryInvoiceReportPayments(
     sourceInvoices.map(invoice => invoice.invoiceId)
   );
   const filteredInvoices = sourceInvoices.flatMap(invoice => {
+    const settlement = settlements.get(invoice.invoiceId);
     const payments = paymentsByInvoice.get(invoice.invoiceId) ?? [];
     const paidAmount = roundTreasuryMoney(
       payments.reduce((sum, payment) => sum + payment.amount, 0)
     );
     const treasuryPaymentStatus = getTreasuryPaymentStatus(
-      Number(invoice.netPayable ?? 0),
+      settlement?.amount ?? Number(invoice.netPayable ?? 0),
       paidAmount + Number(invoice.appliedAdvanceAmount ?? 0)
     );
     const paymentStatus =
@@ -292,7 +308,12 @@ async function buildTreasuryInvoiceSummaryReport(
     }
     return [
       {
-        invoice,
+        // This operational summary uses the liquidable amount without changing
+        // the original source that is also used by the fiscal DMC report.
+        invoice:
+          settlement?.policy === "document_cents_v1"
+            ? { ...invoice, netPayable: settlement.amount }
+            : invoice,
         payments,
         paidAmount,
         paymentStatusLabel:

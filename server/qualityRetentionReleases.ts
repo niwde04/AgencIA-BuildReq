@@ -1,5 +1,6 @@
 import { getPurchaseOrderAdvanceBlockingSet } from "./purchaseOrderAdvances";
 import { queryRows } from "./contractualAdvances";
+import { getInvoiceSettlementMap } from "./invoiceSettlement";
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   invoiceDocumentAdjustments,
@@ -103,6 +104,7 @@ async function getOrdinaryInvoicePaymentMap(
     )}) and round(c.amount,2) > coalesce((select sum(round(a.amount,2)) from "purchaseOrderAdvanceApplications" a where a."invoiceId"=c."invoiceId" and a."applicationMode"='contractual'),0)`
   );
   const incompleteIds = new Set(incomplete.map(row => row.invoiceId));
+  const settlementByInvoice = await getInvoiceSettlementMap(executor, ids);
   for (const invoice of invoiceRows) {
     const paid = paymentRows
       .filter((row: any) => row.invoiceId === invoice.id)
@@ -110,7 +112,13 @@ async function getOrdinaryInvoicePaymentMap(
     const applied = advanceRows
       .filter((row: any) => row.invoiceId === invoice.id)
       .reduce((sum: number, row: any) => sum + money(row.amount), 0);
-    const netPayable = money(invoice.netPayable);
+    const settlement = settlementByInvoice.get(invoice.id);
+    // Keep historical release checks unchanged; new invoices close against the
+    // same document-cent payable that Treasury actually settles.
+    const netPayable =
+      settlement?.policy === "document_cents_v1"
+        ? settlement.amount
+        : money(invoice.netPayable);
     const settledAmount = round4(paid + applied);
     result.set(invoice.id, {
       netPayable,

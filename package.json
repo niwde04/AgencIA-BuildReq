@@ -32,6 +32,9 @@
     "db:migrate-retention-print": "tsx scripts/migrate-retention-print.ts",
     "db:migrate-purchase-order-billing": "tsx scripts/migrate-purchase-order-billing.ts",
     "test:purchase-order-billing:db": "tsx scripts/test-purchase-order-billing-db.ts",
+    "db:migrate-invoice-settlement": "tsx scripts/migrate-invoice-settlement.ts",
+    "db:activate-invoice-settlement": "tsx scripts/activate-invoice-settlement.ts",
+    "test:invoice-settlement:db": "tsx scripts/test-invoice-settlement-db.ts",
     "test:retention-documents:db": "tsx scripts/test-retention-documents-db.ts"
   },
   "dependencies": {

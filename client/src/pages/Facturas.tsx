@@ -98,6 +98,7 @@ import {
   canRevertAccountedInvoices,
 } from "@shared/invoices";
 import { getInvoiceReceiptFiscalDifferences } from "@shared/invoice-receipt-fiscal";
+import { calculateInvoiceSettlement } from "@shared/invoice-settlement";
 import {
   ASSET_CONDITION_LABELS,
   ASSET_CONDITION_VALUES,
@@ -2508,7 +2509,7 @@ export default function Facturas() {
         : accountPaymentCertificate.status === "vencido"
           ? `Vencida al emitir · venció ${formatDateLabel(accountPaymentCertificate.expirationDate)}`
           : "Sin vencimiento válido";
-  const adjustedNetPayable = Math.max(
+  const rawAdjustedNetPayable = Math.max(
     0,
     calculateInvoiceNetPayable({
       total: invoiceTotal,
@@ -2519,6 +2520,19 @@ export default function Facturas() {
       documentDiscountTotal,
     })
   );
+  const adjustedNetPayable =
+    detail?.settlement?.policy === "document_cents_v1"
+      ? calculateInvoiceSettlement({
+          policy: detail.settlement.policy,
+          netPayable: rawAdjustedNetPayable,
+          total: invoiceTotal,
+          retentionTotal,
+          otherRetentionTotal,
+          documentDiscountTotal,
+          creditNoteTotal: detail.invoice.creditNoteTotal,
+          debitNoteTotal: detail.invoice.debitNoteTotal,
+        }).amount
+      : rawAdjustedNetPayable;
   const appliedAdvanceAmount = Math.max(
     0,
     Number(detail?.appliedAdvanceAmount ?? 0)
@@ -4273,7 +4287,9 @@ export default function Facturas() {
                           </td>
                           <td className="p-3 text-right font-semibold">
                             {formatPurchaseOrderCurrency(
-                              row.invoice.netPayable,
+                              row.settlement?.policy === "document_cents_v1"
+                                ? row.settlementNetPayable
+                                : row.invoice.netPayable,
                               row.invoice.currency ?? "HNL"
                             )}
                           </td>
