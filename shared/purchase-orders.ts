@@ -937,6 +937,8 @@ export function getPurchaseOrderContractSummary(params: {
   contractFirstPaymentDate?: string | Date | null;
   contractEndDate?: string | Date | null;
   registeredInvoiceCount?: number | string | null;
+  billingAuthorization?: import("./purchase-order-billing").PurchaseOrderBillingAuthorization | null;
+  billingAuthorizationReady?: boolean;
   now?: Date;
 }) {
   const appliesContract = params.appliesContract === true;
@@ -979,6 +981,8 @@ export function getPurchaseOrderContractSummary(params: {
     expiresSoon,
     isExpired,
     isFullyInvoiced,
+    billingAuthorization: params.billingAuthorization ?? null,
+    billingAuthorizationReady: params.billingAuthorizationReady ?? false,
     statusLabel: appliesContract
       ? `Pendiente ${registeredInvoiceCount} de ${expectedInvoiceCount}`
       : "",

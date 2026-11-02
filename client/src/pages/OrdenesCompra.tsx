@@ -7,6 +7,7 @@ import { downloadSystemPurchaseOrdersWorkbook } from "@/lib/dmc-export";
 import { openBase64Pdf } from "@/lib/document-download";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { PurchaseOrderAdvanceDialog } from "@/components/PurchaseOrderAdvanceDialog";
+import { PurchaseOrderBillingAuthorization } from "@/components/PurchaseOrderBillingAuthorization";
 import {
   DocumentItemsAccordionPanel,
   DocumentItemsAccordionTrigger,
@@ -2895,7 +2896,7 @@ export default function OrdenesCompra() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(360px,1fr)_repeat(5,minmax(150px,190px))] xl:items-end">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-[minmax(280px,1fr)_repeat(5,minmax(120px,190px))] 2xl:items-end">
         <div className="min-w-0 space-y-1.5 sm:col-span-2 xl:col-span-1">
           <Label htmlFor="purchase-order-search" className="text-xs">
             Buscar
@@ -3761,13 +3762,13 @@ export default function OrdenesCompra() {
             className={
               isCompactApprovalView
                 ? "shrink-0 border-b border-border/70 px-4 py-3 pr-12 sm:px-8 sm:py-5"
-                : "border-b border-border/70 pb-4 pr-10"
+                : "min-w-0 border-b border-border/70 pb-4 pr-10"
             }
           >
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <DialogTitle
-                  className={`font-bold tracking-tight ${
+                  className={`break-words font-bold tracking-tight ${
                     isCompactApprovalView
                       ? "text-2xl sm:text-3xl"
                       : "text-[2.1rem] sm:text-[2.5rem]"
@@ -5226,8 +5227,8 @@ export default function OrdenesCompra() {
                 isPending={reviewApprovalMutation.isPending}
               />
             ) : (
-              <div className="space-y-5">
-                <div className="grid gap-3 md:grid-cols-12">
+              <div className="min-w-0 space-y-5">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
                   <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
                     <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                       Clasificación
@@ -5687,11 +5688,17 @@ export default function OrdenesCompra() {
                         </div>
 
                         {contractDraftSummary.isExpired ? (
-                          <div className="flex items-start gap-2 rounded-xl border border-rose-300 bg-rose-50 p-3 text-sm text-rose-700">
-                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                          <div
+                            className={`flex items-start gap-2 rounded-xl border p-3 text-sm ${contractSummary.billingAuthorization?.isUsable ? "border-border bg-muted/30 text-foreground" : "border-amber-300 bg-amber-50 text-amber-900"}`}
+                          >
+                            <AlertTriangle
+                              aria-hidden="true"
+                              className="mt-0.5 h-4 w-4 shrink-0"
+                            />
                             <span>
-                              El contrato está vencido y no permitirá agregar
-                              nuevas facturas.
+                              {contractSummary.billingAuthorization?.isUsable
+                                ? "El vencimiento original se conserva. La facturación posterior está sujeta a la autorización vigente y sus límites."
+                                : "El contrato está vencido. Las facturas posteriores requieren autorización de Administración Central."}
                             </span>
                           </div>
                         ) : contractDraftSummary.expiresSoon ? (
@@ -5757,6 +5764,23 @@ export default function OrdenesCompra() {
                       </div>
                     ) : null}
                   </div>
+                ) : null}
+
+                {detail.purchaseOrder.appliesContract &&
+                [
+                  "emitida",
+                  "enviada",
+                  "parcialmente_recibida",
+                  "recibida",
+                ].includes(detail.purchaseOrder.status) ? (
+                  <PurchaseOrderBillingAuthorization
+                    key={detail.purchaseOrder.id}
+                    purchaseOrderId={detail.purchaseOrder.id}
+                    currency={orderCurrency}
+                    registeredInvoiceCount={
+                      contractSummary.registeredInvoiceCount
+                    }
+                  />
                 ) : null}
 
                 <div className="flex flex-col gap-3 border-y border-border/70 bg-muted/10 px-1 py-3 sm:flex-row sm:items-center sm:justify-between">

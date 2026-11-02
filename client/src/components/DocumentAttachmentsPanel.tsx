@@ -50,6 +50,7 @@ type DocumentAttachmentsPanelProps = {
   canDelete?: boolean;
   className?: string;
   disabled?: boolean;
+  billingSupport?: boolean;
   onUploadSuccess?: (result: UploadResult) => void;
   onStateChange?: (state: {
     attachments: AttachmentItem[];
@@ -70,6 +71,7 @@ export function DocumentAttachmentsPanel({
   canDelete = canManage,
   className = "",
   disabled = false,
+  billingSupport = false,
   onUploadSuccess,
   onStateChange,
 }: DocumentAttachmentsPanelProps) {
@@ -84,10 +86,7 @@ export function DocumentAttachmentsPanel({
     entityId: resolvedEntityId,
   };
   const { data, isLoading, error, refetch } =
-    trpc.attachments.getByEntity.useQuery(
-    queryInput,
-    { enabled }
-  );
+    trpc.attachments.getByEntity.useQuery(queryInput, { enabled });
   const attachments = (data ?? []) as AttachmentItem[];
 
   const invalidateAttachments = () => {
@@ -147,6 +146,7 @@ export function DocumentAttachmentsPanel({
         mimeType: prepared.mimeType,
         fileSize: prepared.fileSize,
         category,
+        ...(billingSupport ? { billingSupport: true } : {}),
       });
     } catch (error) {
       toast.error(

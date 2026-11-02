@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { canAuthorizePurchaseOrderBilling, billingDate } from "@shared/purchase-order-billing";
 import { z } from "zod";
 import * as db from "../db";
 import { listPurchaseOrdersPage } from "../paginatedLists";
@@ -642,6 +643,29 @@ async function releaseDirectPurchaseOrderItems(params: {
 }
 
 export const purchaseOrdersRouter = router({
+  billingAuthorization: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      if (!canReadPurchaseOrders(ctx.user)) throw new TRPCError({ code: "FORBIDDEN", message: "No tiene permisos para consultar esta OC" });
+      const detail = await db.getPurchaseOrderById(input.id);
+      if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Orden de compra no encontrada" });
+      assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      assertApproverPendingVisibility(ctx.user, detail.purchaseOrder);
+      return { ...(await db.getPurchaseOrderBillingAuthorization(input.id)), canAuthorize: canAuthorizePurchaseOrderBilling(ctx.user) };
+    }),
+  authorizeBilling: protectedProcedure
+    .input(z.object({
+      id: z.number().int().positive(),
+      authorizedUntil: z.string().refine(value => billingDate(value) === value, "Fecha autorizada inválida"),
+      additionalInvoiceCount: z.number().int().min(0).max(600),
+      maxAmount: z.string().regex(/^\d{1,14}(?:\.\d{1,4})?$/, "Importe inválido").nullable().optional(),
+      reason: z.string().trim().min(10).max(2000),
+      supportAttachmentId: z.number().int().positive(),
+    }))
+    .mutation(({ ctx, input }) => db.authorizePurchaseOrderBilling(ctx.user, input)),
+  revokeBillingAuthorization: protectedProcedure
+    .input(z.object({ id: z.number().int().positive(), authorizationId: z.number().int().positive(), reason: z.string().trim().min(10).max(2000) }))
+    .mutation(({ ctx, input }) => db.revokePurchaseOrderBillingAuthorization(ctx.user, input)),
   verifySeal: publicProcedure
     .input(z.object({ token: z.string().trim().min(1).max(200) }))
     .query(async ({ input }) => {

@@ -1,5 +1,7 @@
 import { assertContractualInvoiceReady, getContractualInvoiceContext, getInvoiceAdvanceReconciliationMap, lockInvoiceAdvanceOrder, prepareContractualAmortization, saveContractualSnapshot } from "./contractualAdvances";
 import { TRPCError } from "@trpc/server";
+import * as purchaseOrderBilling from "./purchaseOrderBilling";
+import { getContractBillingDecision } from "../shared/purchase-order-billing";
 import { createHash, randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { performance } from "node:perf_hooks";
@@ -8773,7 +8775,8 @@ async function getPurchaseOrderInvoiceCountMap(orderIds: number[]) {
 
 function buildPurchaseOrderContractSummary(
   purchaseOrder: typeof purchaseOrders.$inferSelect,
-  registeredInvoiceCount: number
+  registeredInvoiceCount: number,
+  billing?: Awaited<ReturnType<typeof purchaseOrderBilling.getPurchaseOrderBillingMap>>
 ) {
   return getPurchaseOrderContractSummary({
     appliesContract: purchaseOrder.appliesContract,
@@ -8781,6 +8784,8 @@ function buildPurchaseOrderContractSummary(
     contractFirstPaymentDate: purchaseOrder.contractFirstPaymentDate,
     contractEndDate: purchaseOrder.contractEndDate,
     registeredInvoiceCount,
+    billingAuthorization: billing?.authorizations.get(purchaseOrder.id) ?? null,
+    billingAuthorizationReady: billing?.ready ?? false,
   });
 }
 
@@ -9026,6 +9031,9 @@ export async function listPurchaseOrders(filters?: {
   );
   const invoiceCountMap =
     await getPurchaseOrderInvoiceCountMap(purchaseOrderIds);
+  const billingMap = await purchaseOrderBilling.getPurchaseOrderBillingMap(
+    db, rows.filter(row => row.purchaseOrder.appliesContract).map(row => row.purchaseOrder.id)
+  );
 
   return rows.map(row => {
     const requestedByIds =
@@ -9055,7 +9063,8 @@ export async function listPurchaseOrders(filters?: {
       requestedByUsers,
       contractSummary: buildPurchaseOrderContractSummary(
         row.purchaseOrder,
-        invoiceCountMap.get(row.purchaseOrder.id) ?? 0
+        invoiceCountMap.get(row.purchaseOrder.id) ?? 0,
+        billingMap
       ),
     };
   });
@@ -9294,6 +9303,8 @@ export async function getPurchaseOrderById(id: number) {
     )
   );
   const invoiceCountMap = await getPurchaseOrderInvoiceCountMap([id]);
+  const billingMap = await purchaseOrderBilling.getPurchaseOrderBillingMap(db,
+    rows[0].purchaseOrder.appliesContract ? [id] : []);
   const auditLogs = await db
     .select({
       log: purchaseOrderAuditLogs,
@@ -9468,7 +9479,8 @@ export async function getPurchaseOrderById(id: number) {
     },
     contractSummary: buildPurchaseOrderContractSummary(
       rows[0].purchaseOrder,
-      invoiceCountMap.get(id) ?? 0
+      invoiceCountMap.get(id) ?? 0,
+      billingMap
     ),
     preferredSupplierContact,
     directPurchasePaymentMethod,
@@ -10700,6 +10712,36 @@ export async function createPurchaseOrderAuditLog(
     .values(data)
     .returning({ id: purchaseOrderAuditLogs.id });
   return created;
+}
+
+export async function getPurchaseOrderBillingAuthorization(id: number) {
+  const client = await getDb();
+  if (!client) throw new Error("DB not available");
+  return purchaseOrderBilling.getPurchaseOrderBillingHistory(client, id);
+}
+
+export async function authorizePurchaseOrderBilling(
+  actor: purchaseOrderBilling.BillingActor,
+  input: Parameters<typeof purchaseOrderBilling.grantPurchaseOrderBilling>[2]
+) {
+  const client = await getDb();
+  if (!client) throw new Error("DB not available");
+  return client.transaction(tx => purchaseOrderBilling.grantPurchaseOrderBilling(tx, actor, input));
+}
+
+export async function revokePurchaseOrderBillingAuthorization(
+  actor: purchaseOrderBilling.BillingActor,
+  input: Parameters<typeof purchaseOrderBilling.revokePurchaseOrderBilling>[2]
+) {
+  const client = await getDb();
+  if (!client) throw new Error("DB not available");
+  return client.transaction(tx => purchaseOrderBilling.revokePurchaseOrderBilling(tx, actor, input));
+}
+
+export async function createPurchaseOrderBillingSupportAttachment(data: InsertAttachment, actor: purchaseOrderBilling.BillingActor) {
+  const client = await getDb();
+  if (!client) throw new Error("DB not available");
+  return client.transaction(tx => purchaseOrderBilling.createPurchaseOrderBillingSupportAttachment(tx, data, actor));
 }
 
 export async function updatePurchaseOrderContractTerms(params: {
@@ -13077,10 +13119,25 @@ export async function registerReceipt(
   let purchaseOrderDetailForReceipt: Awaited<
     ReturnType<typeof getPurchaseOrderById>
   > = undefined;
+  let receiptBillingAuthorizationId: number | null = null;
   if (data.sourceType === "purchase_order") {
+    // Count, grant/revoke and consumption share this lock until commit.
+    await purchaseOrderBilling.lockPurchaseOrderForBilling(db, data.sourceId);
     purchaseOrderDetailForReceipt = await getPurchaseOrderById(data.sourceId);
     if (!purchaseOrderDetailForReceipt) {
       throw new Error("Orden de compra no encontrada");
+    }
+    if (purchaseOrderDetailForReceipt.purchaseOrder.appliesContract) {
+      if (!["emitida", "enviada", "parcialmente_recibida", "recibida"].includes(purchaseOrderDetailForReceipt.purchaseOrder.status)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Solo se pueden recibir contratos emitidos" });
+      }
+      const decision = getContractBillingDecision({
+        contractSummary: purchaseOrderDetailForReceipt.contractSummary,
+        contractEndDate: purchaseOrderDetailForReceipt.purchaseOrder.contractEndDate,
+        documentDate: data.documentDate,
+      });
+      if (!decision.allowed) throw new TRPCError({ code: "BAD_REQUEST", message: decision.error! });
+      receiptBillingAuthorizationId = decision.authorizationId;
     }
 
     if (data.isFiscalDocument) {
@@ -13308,6 +13365,17 @@ export async function registerReceipt(
       receiptItems: insertedReceiptItems,
       receiptOtherCharges: insertedOtherCharges,
     });
+    if (receiptBillingAuthorizationId !== null) {
+      await purchaseOrderBilling.recordPurchaseOrderBillingUse(db, {
+        authorizationId: receiptBillingAuthorizationId,
+        purchaseOrderId: data.sourceId,
+        invoiceId: createdInvoice.id,
+        receiptId: created.id,
+        documentDate: data.documentDate!,
+        contractSummary: purchaseOrderDetail.contractSummary,
+        contractEndDate: purchaseOrderDetail.purchaseOrder.contractEndDate!,
+      });
+    }
   }
 
   if (data.sourceType === "purchase_order") {

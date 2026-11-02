@@ -11,6 +11,7 @@ export default defineConfig({
     "./drizzle/financial-notes-schema.ts",
     "./drizzle/retention-documents-schema.ts",
     "./drizzle/cost-matrix-schema.ts",
+    "./drizzle/purchase-order-billing-schema.ts",
   ],
   out: "./drizzle",
   dialect: "postgresql",

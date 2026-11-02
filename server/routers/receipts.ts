@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { getContractBillingDecision } from "@shared/purchase-order-billing";
 import { z } from "zod";
 import * as db from "../db";
 import { listReceiptsPage } from "../paginatedLists";
@@ -18,7 +19,6 @@ import {
   normalizeFixedAssetDetails,
 } from "@shared/fixed-assets";
 import {
-  isPurchaseOrderContractDocumentDateWithinTerm,
   parsePurchaseOrderAdditionalTaxCodes,
   parsePurchaseOrderTaxBreakdown,
   type PurchaseCurrency,
@@ -104,34 +104,8 @@ function assertContractReceiptIsAllowed(params: {
     });
   }
 
-  if (contractSummary.isFullyInvoiced) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "La OC de contrato ya alcanzó el total de facturas programadas",
-    });
-  }
-
-  if (contractSummary.isExpired && !documentDate) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message:
-        "El contrato está vencido; ingrese la fecha del documento fiscal para validar su vigencia",
-    });
-  }
-
-  if (
-    documentDate &&
-    !isPurchaseOrderContractDocumentDateWithinTerm({
-      documentDate,
-      contractEndDate: purchaseOrder.contractEndDate,
-    })
-  ) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message:
-        "La fecha del documento fiscal es posterior al vencimiento del contrato",
-    });
-  }
+  const decision = getContractBillingDecision({ contractSummary, contractEndDate: purchaseOrder.contractEndDate, documentDate });
+  if (!decision.allowed) throw new TRPCError({ code: "BAD_REQUEST", message: decision.error! });
 }
 
 function canReadReceipts(user: { role: string; buildreqRole?: string | null }) {

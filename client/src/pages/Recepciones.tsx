@@ -114,6 +114,10 @@ import {
   type PurchaseOrderTaxCode,
   type SalesTaxCatalogItem,
 } from "@shared/purchase-orders";
+import {
+  getContractBillingDecision,
+  type PurchaseOrderBillingAuthorization,
+} from "@shared/purchase-order-billing";
 import { isPurchaseOrderNonInventoryLine } from "@shared/receipt-inventory";
 import {
   isReceiptArticleSubstitution,
@@ -477,10 +481,14 @@ function canReceivePurchaseOrderRow(row: any) {
   }
 
   const contractSummary = row.contractSummary;
+  const authorization = contractSummary?.billingAuthorization;
   return Boolean(
     contractSummary &&
       contractSummary.expectedInvoiceCount > 0 &&
-      !contractSummary.isFullyInvoiced
+      (!contractSummary.isFullyInvoiced ||
+        (authorization?.isUsable &&
+          contractSummary.registeredInvoiceCount <
+            authorization.maxInvoiceCount))
   );
 }
 
@@ -981,11 +989,20 @@ function formatContractReceiptProgress(summary: {
   registeredInvoiceCount: number;
   expectedInvoiceCount: number;
   remainingInvoiceCount: number;
+  billingAuthorization?: PurchaseOrderBillingAuthorization | null;
 }) {
   const registered = summary.registeredInvoiceCount;
   const expected = summary.expectedInvoiceCount;
   const remaining = summary.remainingInvoiceCount;
-  return `${registered} ${registered === 1 ? "factura registrada" : "facturas registradas"} de ${expected} ${expected === 1 ? "programada" : "programadas"} · ${remaining} ${remaining === 1 ? "pendiente" : "pendientes"}`;
+  const original = `${registered} ${registered === 1 ? "factura registrada" : "facturas registradas"} de ${expected} ${expected === 1 ? "programada" : "programadas"} · ${remaining} ${remaining === 1 ? "pendiente" : "pendientes"}`;
+  const authorization = summary.billingAuthorization;
+  const available = Math.max(
+    (authorization?.maxInvoiceCount ?? 0) - registered,
+    0
+  );
+  return authorization?.isUsable
+    ? `${registered} ${registered === 1 ? "factura registrada" : "facturas registradas"} · ${expected} ${expected === 1 ? "programada" : "programadas"} originalmente + ${authorization.additionalInvoiceCount} ${authorization.additionalInvoiceCount === 1 ? "adicional autorizada" : "adicionales autorizadas"} · ${available} ${available === 1 ? "disponible" : "disponibles"} en total`
+    : original;
 }
 
 function formatPurchaseOrderReceiptSourceLabel(row: any) {
@@ -1389,34 +1406,22 @@ export default function Recepciones() {
   const contractEndDateLabel = formatDateLabel(
     purchaseOrderDetail?.purchaseOrder.contractEndDate
   );
+  const contractBillingAuthorization =
+    purchaseOrderContractSummary.billingAuthorization;
   const contractDocumentDateInvalid =
     isContractPurchaseOrder &&
     Boolean(documentDate) &&
-    !contractDocumentDateWithinTerm;
-  const contractReceiptValidationError = isContractPurchaseOrder
-    ? purchaseOrderContractSummary.expectedInvoiceCount <= 0
-      ? "La OC de contrato no tiene una programación de pagos válida."
-      : purchaseOrderContractSummary.isFullyInvoiced
-        ? "La OC de contrato ya alcanzó el total de facturas programadas."
-        : contractDocumentDateInvalid
-          ? `La fecha del documento es posterior al vencimiento del contrato (${contractEndDateLabel}).`
-          : ""
-    : "";
+    !contractDocumentDateWithinTerm &&
+    (!contractBillingAuthorization?.isUsable ||
+      documentDate > contractBillingAuthorization.authorizedUntil);
   const contractReceiptDocumentDateRequired =
     isContractPurchaseOrder &&
-    purchaseOrderContractSummary.isExpired &&
+    (purchaseOrderContractSummary.isExpired ||
+      purchaseOrderContractSummary.isFullyInvoiced) &&
     !documentDate;
   const contractReceiptWarningMessage = contractReceiptDocumentDateRequired
-    ? `Contrato vencido el ${contractEndDateLabel}. Ingresa la fecha real del documento para comprobar si puede recibirse.`
+    ? `Vencimiento original: ${contractEndDateLabel}. Ingresa la fecha real del documento para comprobar la vigencia y el cupo disponibles.`
     : "";
-  const contractReceiptBlockReason =
-    contractReceiptValidationError || contractReceiptWarningMessage;
-  const contractReceiptStatusMessage =
-    isContractPurchaseOrder &&
-    purchaseOrderContractSummary.isExpired &&
-    contractDocumentDateWithinTerm
-      ? `La fecha del documento es igual o anterior al vencimiento del contrato (${contractEndDateLabel}).`
-      : `Contrato vigente hasta el ${contractEndDateLabel}.`;
 
   const {
     data: receiptPurchaseOrderDetail,
@@ -3337,6 +3342,37 @@ export default function Recepciones() {
     () => getOtherChargesTotal(otherChargeDrafts),
     [otherChargeDrafts]
   );
+  const contractReceiptAmount =
+    receiptPricingSummary.total + receiptOtherChargesTotal;
+  const contractBillingDecision = isContractPurchaseOrder
+    ? getContractBillingDecision({
+        contractSummary: purchaseOrderContractSummary,
+        contractEndDate: purchaseOrderDetail?.purchaseOrder.contractEndDate,
+        documentDate,
+        receiptAmount: (Number.isFinite(contractReceiptAmount) &&
+        contractReceiptAmount >= 0
+          ? contractReceiptAmount
+          : 0
+        ).toFixed(4),
+      })
+    : null;
+  const contractReceiptValidationError =
+    isContractPurchaseOrder &&
+    (!contractReceiptDocumentDateRequired ||
+      purchaseOrderContractSummary.expectedInvoiceCount <= 0)
+      ? contractBillingDecision?.error || ""
+      : "";
+  const contractReceiptBlockReason =
+    contractReceiptValidationError || contractReceiptWarningMessage;
+  const contractReceiptStatusMessage =
+    contractBillingDecision?.allowed &&
+    contractBillingDecision.requiresAuthorization
+      ? `Recepción cubierta por la autorización de Administración Central hasta el ${formatDateLabel(contractBillingAuthorization?.authorizedUntil)}. Se aplicarán sus límites de facturas e importe.`
+      : isContractPurchaseOrder &&
+          purchaseOrderContractSummary.isExpired &&
+          contractDocumentDateWithinTerm
+        ? `La fecha del documento es igual o anterior al vencimiento del contrato (${contractEndDateLabel}).`
+        : `Contrato vigente hasta el ${contractEndDateLabel}.`;
   const receiptTableColumnCount = sourceType === "purchase_order" ? 12 : 9;
   const isReceiptLineDetailsExpanded = (itemId: string | number) =>
     expandedReceiptDetailItemIds.includes(String(itemId));
@@ -5521,6 +5557,84 @@ export default function Recepciones() {
                         contractReceiptStatusMessage}
                     </span>
                   </div>
+                ) : null}
+
+                {isContractPurchaseOrder && contractBillingAuthorization ? (
+                  <section
+                    className="min-w-0 space-y-3 rounded-xl border border-border bg-muted/20 p-3 text-sm"
+                    aria-label="Autorización de facturación de la OC"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <p className="font-semibold">
+                        {contractBillingAuthorization.isUsable
+                          ? "Autorización de Administración Central"
+                          : "Autorización no disponible para nuevas excepciones"}
+                      </p>
+                      <p>
+                        Válida hasta{" "}
+                        <span className="font-semibold">
+                          {formatDateLabel(
+                            contractBillingAuthorization.authorizedUntil
+                          )}
+                        </span>
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <p>
+                        <span className="block text-xs text-muted-foreground">
+                          Cupo de facturas
+                        </span>
+                        {
+                          contractBillingAuthorization.originalExpectedInvoiceCount
+                        }{" "}
+                        {contractBillingAuthorization.originalExpectedInvoiceCount ===
+                        1
+                          ? "original"
+                          : "originales"}{" "}
+                        + {contractBillingAuthorization.additionalInvoiceCount}{" "}
+                        {contractBillingAuthorization.additionalInvoiceCount ===
+                        1
+                          ? "adicional"
+                          : "adicionales"}{" "}
+                        = {contractBillingAuthorization.maxInvoiceCount}
+                      </p>
+                      <p>
+                        <span className="block text-xs text-muted-foreground">
+                          Disponibles en total
+                        </span>
+                        {Math.max(
+                          contractBillingAuthorization.maxInvoiceCount -
+                            purchaseOrderContractSummary.registeredInvoiceCount,
+                          0
+                        )}{" "}
+                        {contractBillingAuthorization.maxInvoiceCount -
+                          purchaseOrderContractSummary.registeredInvoiceCount ===
+                        1
+                          ? "factura"
+                          : "facturas"}
+                      </p>
+                      <p>
+                        <span className="block text-xs text-muted-foreground">
+                          Importe excepcional disponible
+                        </span>
+                        {contractBillingAuthorization.remainingAmount == null
+                          ? "Sin límite adicional de importe"
+                          : formatPurchaseOrderCurrency(
+                              contractBillingAuthorization.remainingAmount,
+                              purchaseOrderDetail?.purchaseOrder.currency ??
+                                "HNL"
+                            )}
+                      </p>
+                    </div>
+                    <p className="break-words text-xs text-muted-foreground">
+                      {contractBillingAuthorization.reason} · Respaldo:{" "}
+                      {contractBillingAuthorization.supportFileName}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      La autorización conserva el vencimiento original y no
+                      aprueba, contabiliza ni paga la factura.
+                    </p>
+                  </section>
                 ) : null}
 
                 <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">

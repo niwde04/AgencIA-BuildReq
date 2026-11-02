@@ -20,8 +20,14 @@ import {
 } from "@shared/procurement-approvals";
 import { listPurchaseOrderAdvances } from "../purchaseOrderAdvances";
 import { getQualityRetentionReleaseById } from "../qualityRetentionReleases";
+import { canAuthorizePurchaseOrderBilling } from "@shared/purchase-order-billing";
 
-import { getFinancialNote, assertFinancialNoteAccess, createFinancialNoteAttachment, deleteFinancialNoteAttachment } from "../financialNotes";
+import {
+  getFinancialNote,
+  assertFinancialNoteAccess,
+  createFinancialNoteAttachment,
+  deleteFinancialNoteAttachment,
+} from "../financialNotes";
 
 const PDF_MAX_BYTES = 10 * 1000 * 1000;
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
@@ -450,6 +456,7 @@ async function assertPurchaseOrderAttachmentAccess(
       });
     }
   }
+  return detail;
 }
 
 async function assertPurchaseOrderAdvanceAttachmentAccess(
@@ -789,8 +796,19 @@ async function assertDocumentAttachmentAccess(
   switch (entityType) {
     case "financial_note": {
       const detail = await getFinancialNote(entityId, user);
-      assertFinancialNoteAccess(detail.note, user, action === "manage" ? "prepare" : "view");
-      if (action === "manage" && !["borrador", "rechazada"].includes(detail.note.status)) throw new TRPCError({ code: "BAD_REQUEST", message: "Solo se modifican adjuntos en borrador o rechazados" });
+      assertFinancialNoteAccess(
+        detail.note,
+        user,
+        action === "manage" ? "prepare" : "view"
+      );
+      if (
+        action === "manage" &&
+        !["borrador", "rechazada"].includes(detail.note.status)
+      )
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Solo se modifican adjuntos en borrador o rechazados",
+        });
       return;
     }
     case "invoice":
@@ -944,6 +962,7 @@ export const attachmentsRouter = router({
         mimeType: z.string().trim().min(1).max(100),
         fileSize: z.number().int().positive(),
         category: attachmentCategorySchema.optional(),
+        billingSupport: z.boolean().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -962,12 +981,48 @@ export const attachmentsRouter = router({
         });
       }
 
-      await assertDocumentAttachmentAccess(
-        input.entityType,
-        input.entityId,
-        ctx.user,
-        "manage"
-      );
+      if (input.billingSupport) {
+        if (
+          input.entityType !== "purchase_order" ||
+          (input.category !== undefined && input.category !== "otro")
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "El respaldo de autorización debe pertenecer a una orden de compra",
+          });
+        }
+        if (!canAuthorizePurchaseOrderBilling(ctx.user)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message:
+              "Solo Administración Central puede adjuntar el respaldo de esta autorización",
+          });
+        }
+        const detail = await assertPurchaseOrderAttachmentAccess(
+          input.entityId,
+          ctx.user,
+          "view"
+        );
+        if (
+          !detail.purchaseOrder.appliesContract ||
+          !["emitida", "enviada", "parcialmente_recibida", "recibida"].includes(
+            detail.purchaseOrder.status
+          )
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "El respaldo requiere una OC con contrato emitida",
+          });
+        }
+      } else {
+        await assertDocumentAttachmentAccess(
+          input.entityType,
+          input.entityId,
+          ctx.user,
+          "manage"
+        );
+      }
 
       const buffer = Buffer.from(input.fileData, "base64");
       const validated = validateDocumentAttachmentFile({
@@ -986,14 +1041,22 @@ export const attachmentsRouter = router({
         fileUrl: url,
         mimeType: validated.mimeType,
         fileSize: validated.fileSize,
-        category: input.category,
+        category: input.billingSupport ? ("otro" as const) : input.category,
         uploadedById: ctx.user.id,
       };
       let result: { id: number };
       let replacedInvoiceAttachments: Array<{ fileKey: string }> = [];
       try {
-        if (input.entityType === "financial_note") {
-          result = await createFinancialNoteAttachment(attachmentData, ctx.user);
+        if (input.billingSupport) {
+          result = await db.createPurchaseOrderBillingSupportAttachment(
+            { ...attachmentData, entityType: "purchase_order" },
+            ctx.user
+          );
+        } else if (input.entityType === "financial_note") {
+          result = await createFinancialNoteAttachment(
+            attachmentData,
+            ctx.user
+          );
         } else if (input.entityType === "invoice") {
           const replacement = await db.replaceInvoiceAttachments({
             ...attachmentData,
