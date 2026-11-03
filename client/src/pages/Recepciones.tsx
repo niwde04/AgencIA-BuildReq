@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
+import { TransferReceiptSourceSelector } from "@/components/TransferReceiptSourceSelector";
 import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import { DocumentNumberButton } from "@/components/DocumentNumberButton";
 import {
@@ -1159,6 +1160,7 @@ const ASSET_DETAIL_OPTIONAL_FIELDS: Array<{
 
 export default function Recepciones() {
   const utils = trpc.useUtils();
+  const [sourceChangePending, setSourceChangePending] = useState(false);
   const [, setLocation] = useLocation();
   const urlSearch = useSearch();
   const { user } = useAuth();
@@ -3841,6 +3843,7 @@ export default function Recepciones() {
   };
 
   const handleRegisterReceipt = () => {
+    if (sourceChangePending) return;
     if (!canManageReceipts) {
       toast.error("No tiene permisos para registrar recepciones");
       return;
@@ -6477,6 +6480,24 @@ export default function Recepciones() {
                                         {sourceCode}
                                       </div>
                                     ) : null}
+                                    {sourceType === "transfer" &&
+                                    !transferDetail?.transferRequest
+                                      ?.reverseLogisticId &&
+                                    !item.receiptClosed &&
+                                    Number(item.receivedQuantity || 0) === 0 &&
+                                    Number(
+                                      item.returnedToOriginQuantity || 0
+                                    ) === 0 ? (
+                                      <TransferReceiptSourceSelector
+                                        transferId={Number(sourceId)}
+                                        lineId={item.id}
+                                        disabled={
+                                          registerMutation.isPending ||
+                                          sourceChangePending
+                                        }
+                                        onBusyChange={setSourceChangePending}
+                                      />
+                                    ) : null}
                                     <div className="mt-2 flex max-w-[360px] flex-wrap items-center gap-1.5">
                                       {renderReceiptLineDetailsButton(
                                         item.id,
@@ -7591,6 +7612,7 @@ export default function Recepciones() {
                         : undefined
                     }
                     disabled={
+                      sourceChangePending ||
                       registerMutation.isPending ||
                       !sourceId ||
                       activeSourceLoading ||

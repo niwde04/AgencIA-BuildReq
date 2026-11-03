@@ -19927,6 +19927,7 @@ async function listInventoryRowsForStock(params: {
   warehouseLocation?: string | null;
   storageLocation?: string | null;
   includeUnclassifiedProjectStock?: boolean;
+  lockRows?: boolean;
 }) {
   const db = await getDb();
   if (!db) return [] as InventoryItem[];
@@ -19978,11 +19979,12 @@ async function listInventoryRowsForStock(params: {
     }
   }
 
-  return db
+  const query = db
     .select()
     .from(inventoryItems)
     .where(and(...conditions))
     .orderBy(asc(inventoryItems.id));
+  return params.lockRows ? query.for("update") : query;
 }
 
 async function consumeInventoryStock(params: {
@@ -20004,7 +20006,7 @@ async function consumeInventoryStock(params: {
   }
   await resolveProjectAssignment(params.projectId, params.warehouseId);
 
-  const rows = await listInventoryRowsForStock(params);
+  const rows = await listInventoryRowsForStock({ ...params, lockRows: true });
   const consumptionRows =
     params.includeUnclassifiedProjectStock &&
     params.projectId !== null &&

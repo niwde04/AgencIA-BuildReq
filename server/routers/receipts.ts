@@ -32,7 +32,15 @@ import {
   isReceiptArticleSubstitution,
   normalizeReceiptArticleValue,
 } from "@shared/receipt-substitutions";
-import { applyProjectScope, canAccessProject } from "../projectAccess";
+import {
+  applyProjectScope,
+  canAccessProject,
+  getProjectScopeIds,
+} from "../projectAccess";
+import {
+  changeTransferReceiptSource,
+  listTransferReceiptSources,
+} from "../transferReceiptSource";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
   "emitida",
@@ -665,6 +673,59 @@ function normalizeReceiptOtherCharges(
 }
 
 export const receiptsRouter = router({
+  transferSourceOptions: protectedProcedure
+    .input(
+      z.object({
+        transferId: z.number().int().positive(),
+        lineId: z.number().int().positive(),
+        cursor: z.number().int().positive().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canAccessReceipts(ctx.user))
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para registrar recepciones",
+        });
+      const database = await db.getDb();
+      if (!database)
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "No se pudo consultar la existencia. Intente nuevamente.",
+        });
+      return listTransferReceiptSources(database, {
+        ...input,
+        projectIds: getProjectScopeIds(ctx.user),
+      });
+    }),
+
+  changeTransferSource: protectedProcedure
+    .input(
+      z.object({
+        transferId: z.number().int().positive(),
+        lineId: z.number().int().positive(),
+        inventoryItemId: z.number().int().positive(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canAccessReceipts(ctx.user))
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para registrar recepciones",
+        });
+      const database = await db.getDb();
+      if (!database)
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "No se pudo cambiar el origen. Intente nuevamente.",
+        });
+      return changeTransferReceiptSource(database, {
+        ...input,
+        actorId: ctx.user.id,
+        projectIds: getProjectScopeIds(ctx.user),
+      });
+    }),
+
   listPage: protectedProcedure
     .input(
       z.object({

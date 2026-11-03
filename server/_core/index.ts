@@ -44,6 +44,7 @@ async function startServer() {
         explicitOpeningBalanceProject: 1,
         openingBalanceRetiredNumberGuard: 1,
         invoiceSettlementDocumentCents: 1,
+        transferReceiptSourceSelection: 1,
       },
       legacyManualCaptureEnabled:
         process.env.LEGACY_MANUAL_ADVANCES_ENABLED !== "false",

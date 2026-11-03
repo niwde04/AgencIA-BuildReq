@@ -1,6 +1,8 @@
 # Estado actual
 
-Actualizado: 2026-11-02 (Honduras).
+Actualizado: 2026-11-03 (Honduras).
+
+Selección de proyecto de origen en Recepciones preparada sobre main: permite elegir una existencia del mismo artículo/almacén de otro proyecto antes de la primera recepción de la línea, con auditoría y descuento transaccional del origen real. Sin migración ni cambios de inventario en producción. 18 pruebas PostgreSQL, tipos/build y seis escenarios visuales aprobados; las pruebas existentes mantienen los seis fallos de mocks reproducidos en main original. Publicación mediante main/Dokploy; verificar `transferReceiptSourceSelection: 1` en `/health`. Detalle y recuperación: [recepciones-origen-entre-proyectos.md](recepciones-origen-entre-proyectos.md).
 
 Integración con main remoto `2bff444`: se conservan la liquidación documental en centavos y los tres commits locales de pendientes/recepciones/autorización. Se resolvieron conflictos de scripts y memoria manteniendo ambos contenidos. Verificación conjunta: 157 pruebas focalizadas, diez PostgreSQL de autorización, 27 PostgreSQL de liquidación, tipos y build aprobados. El contenedor incluye también el runner explícito de migración de autorizaciones; no se aplicaron migraciones remotas en esta integración.
 
