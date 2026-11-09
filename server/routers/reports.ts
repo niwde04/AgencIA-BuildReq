@@ -8,7 +8,7 @@ import {
 import { buildSystemWorkbookPayload } from "@shared/system-workbook-report";
 import { z } from "zod";
 import * as db from "../db";
-import * as treasury from "../treasury";
+import { getInvoiceReportPaymentMetadata } from "../invoiceReportPayments";
 import { getInvoiceSettlementMap } from "../invoiceSettlement";
 import { protectedProcedure, router } from "../_core/trpc";
 import { applyProjectScope } from "../projectAccess";
@@ -118,10 +118,9 @@ export const reportsRouter = router({
           applyProjectScope(purchaseOrderFilters, ctx.user)
         ),
       ]);
-      const treasuryPaymentsByInvoice =
-        await treasury.getTreasuryInvoiceReportPayments(
-          sourceInvoices.map(invoice => invoice.invoiceId)
-        );
+      const treasuryPaymentsByInvoice = await getInvoiceReportPaymentMetadata(
+        sourceInvoices.map(invoice => invoice.invoiceId)
+      );
       return buildSystemWorkbookPayload(
         sourceInvoices,
         purchaseOrderLines,
@@ -231,10 +230,9 @@ export const reportsRouter = router({
       const sourceInvoices = await db.listDmcReportSourceInvoices(
         applyProjectScope(invoiceFilters, ctx.user)
       );
-      const treasuryPaymentsByInvoice =
-        await treasury.getTreasuryInvoiceReportPayments(
-          sourceInvoices.map(invoice => invoice.invoiceId)
-        );
+      const treasuryPaymentsByInvoice = await getInvoiceReportPaymentMetadata(
+        sourceInvoices.map(invoice => invoice.invoiceId)
+      );
       return buildSystemWorkbookPayload(
         sourceInvoices,
         [],

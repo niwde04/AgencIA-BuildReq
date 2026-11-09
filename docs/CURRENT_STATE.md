@@ -1,6 +1,8 @@
 # Estado actual
 
-Actualizado: 2026-11-03 (Honduras).
+Actualizado: 2026-11-09 (Honduras).
+
+Reporte de Facturas: preparada en main la trazabilidad bancaria de anticipos directos aplicados, tanto en Facturas como en el libro general. Lector exclusivo de metadatos, sin duplicar importes/saldos ni cambiar liquidación en centavos; fecha bancaria conservada en XLSX. Caso FT-010-00000302 verificado con datos de solo lectura: TES-2026-000240 / FT26253PPMML / 10/09/2026 en sus seis líneas; 104 facturas recuperan trazabilidad. 86 pruebas focalizadas/regresión, tipos, formato y build aprobados; sin migraciones, cambios de datos, push ni despliegue. Detalle: [reporte-facturas-anticipos.md](reporte-facturas-anticipos.md).
 
 Selección de proyecto de origen en Recepciones preparada sobre main: permite elegir una existencia del mismo artículo/almacén de otro proyecto antes de la primera recepción de la línea, con auditoría y descuento transaccional del origen real. Sin migración ni cambios de inventario en producción. 18 pruebas PostgreSQL, tipos/build y seis escenarios visuales aprobados; las pruebas existentes mantienen los seis fallos de mocks reproducidos en main original. Publicación mediante main/Dokploy; verificar `transferReceiptSourceSelection: 1` en `/health`. Detalle y recuperación: [recepciones-origen-entre-proyectos.md](recepciones-origen-entre-proyectos.md).
 

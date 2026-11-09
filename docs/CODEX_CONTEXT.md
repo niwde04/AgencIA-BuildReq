@@ -1,6 +1,6 @@
 # Contexto de BuildReq
 
-Revisado: 2026-11-02.
+Revisado: 2026-11-09.
 
 Aplicación de compras, recepciones, inventario, facturas de proveedores y tesorería. Cliente React/TypeScript con Vite, Tailwind/Radix y tRPC/TanStack Query; servidor Express/tRPC con Drizzle y PostgreSQL. Supabase proporciona autenticación y almacenamiento. Las tablas de negocio se acceden desde el backend confiable, con RLS y sin permisos directos del navegador.
 
@@ -16,6 +16,7 @@ Aplicación de compras, recepciones, inventario, facturas de proveedores y tesor
 - Comprobantes de retención: imprimir desde Facturas crea una retención normal `registrada` aun con factura borrador; guardar correcciones la sincroniza hasta contabilizar. `snapshot.accountedAt` identifica el cierre; se preservan anulados y reversión auditada. HTML preimpreso original en `client/src/lib/retention-preprinted-print.ts`. Migración `db:migrate-retention-print` aplicada en Cloud el 05/10/2026; detalles: [retenciones.md](retenciones.md).
 - Anticipos: la aplicación automática verifica amortización documental/control contractual antes de consumir fondos; una mezcla ambigua se rechaza antes de escribir. Las regularizaciones históricas son individuales, con respaldo y auditoría. ICA 621 regularizado; ver [correccion-anticipo-ica.md](correccion-anticipo-ica.md).
 - Tesorería: `server/treasury.ts`; anticipos: `server/purchaseOrderAdvances.ts`.
+- Trazabilidad bancaria del Excel de Facturas/libro general: `server/invoiceReportPayments.ts` combina pagos directos y pagos contabilizados de anticipos directos aplicados, sin importes. No usar estos metadatos para calcular saldos; el lector financiero conserva su separación de aplicaciones. Fechas bancarias sin hora se preservan hasta el XLSX. Detalle: [reporte-facturas-anticipos.md](reporte-facturas-anticipos.md).
 - Liquidación final: `shared/invoice-settlement.ts` y `server/invoiceSettlement.ts`. La política persistida `document_cents_v1` redondea totales documentales a centavos antes de calcular el neto operativo. Conservar originales de cuatro decimales y política legacy en facturas con historial previo; no usar tolerancias ni cambiar política tras el primer compromiso. Activación explícita, prueba real restaurada y recuperación: [liquidacion-centavos.md](liquidacion-centavos.md).
 - Anticipos históricos manuales: `legacy_manual` permite monto/porcentaje sin regla fija, con reserva al revisar y consumo FIFO al contabilizar. No descontar sus aplicaciones como pagos directos: ya están en el neto. Habilitación auditada limitada a orden 2202/anticipos 114–116; migración aditiva instalada en Cloud. Detalle y recuperación: [anticipos-historicos-manuales.md](anticipos-historicos-manuales.md).
 - NC/ND y sus catálogos: `server/financialNotes.ts`, `server/routers/financialNotes.ts`, `shared/financial-notes.ts`, `client/src/pages/Notas.tsx`, `client/src/pages/ConceptosNotas.tsx`.

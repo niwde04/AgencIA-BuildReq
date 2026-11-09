@@ -25,7 +25,7 @@ import {
 import * as XLSX from "xlsx";
 import { appRouter } from "./routers";
 import * as db from "./db";
-import * as treasury from "./treasury";
+import * as invoiceReportPayments from "./invoiceReportPayments";
 import * as settlement from "./invoiceSettlement";
 import { decimalToMinorUnits } from "@shared/money";
 import type { TrpcContext } from "./_core/context";
@@ -1274,6 +1274,197 @@ describe("internal BuildReq workbook", () => {
 
 describe("DMC report authorization", () => {
   it.each(["systemInvoices", "systemWorkbook"] as const)(
+    "exports applied advance payment metadata in all six invoice lines through %s without changing money",
+    async endpoint => {
+      const source = sarInvoice({
+        invoiceId: 1938,
+        invoiceDocumentNumber: "FT-010-00000302",
+        invoiceNumber: "000-001-01-00409048",
+        status: "registrada",
+        supplierName: "CYME S DE RL",
+        subtotal: "79041.9700",
+        taxAmount: "11856.2955",
+        total: "90898.2655",
+        netPayable: "90898.2655",
+        items: Array.from({ length: 6 }, (_, index) => ({
+          id: index + 1,
+          itemName: `Repuesto ${index + 1}`,
+          taxCode: "isv_15",
+          subtotal: index === 5 ? "13173.6615" : "13173.6617",
+          taxAmount: "1976.04925",
+          total: index === 5 ? "15149.71075" : "15149.71095",
+          taxBreakdown: [],
+        })),
+      });
+      const original = structuredClone(source);
+      vi.spyOn(db, "listDmcReportSourceInvoices").mockResolvedValue([source]);
+      vi.spyOn(db, "listSystemReportPurchaseOrderLines").mockResolvedValue([]);
+      vi.spyOn(db, "getDb").mockResolvedValue({} as any);
+      vi.spyOn(settlement, "getInvoiceSettlementMap").mockResolvedValue(
+        new Map()
+      );
+      const paymentSpy = vi
+        .spyOn(invoiceReportPayments, "getInvoiceReportPaymentMetadata")
+        .mockResolvedValue(new Map());
+      const caller = appRouter.createCaller(createUserContext());
+      const input = { dateFrom: null, dateTo: null };
+      const before = await caller.reports[endpoint](input);
+      paymentSpy.mockResolvedValue(
+        new Map([
+          [
+            1938,
+            [
+              {
+                batchNumber: "TES-2026-000240",
+                bankReference: "FT26253PPMML",
+                paidDate: new Date("2026-09-10T12:00:00.000"),
+              },
+            ],
+          ],
+        ])
+      );
+      const after = await caller.reports[endpoint](input);
+      expect(paymentSpy).toHaveBeenLastCalledWith([1938]);
+      expect(after.invoices).toHaveLength(6);
+      const metadata = new Set([
+        "Lote de pago",
+        "Referencia bancaria",
+        "Fecha de pago",
+      ]);
+      const financialRows = (rows: typeof after.invoices) =>
+        rows.map(row =>
+          Object.fromEntries(
+            Object.entries(row).filter(([key]) => !metadata.has(key))
+          )
+        );
+      expect(financialRows(after.invoices)).toEqual(
+        financialRows(before.invoices)
+      );
+      const { generatedAt: _beforeGeneratedAt, ...beforeSummary } =
+        before.summary;
+      const { generatedAt: _afterGeneratedAt, ...afterSummary } = after.summary;
+      expect(afterSummary).toEqual(beforeSummary);
+      for (const row of after.invoices) {
+        expect(row["Lote de pago"]).toBe("TES-2026-000240");
+        expect(row["Referencia bancaria"]).toBe("FT26253PPMML");
+        expect(row["Fecha de pago"]).toEqual(
+          new Date("2026-09-10T12:00:00.000")
+        );
+      }
+      const workbook = buildSystemInvoicesWorkbook(XLSX, after);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, {
+        header: 1,
+      }) as unknown[][];
+      const headers = rows[1];
+      expect(headers.slice(1)).toEqual([...SYSTEM_INVOICE_HEADERS]);
+      for (const row of rows.slice(2, 8)) {
+        expect(row[headers.indexOf("Lote de pago")]).toBe("TES-2026-000240");
+        expect(row[headers.indexOf("Referencia bancaria")]).toBe(
+          "FT26253PPMML"
+        );
+        expect(row[headers.indexOf("Fecha de pago")]).toEqual(
+          new Date("2026-09-10T12:00:00.000")
+        );
+      }
+      expect(source).toEqual(original);
+    }
+  );
+
+  it("uses the latest bank date for mixed payments even when the advance metadata arrives last", () => {
+    const payload = buildSystemWorkbookPayload(
+      [sarInvoice({ invoiceId: 1938, status: "registrada" })],
+      [],
+      {},
+      new Map([
+        [
+          1938,
+          [
+            {
+              batchNumber: "TES-DIRECT",
+              bankReference: "DIRECT",
+              paidDate: new Date("2026-09-25T12:00:00.000"),
+            },
+            {
+              batchNumber: "TES-ADVANCE",
+              bankReference: "ADVANCE",
+              paidDate: new Date("2026-09-10T12:00:00.000"),
+            },
+          ],
+        ],
+      ])
+    );
+    expect(payload.invoices[0]["Fecha de pago"]).toEqual(
+      new Date("2026-09-25T12:00:00.000")
+    );
+    expect(payload.invoices[0]["Lote de pago"]).toBe("TES-DIRECT, TES-ADVANCE");
+  });
+
+  it.each([
+    ["local midnight", false, new Date("2026-09-10T00:00:00")],
+    ["local midnight", true, new Date("2026-09-10T00:00:00")],
+    ["Drizzle midnight UTC", false, new Date("2026-09-10T00:00:00.000Z")],
+    ["Drizzle midnight UTC", true, new Date("2026-09-10T00:00:00.000Z")],
+    [
+      "date-only JSON payload",
+      false,
+      JSON.parse(JSON.stringify("2026-09-10")) as string,
+    ],
+    [
+      "date-only JSON payload",
+      true,
+      JSON.parse(JSON.stringify("2026-09-10")) as string,
+    ],
+  ] as const)(
+    "preserves the bank calendar day from %s through XLSX with cellDates=%s",
+    (_label, cellDates, bankDate) => {
+      const payload = buildSystemWorkbookPayload(
+        [sarInvoice({ invoiceId: 1938, status: "registrada" })],
+        [],
+        {},
+        new Map([
+          [
+            1938,
+            [
+              {
+                batchNumber: "TES-2026-000240",
+                bankReference: "FT26253PPMML",
+                paidDate: bankDate,
+              },
+            ],
+          ],
+        ])
+      );
+      const wirePayload =
+        typeof bankDate === "string"
+          ? JSON.parse(JSON.stringify(payload))
+          : payload;
+      const workbook = buildSystemInvoicesWorkbook(XLSX, wirePayload);
+      const buffer = XLSX.write(workbook, {
+        type: "buffer",
+        bookType: "xlsx",
+        cellDates,
+      });
+      const reopened = XLSX.read(buffer, {
+        type: "buffer",
+        cellDates: true,
+        cellNF: true,
+      });
+      const sheet = reopened.Sheets[reopened.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, {
+        header: 1,
+      }) as unknown[][];
+      const column = rows[1].indexOf("Fecha de pago");
+      const cell = sheet[XLSX.utils.encode_cell({ r: 2, c: column })];
+      expect(XLSX.utils.format_cell(cell)).toBe("10/09/2026");
+      expect(cell.v).toBeInstanceOf(Date);
+      expect((cell.v as Date).getFullYear()).toBe(2026);
+      expect((cell.v as Date).getMonth()).toBe(8);
+      expect((cell.v as Date).getDate()).toBe(10);
+    }
+  );
+
+  it.each(["systemInvoices", "systemWorkbook"] as const)(
     "uses official cents in %s while preserving legacy values and fiscal DMC",
     async endpoint => {
       const items = ["19164.0733", "19164.0733", "19164.0734"].map(
@@ -1320,9 +1511,10 @@ describe("DMC report authorization", () => {
       vi.spyOn(db, "listDmcReportSourceInvoices").mockResolvedValue(sources);
       vi.spyOn(db, "listSystemReportPurchaseOrderLines").mockResolvedValue([]);
       vi.spyOn(db, "getDb").mockResolvedValue({} as any);
-      vi.spyOn(treasury, "getTreasuryInvoiceReportPayments").mockResolvedValue(
-        new Map()
-      );
+      vi.spyOn(
+        invoiceReportPayments,
+        "getInvoiceReportPaymentMetadata"
+      ).mockResolvedValue(new Map());
       const settlements = vi
         .spyOn(settlement, "getInvoiceSettlementMap")
         .mockResolvedValue(
@@ -1415,7 +1607,7 @@ describe("DMC report authorization", () => {
       .spyOn(db, "listSystemReportPurchaseOrderLines")
       .mockResolvedValue([]);
     const treasuryPaymentsSpy = vi
-      .spyOn(treasury, "getTreasuryInvoiceReportPayments")
+      .spyOn(invoiceReportPayments, "getInvoiceReportPaymentMetadata")
       .mockResolvedValue(new Map());
     const caller = appRouter.createCaller(createUserContext());
 
@@ -1490,6 +1682,16 @@ describe("DMC report authorization", () => {
         statusMode: "non_void",
       })
     ).rejects.toThrow("No tiene acceso a reportes");
+    await expect(
+      caller.reports.systemInvoices({ dateFrom: null, dateTo: null })
+    ).rejects.toThrow("No tiene acceso a reportes");
+    await expect(
+      caller.reports.systemWorkbook({
+        dateFrom: null,
+        dateTo: null,
+        statusMode: "non_void",
+      })
+    ).rejects.toThrow("No tiene acceso a reportes");
   });
 
   it("applies assigned project scope to system, DMC, and retention endpoints", async () => {
@@ -1499,9 +1701,9 @@ describe("DMC report authorization", () => {
     const orderSpy = vi
       .spyOn(db, "listSystemReportPurchaseOrderLines")
       .mockResolvedValue([]);
-    vi.spyOn(treasury, "getTreasuryInvoiceReportPayments").mockResolvedValue(
-      new Map()
-    );
+    const paymentSpy = vi
+      .spyOn(invoiceReportPayments, "getInvoiceReportPaymentMetadata")
+      .mockResolvedValue(new Map());
     const caller = appRouter.createCaller(
       createUserContext({
         role: "user",
@@ -1517,6 +1719,7 @@ describe("DMC report authorization", () => {
     };
 
     await caller.reports.systemWorkbook(input);
+    await caller.reports.systemInvoices({ dateFrom: null, dateTo: null });
     await caller.reports.dmcSarPurchases(input);
     await caller.reports.retentionSar({ ...input, type: "RT01" });
 
@@ -1526,6 +1729,9 @@ describe("DMC report authorization", () => {
     expect(orderSpy).toHaveBeenCalledWith(
       expect.objectContaining({ projectIds: [7] })
     );
+    expect(paymentSpy).toHaveBeenCalledTimes(2);
+    expect(paymentSpy).toHaveBeenNthCalledWith(1, []);
+    expect(paymentSpy).toHaveBeenNthCalledWith(2, []);
   });
 });
 

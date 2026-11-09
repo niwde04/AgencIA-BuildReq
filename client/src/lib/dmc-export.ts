@@ -526,6 +526,23 @@ function buildSystemPurchaseOrderSheet(
   return orderSheet;
 }
 
+function bankPaymentExportDate(value: unknown) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    // The database driver also represents a DATE as UTC midnight.
+    value = value.toISOString().slice(0, 10);
+  }
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value)) {
+    const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+    return new Date(year, month - 1, day, 12);
+  }
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return null;
+  // Noon avoids SheetJS shifting a bank calendar date across midnight.
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+}
+
 function buildSystemInvoiceSheet(XLSX: Xlsx, payload: SystemWorkbookPayload) {
   const invoiceRows: unknown[][] = [
     [null, null, "Llave principal (Financiera)"],
@@ -533,7 +550,11 @@ function buildSystemInvoiceSheet(XLSX: Xlsx, payload: SystemWorkbookPayload) {
     ...payload.invoices.map(row =>
       roundExportRow([
         null,
-        ...SYSTEM_INVOICE_HEADERS.map(header => row[header]),
+        ...SYSTEM_INVOICE_HEADERS.map(header =>
+          header === "Fecha de pago"
+            ? bankPaymentExportDate(row[header])
+            : row[header]
+        ),
       ])
     ),
   ];

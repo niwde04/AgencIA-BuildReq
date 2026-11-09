@@ -209,6 +209,19 @@ function dateValue(value: Date | string | null | undefined) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function bankPaymentDate(value: Date | string | null | undefined) {
+  const date = dateValue(value);
+  if (!date) return null;
+  return {
+    date,
+    // A bank DATE has no time zone. Preserve it through server/client JSON.
+    value:
+      typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? value
+        : date,
+  };
+}
+
 function money(value: unknown) {
   const parsed = Number(value ?? 0);
   return roundPurchaseOrderMoney(Number.isFinite(parsed) ? parsed : 0);
@@ -369,9 +382,14 @@ export function buildSystemWorkbookPayload(
       )
     ).join(", ");
     const treasuryPaymentDates = treasuryPayments
-      .map(payment => dateValue(payment.paidDate))
-      .filter((date): date is Date => Boolean(date));
-    const latestTreasuryPaymentDate = treasuryPaymentDates.at(-1) ?? null;
+      .map(payment => bankPaymentDate(payment.paidDate))
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+    const latestTreasuryPaymentDate = treasuryPaymentDates.reduce<
+      (typeof treasuryPaymentDates)[number] | null
+    >(
+      (latest, entry) => (!latest || entry.date > latest.date ? entry : latest),
+      null
+    );
     return rows.map((row, itemIndex) => {
       const invoiceItem = invoice.items[itemIndex];
       registration += 1;
@@ -388,7 +406,7 @@ export function buildSystemWorkbookPayload(
         "Nro. Factura": invoice.invoiceNumber || invoice.invoiceDocumentNumber,
         "Lote de pago": treasuryBatchNumbers,
         "Referencia bancaria": treasuryBankReferences,
-        "Fecha de pago": latestTreasuryPaymentDate,
+        "Fecha de pago": latestTreasuryPaymentDate?.value ?? null,
         "Cai Factura": String(row.cai ?? ""),
         "Descripcion_Fac.": String(
           invoiceItem?.articleDescription ||
