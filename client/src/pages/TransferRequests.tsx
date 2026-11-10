@@ -1,6 +1,8 @@
 import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
 import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
+import { UnitCombobox } from "@/components/UnitCombobox";
+import { normalizeUnitValue, UNITS } from "@shared/units";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   getTransferMovementKind,
@@ -13,6 +15,7 @@ import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -249,9 +252,25 @@ export default function TransferRequests() {
   const [itemName, setItemName] = useState("");
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
+  const relocationUnitOptions = useMemo(
+    () =>
+      unit
+        ? [
+            {
+              value: unit,
+              label:
+                UNITS.find(option => option.value === normalizeUnitValue(unit))
+                  ?.label || unit,
+            },
+          ]
+        : [],
+    [unit]
+  );
   const [sapItemCode, setSapItemCode] = useState("");
   const [articleSearch, setArticleSearch] = useState("");
   const debouncedArticleSearch = useDebouncedValue(articleSearch);
+  const isArticleSearchCurrent =
+    articleSearch.trim() === debouncedArticleSearch.trim();
   const [relocationReason, setRelocationReason] = useState("");
   const [relocationItems, setRelocationItems] = useState<
     Array<{
@@ -289,6 +308,7 @@ export default function TransferRequests() {
       enabled:
         allowManualTransferRequests &&
         dialogOpen &&
+        isArticleSearchCurrent &&
         debouncedArticleSearch.trim().length >= 2,
       staleTime: 30_000,
     }
@@ -1247,18 +1267,18 @@ export default function TransferRequests() {
                 Nueva reubicación
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-2xl overflow-y-auto">
-              <DialogHeader>
+            <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
+              <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12 text-left sm:px-6 sm:pr-12">
                 <DialogTitle>Nueva reubicación interna</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">
+                <DialogDescription>
                   Los artículos conservan proyecto y bodega. Seleccionará la
                   ubicación de origen al confirmar y la nueva ubicación al
                   recibir.
-                </p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-2">
+                </DialogDescription>
+              </DialogHeader>
+              <div className="min-h-0 space-y-5 overflow-y-auto px-5 py-5 sm:px-6">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="min-w-0 space-y-2">
                     <Label htmlFor="relocation-project">Proyecto *</Label>
                     <Select
                       value={projectId}
@@ -1268,8 +1288,14 @@ export default function TransferRequests() {
                       }}
                       disabled={createMutation.isPending}
                     >
-                      <SelectTrigger id="relocation-project">
-                        <SelectValue placeholder="Seleccione proyecto" />
+                      <SelectTrigger
+                        id="relocation-project"
+                        className="min-h-11 w-full min-w-0"
+                      >
+                        <SelectValue
+                          className="min-w-0 truncate"
+                          placeholder="Seleccione proyecto"
+                        />
                       </SelectTrigger>
                       <SelectContent>
                         {(projects || []).map((project: any) => (
@@ -1283,7 +1309,7 @@ export default function TransferRequests() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
+                  <div className="min-w-0 space-y-2">
                     <Label htmlFor="relocation-warehouse">Bodega *</Label>
                     <Select
                       value={creationWarehouseId}
@@ -1294,8 +1320,12 @@ export default function TransferRequests() {
                         createMutation.isPending
                       }
                     >
-                      <SelectTrigger id="relocation-warehouse">
+                      <SelectTrigger
+                        id="relocation-warehouse"
+                        className="min-h-11 w-full min-w-0"
+                      >
                         <SelectValue
+                          className="min-w-0 truncate"
                           placeholder={
                             creationWarehousesQuery.isFetching
                               ? "Consultando..."
@@ -1329,208 +1359,293 @@ export default function TransferRequests() {
                     ) : null}
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="relocation-article-search">
-                    Buscar artículo por código o descripción
-                  </Label>
-                  <Input
-                    id="relocation-article-search"
-                    value={articleSearch}
-                    onChange={event => {
-                      setArticleSearch(event.target.value);
-                      setSapItemCode("");
-                      setItemName("");
-                      setUnit("");
-                    }}
-                    placeholder="Escriba al menos 2 caracteres"
-                    disabled={createMutation.isPending}
-                    autoComplete="off"
-                  />
-                  {articleSearchQuery.isFetching ? (
-                    <p role="status" className="text-xs text-muted-foreground">
-                      Consultando artículos...
-                    </p>
-                  ) : articleSearchQuery.error ? (
-                    <p role="alert" className="text-xs text-destructive">
-                      {articleSearchQuery.error.message}
-                    </p>
-                  ) : articleSearch.trim().length >= 2 && !sapItemCode ? (
-                    <div className="max-h-44 overflow-y-auto rounded-md border">
-                      {(articleSearchQuery.data || [])
-                        .filter(
-                          (article: any) =>
-                            Number(article.tipoArticulo ?? 1) === 1
-                        )
-                        .map((article: any) => (
-                          <button
-                            type="button"
-                            key={article.id}
-                            className="flex min-h-11 w-full flex-col gap-0.5 border-b px-3 py-2 text-left text-sm last:border-0 hover:bg-accent focus-visible:bg-accent"
-                            onClick={() => {
-                              setSapItemCode(article.itemCode);
-                              setItemName(article.description);
-                              setUnit(article.unit || "");
-                            }}
-                          >
-                            <span className="font-mono text-xs font-semibold">
-                              {article.itemCode}
-                            </span>
-                            <span className="break-words">
-                              {article.description}
-                            </span>
-                          </button>
-                        ))}
-                      {!(articleSearchQuery.data || []).some(
-                        (article: any) =>
-                          Number(article.tipoArticulo ?? 1) === 1
-                      ) ? (
-                        <p className="p-3 text-sm text-muted-foreground">
-                          No hay artículos de inventario que coincidan.
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {sapItemCode ? (
-                    <p className="rounded-md border bg-muted/20 p-2 text-sm">
-                      <span className="font-mono font-semibold">
-                        {sapItemCode}
-                      </span>{" "}
-                      · {itemName}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap items-end gap-3">
-                  <div className="min-w-28 flex-1 space-y-2">
-                    <Label htmlFor="relocation-quantity">Cantidad *</Label>
+                <section
+                  aria-labelledby="relocation-articles-heading"
+                  className="space-y-4 border-t pt-5"
+                >
+                  <h3
+                    id="relocation-articles-heading"
+                    className="text-sm font-semibold"
+                  >
+                    Artículos a reubicar
+                  </h3>
+                  <div className="space-y-2">
+                    <Label htmlFor="relocation-article-search">
+                      Buscar artículo por código o descripción
+                    </Label>
                     <Input
-                      id="relocation-quantity"
-                      inputMode="decimal"
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      value={quantity}
-                      onChange={event => setQuantity(event.target.value)}
+                      id="relocation-article-search"
+                      className="h-11"
+                      value={articleSearch}
+                      onChange={event => {
+                        setArticleSearch(event.target.value);
+                        setSapItemCode("");
+                        setItemName("");
+                        setUnit("");
+                      }}
+                      placeholder="Escriba al menos 2 caracteres"
+                      disabled={createMutation.isPending}
+                      autoComplete="off"
+                      aria-describedby="relocation-article-help"
+                    />
+                    <p
+                      id="relocation-article-help"
+                      className="text-xs text-muted-foreground"
+                    >
+                      Pulse «Seleccionar» en el artículo que desea agregar.
+                    </p>
+                    {articleSearch.trim().length >= 2 && !sapItemCode ? (
+                      !isArticleSearchCurrent ||
+                      articleSearchQuery.isFetching ? (
+                        <p
+                          role="status"
+                          className="text-xs text-muted-foreground"
+                        >
+                          Consultando artículos...
+                        </p>
+                      ) : articleSearchQuery.error ? (
+                        <p role="alert" className="text-xs text-destructive">
+                          {articleSearchQuery.error.message}
+                        </p>
+                      ) : (
+                        <div className="max-h-52 overflow-y-auto rounded-md border">
+                          {(articleSearchQuery.data || [])
+                            .filter(
+                              (article: any) =>
+                                Number(article.tipoArticulo ?? 1) === 1
+                            )
+                            .map((article: any) => (
+                              <button
+                                type="button"
+                                key={article.id}
+                                className="flex min-h-11 w-full items-center justify-between gap-3 border-b px-3 py-2 text-left text-sm last:border-0 hover:bg-accent focus-visible:bg-accent"
+                                aria-label={`Seleccionar ${article.itemCode} ${article.description}`}
+                                disabled={createMutation.isPending}
+                                onClick={() => {
+                                  if (
+                                    !isArticleSearchCurrent ||
+                                    articleSearchQuery.isFetching ||
+                                    createMutation.isPending
+                                  ) {
+                                    return;
+                                  }
+                                  setSapItemCode(article.itemCode);
+                                  setItemName(article.description);
+                                  setUnit(article.unit?.trim() || "");
+                                }}
+                              >
+                                <span className="flex min-w-0 flex-col gap-0.5">
+                                  <span className="font-mono text-xs font-semibold">
+                                    {article.itemCode}
+                                  </span>
+                                  <span className="break-words">
+                                    {article.description}
+                                  </span>
+                                  {article.partNumber ? (
+                                    <span className="break-words text-xs text-muted-foreground">
+                                      Referencia: {article.partNumber}
+                                    </span>
+                                  ) : null}
+                                  <span className="text-xs text-muted-foreground">
+                                    Unidad:{" "}
+                                    {article.unit?.trim() ||
+                                      "Sin unidad en catálogo"}
+                                  </span>
+                                </span>
+                                <span className="shrink-0 rounded-md border bg-background px-2 py-1 text-xs font-medium text-primary">
+                                  Seleccionar
+                                </span>
+                              </button>
+                            ))}
+                          {!(articleSearchQuery.data || []).some(
+                            (article: any) =>
+                              Number(article.tipoArticulo ?? 1) === 1
+                          ) ? (
+                            <p className="p-3 text-sm text-muted-foreground">
+                              No hay artículos de inventario que coincidan.
+                            </p>
+                          ) : null}
+                        </div>
+                      )
+                    ) : null}
+                    {sapItemCode ? (
+                      <div
+                        role="status"
+                        className="space-y-1 rounded-md border bg-muted/20 p-3 text-sm"
+                      >
+                        <p className="text-xs font-semibold text-muted-foreground">
+                          Artículo seleccionado
+                        </p>
+                        <p className="break-words">
+                          <span className="font-mono font-semibold">
+                            {sapItemCode}
+                          </span>{" "}
+                          · {itemName}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-[minmax(0,1fr)_12rem_auto] sm:items-end">
+                    <div className="min-w-0 space-y-2">
+                      <Label htmlFor="relocation-quantity">Cantidad *</Label>
+                      <Input
+                        id="relocation-quantity"
+                        className="h-11"
+                        inputMode="decimal"
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={quantity}
+                        onChange={event => setQuantity(event.target.value)}
+                        disabled={createMutation.isPending}
+                      />
+                    </div>
+                    <div className="min-w-0 space-y-2">
+                      <Label htmlFor="relocation-unit">Unidad</Label>
+                      <UnitCombobox
+                        id="relocation-unit"
+                        className="min-h-11 min-w-0"
+                        contentClassName="min-w-48 max-w-[calc(100vw-2rem)]"
+                        value={unit}
+                        onChange={setUnit}
+                        options={relocationUnitOptions}
+                        disabled={
+                          !sapItemCode || !unit || createMutation.isPending
+                        }
+                        placeholder={
+                          sapItemCode
+                            ? "Sin unidad en catálogo"
+                            : "Seleccione artículo"
+                        }
+                        aria-describedby="relocation-unit-help"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="col-span-2 min-h-11 w-full sm:col-span-1 sm:w-auto"
+                      disabled={!sapItemCode || createMutation.isPending}
+                      onClick={() => {
+                        if (
+                          !sapItemCode ||
+                          !itemName ||
+                          !/^\d+(?:\.\d{1,2})?$/.test(quantity.trim()) ||
+                          Number(quantity) <= 0
+                        ) {
+                          toast.error(
+                            "Seleccione un artículo y una cantidad positiva con hasta 2 decimales"
+                          );
+                          return;
+                        }
+                        setRelocationItems(current => [
+                          ...current,
+                          {
+                            itemName,
+                            sapItemCode,
+                            quantity: Number(quantity).toFixed(2),
+                            unit: unit || undefined,
+                          },
+                        ]);
+                        setItemName("");
+                        setSapItemCode("");
+                        setArticleSearch("");
+                        setUnit("");
+                        setQuantity("");
+                      }}
+                    >
+                      <Plus className="mr-1.5 h-4 w-4" />
+                      Agregar artículo
+                    </Button>
+                  </div>
+                  <p
+                    id="relocation-unit-help"
+                    className="text-xs text-muted-foreground"
+                  >
+                    {sapItemCode && !unit
+                      ? "Este artículo no tiene unidad registrada en el catálogo."
+                      : sapItemCode
+                        ? "Se conserva la unidad del artículo durante la reubicación."
+                        : "Seleccione un artículo para cargar su unidad."}
+                  </p>
+                  <div className="space-y-2 rounded-md border bg-muted/10 p-4">
+                    <p className="text-xs font-semibold text-muted-foreground">
+                      Artículos incluidos ({relocationItems.length})
+                    </p>
+                    {relocationItems.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        Agregue uno o varios artículos a la solicitud.
+                      </p>
+                    ) : (
+                      relocationItems.map((item, index) => (
+                        <div
+                          key={index}
+                          className="flex items-start justify-between gap-3 border-b py-2 last:border-0"
+                        >
+                          <div className="min-w-0 text-sm">
+                            <p className="break-words">
+                              <span className="font-mono font-semibold">
+                                {item.sapItemCode}
+                              </span>{" "}
+                              · {item.itemName}
+                            </p>
+                            <p className="font-mono text-xs text-muted-foreground">
+                              {item.quantity} {item.unit || ""}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label={"Quitar " + item.itemName}
+                            disabled={createMutation.isPending}
+                            onClick={() =>
+                              setRelocationItems(current =>
+                                current.filter(
+                                  (_, itemIndex) => itemIndex !== index
+                                )
+                              )
+                            }
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+                <div className="grid gap-4 border-t pt-5 md:grid-cols-[minmax(0,1fr)_14rem]">
+                  <div className="min-w-0 space-y-2">
+                    <Label htmlFor="relocation-reason">
+                      Motivo de la reubicación *
+                    </Label>
+                    <Textarea
+                      id="relocation-reason"
+                      value={notes}
+                      onChange={event => setNotes(event.target.value)}
+                      rows={3}
+                      maxLength={2000}
+                      placeholder="Ej.: regularización de ubicación o cambio de estante"
                       disabled={createMutation.isPending}
                     />
                   </div>
-                  <div className="w-24 space-y-2">
-                    <Label htmlFor="relocation-unit">Unidad</Label>
+                  <div className="min-w-0 space-y-2">
+                    <Label htmlFor="relocation-needed-by">
+                      Fecha necesaria (opcional)
+                    </Label>
                     <Input
-                      id="relocation-unit"
-                      value={unit}
-                      readOnly
-                      placeholder="—"
+                      id="relocation-needed-by"
+                      className="h-11"
+                      type="date"
+                      value={neededBy}
+                      onChange={event => setNeededBy(event.target.value)}
+                      disabled={createMutation.isPending}
                     />
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={!sapItemCode || createMutation.isPending}
-                    onClick={() => {
-                      if (
-                        !sapItemCode ||
-                        !itemName ||
-                        !/^\d+(?:\.\d{1,2})?$/.test(quantity.trim()) ||
-                        Number(quantity) <= 0
-                      ) {
-                        toast.error(
-                          "Seleccione un artículo y una cantidad positiva con hasta 2 decimales"
-                        );
-                        return;
-                      }
-                      setRelocationItems(current => [
-                        ...current,
-                        {
-                          itemName,
-                          sapItemCode,
-                          quantity: Number(quantity).toFixed(2),
-                          unit: unit || undefined,
-                        },
-                      ]);
-                      setItemName("");
-                      setSapItemCode("");
-                      setArticleSearch("");
-                      setUnit("");
-                      setQuantity("");
-                    }}
-                  >
-                    <Plus className="mr-1.5 h-4 w-4" />
-                    Agregar artículo
-                  </Button>
                 </div>
-                <div className="space-y-2 rounded-md border p-3">
-                  <p className="text-xs font-semibold text-muted-foreground">
-                    Artículos incluidos ({relocationItems.length})
-                  </p>
-                  {relocationItems.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      Agregue uno o varios artículos a la solicitud.
-                    </p>
-                  ) : (
-                    relocationItems.map((item, index) => (
-                      <div
-                        key={index}
-                        className="flex items-start justify-between gap-3 border-b py-2 last:border-0"
-                      >
-                        <div className="min-w-0 text-sm">
-                          <p className="break-words">
-                            <span className="font-mono font-semibold">
-                              {item.sapItemCode}
-                            </span>{" "}
-                            · {item.itemName}
-                          </p>
-                          <p className="font-mono text-xs text-muted-foreground">
-                            {item.quantity} {item.unit || ""}
-                          </p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label={"Quitar " + item.itemName}
-                          disabled={createMutation.isPending}
-                          onClick={() =>
-                            setRelocationItems(current =>
-                              current.filter(
-                                (_, itemIndex) => itemIndex !== index
-                              )
-                            )
-                          }
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="relocation-reason">
-                    Motivo de la reubicación *
-                  </Label>
-                  <Textarea
-                    id="relocation-reason"
-                    value={notes}
-                    onChange={event => setNotes(event.target.value)}
-                    rows={3}
-                    maxLength={2000}
-                    placeholder="Ej.: regularización de ubicación o cambio de estante"
-                    disabled={createMutation.isPending}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="relocation-needed-by">
-                    Fecha necesaria (opcional)
-                  </Label>
-                  <Input
-                    id="relocation-needed-by"
-                    type="date"
-                    value={neededBy}
-                    onChange={event => setNeededBy(event.target.value)}
-                    disabled={createMutation.isPending}
-                  />
-                </div>
+              </div>
+              <div className="shrink-0 border-t px-5 py-4 sm:flex sm:justify-end sm:px-6">
                 <Button
-                  className="w-full"
+                  className="min-h-11 w-full sm:w-auto"
                   disabled={
                     createMutation.isPending ||
                     !projectId ||

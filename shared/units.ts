@@ -61,9 +61,26 @@ const UNIT_ALIASES: Record<string, string> = {
 };
 
 export function normalizeUnitValue(value: string | null | undefined) {
-  const normalized = String(value ?? "").trim().toLocaleLowerCase("es-HN");
+  const normalized = String(value ?? "")
+    .trim()
+    .toLocaleLowerCase("es-HN");
   if (!normalized) return null;
   return UNIT_ALIASES[normalized] ?? normalized;
+}
+
+const INVENTORY_UNIT_VALUES = new Set(UNITS.map(option => option.value));
+const LEGACY_INVENTORY_UNIT_ALIASES = new Set(["und", "unidad", "unidades"]);
+
+/** Canonical labels for inventory; this does not convert quantities. */
+export function normalizeInventoryUnitValue(value: unknown) {
+  const storedValue = String(value ?? "").trim();
+  if (!storedValue) return null;
+  const legacyKey = storedValue.toLocaleLowerCase("es-HN").replaceAll(".", "");
+  if (LEGACY_INVENTORY_UNIT_ALIASES.has(legacyKey)) return "und";
+  const normalizedValue = normalizeUnitValue(storedValue);
+  return normalizedValue && INVENTORY_UNIT_VALUES.has(normalizedValue)
+    ? normalizedValue
+    : storedValue;
 }
 
 export function resolveArticleTranslationUnit(

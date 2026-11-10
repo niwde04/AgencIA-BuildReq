@@ -1,13 +1,12 @@
-const INVENTORY_UNIT_ALIASES = new Set(["und", "unidad", "unidades"]);
+import { getInventoryPendingScopeKey } from "@shared/inventory-pending";
+import { normalizeInventoryUnitValue } from "@shared/units";
 
 function cleanText(value: unknown) {
   return String(value ?? "").trim();
 }
 
 export function normalizeInventoryUnit(value: unknown) {
-  const unit = cleanText(value);
-  const key = unit.toLocaleLowerCase("es-HN").replaceAll(".", "");
-  return INVENTORY_UNIT_ALIASES.has(key) ? "und" : unit;
+  return normalizeInventoryUnitValue(cleanText(value)) ?? "";
 }
 
 function getDescriptionCandidate(row: any) {
@@ -16,10 +15,12 @@ function getDescriptionCandidate(row: any) {
     { value: cleanText(row.catalogItem?.description), priority: 2 },
     { value: cleanText(row.name), priority: 1 },
   ];
-  return candidates.find(candidate => candidate.value) ?? {
-    value: "",
-    priority: 0,
-  };
+  return (
+    candidates.find(candidate => candidate.value) ?? {
+      value: "",
+      priority: 0,
+    }
+  );
 }
 
 function getInventoryItemKey(row: any) {
@@ -47,7 +48,44 @@ function toQuantity(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function collectInventoryPendingScopes(rows: any[]) {
+  const scopes = new Map<
+    string,
+    { totalRequiredQuantity: number; pendingReceiptQuantity: number }
+  >();
+  for (const row of rows) {
+    const key =
+      cleanText(row.pendingScopeKey) || getInventoryPendingScopeKey(row);
+    const current = scopes.get(key);
+    // One scope is one project total, repeated on its inventory rows. Keep a
+    // single value even when a legacy API response contains different refreshes.
+    scopes.set(key, {
+      totalRequiredQuantity: Math.max(
+        current?.totalRequiredQuantity ?? 0,
+        toQuantity(row.totalRequiredQuantity)
+      ),
+      pendingReceiptQuantity: Math.max(
+        current?.pendingReceiptQuantity ?? 0,
+        toQuantity(row.pendingReceiptQuantity)
+      ),
+    });
+  }
+  return scopes;
+}
+
+export function sumInventoryPendingQuantities(rows: any[]) {
+  const total = { totalRequiredQuantity: 0, pendingReceiptQuantity: 0 };
+  for (const value of Array.from(
+    collectInventoryPendingScopes(rows).values()
+  )) {
+    total.totalRequiredQuantity += value.totalRequiredQuantity;
+    total.pendingReceiptQuantity += value.pendingReceiptQuantity;
+  }
+  return total;
+}
+
 export function buildInventoryExportRows(rows: any[]) {
+  const pendingValuesByScope = collectInventoryPendingScopes(rows);
   const descriptionsByItem = new Map<
     string,
     { value: string; priority: number }
@@ -72,8 +110,7 @@ export function buildInventoryExportRows(rows: any[]) {
     {
       row: any;
       currentStock: number;
-      totalRequiredQuantity: number;
-      pendingReceiptQuantity: number;
+      pendingRows: any[];
       minimumStock: number;
       storageLocations: Set<string>;
     }
@@ -95,29 +132,52 @@ export function buildInventoryExportRows(rows: any[]) {
         unit: normalizedUnit,
       },
       currentStock: 0,
-      totalRequiredQuantity: 0,
-      pendingReceiptQuantity: 0,
+      pendingRows: [],
       minimumStock: 0,
       storageLocations: new Set<string>(),
     };
 
     existing.currentStock += toQuantity(row.currentStock);
-    existing.totalRequiredQuantity += toQuantity(row.totalRequiredQuantity);
-    existing.pendingReceiptQuantity += toQuantity(row.pendingReceiptQuantity);
+    existing.pendingRows.push(row);
     existing.minimumStock += toQuantity(row.minimumStock);
     const storageLocation = cleanText(row.storageLocation);
     if (storageLocation) existing.storageLocations.add(storageLocation);
     groups.set(groupKey, existing);
   }
 
-  return Array.from(groups.values())
-    .map(group => ({
-      ...group.row,
-      currentStock: group.currentStock,
-      totalRequiredQuantity: group.totalRequiredQuantity,
-      pendingReceiptQuantity: group.pendingReceiptQuantity,
-      minimumStock: group.minimumStock,
-      storageLocation: Array.from(group.storageLocations).join(" · "),
-    }))
-    .filter(row => toQuantity(row.currentStock) > 0);
+  const includedPendingScopes = new Set<string>();
+  return (
+    Array.from(groups.values())
+      // A zero-stock row must not claim a project's pending total and then vanish
+      // from the export. Allocate references only among rows actually exported.
+      .filter(group => group.currentStock > 0)
+      .map(group => {
+        const pendingScopes = collectInventoryPendingScopes(group.pendingRows);
+        let totalRequiredQuantity = 0;
+        let pendingReceiptQuantity = 0;
+        let includedCount = 0;
+        for (const key of Array.from(pendingScopes.keys())) {
+          if (includedPendingScopes.has(key)) continue;
+          includedPendingScopes.add(key);
+          includedCount++;
+          const value = pendingValuesByScope.get(key)!;
+          totalRequiredQuantity += value.totalRequiredQuantity;
+          pendingReceiptQuantity += value.pendingReceiptQuantity;
+        }
+        const pendingQuantitiesReferenceOnly =
+          pendingScopes.size > 0 && includedCount === 0;
+        return {
+          ...group.row,
+          currentStock: group.currentStock,
+          totalRequiredQuantity,
+          pendingReceiptQuantity,
+          pendingQuantitiesReferenceOnly,
+          pendingQuantitiesNote: pendingQuantitiesReferenceOnly
+            ? "Pendientes del proyecto incluidos en otra fila de este archivo"
+            : "Pendientes por artículo y proyecto, contabilizados una sola vez",
+          minimumStock: group.minimumStock,
+          storageLocation: Array.from(group.storageLocations).join(" · "),
+        };
+      })
+  );
 }

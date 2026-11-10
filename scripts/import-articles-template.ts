@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 import { Client } from "pg";
 import XLSX from "xlsx";
 import { normalizeArticleDescription } from "../shared/article-descriptions";
-import { normalizeUnitValue } from "../shared/units";
+import { normalizeInventoryUnitValue, normalizeUnitValue } from "../shared/units";
 
 const SHEET_NAME = "ARTICULOS";
 const BATCH_SIZE = 500;
@@ -664,7 +664,7 @@ function readWorkbook(file: string): ImportData {
       partNumber: getCell(row, "Numero de parte"),
       shortDescription,
       fullDescription,
-      unit: getCell(row, "Unidad"),
+      unit: normalizeInventoryUnitValue(getCell(row, "Unidad")) ?? "",
       category: getCell(row, "Categoria inventario"),
       stock: stock ?? 0,
       minimumStock,
@@ -1661,7 +1661,7 @@ function resolveInventoryForDb(
       sapItemCode: item.sapItemCode,
       name: item.name,
       description: item.description,
-      unit: item.unit,
+      unit: normalizeInventoryUnitValue(item.unit),
       category: item.category,
       currentStock: toMoneyString(item.currentStock),
       minimumStock:

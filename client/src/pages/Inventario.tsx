@@ -3,6 +3,7 @@ import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import {
   buildInventoryExportRows,
   normalizeInventoryUnit,
+  sumInventoryPendingQuantities,
 } from "@/lib/inventory-export";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
@@ -502,6 +503,7 @@ export default function Inventario() {
   const {
     data,
     isLoading,
+    isPlaceholderData,
     isFetching,
     error,
     refetch,
@@ -535,10 +537,10 @@ export default function Inventario() {
   );
 
   useEffect(() => {
-    if (data?.page && data.page !== page) {
+    if (!isPlaceholderData && data?.page && data.page !== page) {
       setPage(data.page);
     }
-  }, [data?.page, page]);
+  }, [data?.page, isPlaceholderData, page]);
 
   const createMutation = trpc.inventory.create.useMutation({
     onSuccess: () => {
@@ -656,6 +658,9 @@ export default function Inventario() {
   }, [pendingQuantitiesQuery.data]);
   const groupedItems = useMemo(() => {
     const groups = new Map<string, any>();
+    const sourceRowsById = new Map(
+      (items as any[]).map(item => [Number(item.id), item])
+    );
 
     for (const item of items as any[]) {
       const itemKey = item.sapItemCode?.trim() || item.name?.trim().toLowerCase();
@@ -744,26 +749,15 @@ export default function Inventario() {
       const pendingQuantitiesReady = item.sourceIds.every((id: number) =>
         pendingQuantitiesById.has(id)
       );
-      const totalRequiredQuantity = pendingQuantitiesReady
-        ? item.sourceIds.reduce(
-            (sum: number, id: number) =>
-              sum +
-              parseQuantity(
-                pendingQuantitiesById.get(id)?.totalRequiredQuantity
-              ),
-            0
-          )
-        : 0;
-      const pendingReceiptQuantity = pendingQuantitiesReady
-        ? item.sourceIds.reduce(
-            (sum: number, id: number) =>
-              sum +
-              parseQuantity(
-                pendingQuantitiesById.get(id)?.pendingReceiptQuantity
-              ),
-            0
-          )
-        : 0;
+      const { totalRequiredQuantity, pendingReceiptQuantity } =
+        pendingQuantitiesReady
+          ? sumInventoryPendingQuantities(
+              item.sourceIds.map((id: number) => ({
+                ...sourceRowsById.get(id),
+                ...pendingQuantitiesById.get(id),
+              }))
+            )
+          : { totalRequiredQuantity: 0, pendingReceiptQuantity: 0 };
       const hasSingleProject = projectBreakdown.length === 1;
       const singleProject = hasSingleProject
         ? projectBreakdown[0]?.project ?? null
@@ -799,6 +793,8 @@ export default function Inventario() {
           visibleInventoryIds.length > 0 &&
           !pendingQuantitiesReady &&
           !pendingQuantitiesQuery.isError,
+        pendingQuantitiesError:
+          !pendingQuantitiesReady && pendingQuantitiesQuery.isError,
         totalRequiredQuantity: totalRequiredQuantity.toFixed(2),
         pendingReceiptQuantity: pendingReceiptQuantity.toFixed(2),
         warehouseSummaryLabel: item.warehouseLocation || "Sin almacén",
@@ -980,13 +976,24 @@ export default function Inventario() {
           },
           {
             header: "Total requeridas",
-            value: row => parseQuantity(row.totalRequiredQuantity),
+            value: row =>
+              row.pendingQuantitiesReferenceOnly
+                ? null
+                : parseQuantity(row.totalRequiredQuantity),
             numFmt: "#,##0.00",
           },
           {
             header: "Por recibirse",
-            value: row => parseQuantity(row.pendingReceiptQuantity),
+            value: row =>
+              row.pendingQuantitiesReferenceOnly
+                ? null
+                : parseQuantity(row.pendingReceiptQuantity),
             numFmt: "#,##0.00",
+          },
+          {
+            header: "Alcance de pendientes",
+            value: row => row.pendingQuantitiesNote,
+            width: 52,
           },
           {
             header: "Mínimo",
@@ -1588,7 +1595,7 @@ export default function Inventario() {
                                 <td className="p-3 text-right">
                                   {formatQuantity(row.quantity)}{" "}
                                   <span className="text-xs text-muted-foreground">
-                                    {row.unit || ""}
+                                    {normalizeInventoryUnit(row.unit)}
                                   </span>
                                 </td>
                                 <td className="p-3 text-right font-medium">
@@ -1691,7 +1698,7 @@ export default function Inventario() {
                               <td className="p-3 text-right font-medium">
                                 {formatQuantity(balance.currentStock)}{" "}
                                 <span className="text-xs text-muted-foreground">
-                                  {balance.unit || ""}
+                                  {normalizeInventoryUnit(balance.unit)}
                                 </span>
                               </td>
                               <td className="p-3 text-xs">
@@ -2113,6 +2120,27 @@ export default function Inventario() {
             </div>
           ) : (
             <>
+              <p className="border-b px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+                Los pendientes son totales por artículo y proyecto, compartidos
+                entre sus almacenes. El Excel contabiliza cada total una sola vez.
+              </p>
+              {pendingQuantitiesQuery.isError ? (
+                <div
+                  role="alert"
+                  className="flex flex-wrap items-center gap-2 border-b px-4 py-2 text-xs text-destructive"
+                >
+                  <span>No se pudieron actualizar los pendientes.</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void pendingQuantitiesQuery.refetch()}
+                    disabled={pendingQuantitiesQuery.isFetching}
+                  >
+                    Reintentar consulta
+                  </Button>
+                </div>
+              ) : null}
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[1560px] text-sm">
                   <thead>
@@ -2152,9 +2180,15 @@ export default function Inventario() {
                             <>
                               <th className="p-3 font-semibold text-xs uppercase tracking-wider text-right text-muted-foreground">
                                 Total requeridas
+                                <span className="block font-normal normal-case">
+                                  del proyecto
+                                </span>
                               </th>
                               <th className="p-3 font-semibold text-xs uppercase tracking-wider text-right text-muted-foreground">
                                 Por recibirse
+                                <span className="block font-normal normal-case">
+                                  del proyecto
+                                </span>
                               </th>
                             </>
                           ) : null}
@@ -2236,6 +2270,8 @@ export default function Inventario() {
                                 <span className="inline-flex justify-end">
                                   <Spinner className="size-4 text-muted-foreground" />
                                 </span>
+                              ) : item.pendingQuantitiesError ? (
+                                <span title="No se pudo consultar el pendiente">—</span>
                               ) : (
                                 formatQuantity(item.totalRequiredQuantity)
                               )}
@@ -2245,6 +2281,8 @@ export default function Inventario() {
                                 <span className="inline-flex justify-end">
                                   <Spinner className="size-4 text-muted-foreground" />
                                 </span>
+                              ) : item.pendingQuantitiesError ? (
+                                <span title="No se pudo consultar el pendiente">—</span>
                               ) : (
                                 formatQuantity(item.pendingReceiptQuantity)
                               )}
@@ -2457,8 +2495,8 @@ export default function Inventario() {
                 </table>
               </div>
 
-              <div className="flex flex-col gap-4 border-t border-border px-4 py-4 md:flex-row md:items-center md:justify-between">
-                <p className="text-sm text-muted-foreground">
+              <div className="flex min-w-0 flex-col gap-4 border-t border-border px-4 py-4 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
+                <p className="min-w-0 text-sm text-muted-foreground">
                   {groupedItems.length !== items.length ? (
                     <>
                       Mostrando{" "}
@@ -2476,8 +2514,8 @@ export default function Inventario() {
                   )}
                 </p>
 
-                <Pagination className="mx-0 w-auto justify-end">
-                  <PaginationContent>
+                <Pagination className="mx-0 w-auto max-w-full justify-start lg:justify-end">
+                  <PaginationContent className="flex-wrap">
                     <PaginationItem>
                       <PaginationPrevious
                         href="#"

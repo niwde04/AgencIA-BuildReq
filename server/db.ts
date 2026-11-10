@@ -33,6 +33,10 @@ import {
 } from "../shared/opening-balances";
 import { isRetiredOpeningBalanceNumber } from "../shared/opening-balance-numbering";
 import {
+  getInventoryPendingScopeKey,
+  loadInventoryPendingQuantitiesByScope,
+} from "../shared/inventory-pending";
+import {
   assertValidTransferConversionDestination,
   TransferConversionValidationError,
 } from "./transferConversionValidation";
@@ -248,6 +252,7 @@ import {
 } from "@shared/receipt-substitutions";
 import { extractSapItemGroupCode } from "@shared/sap-item-codes";
 import {
+  normalizeInventoryUnitValue,
   normalizeUnitValue,
   resolveArticleTranslationUnit,
 } from "@shared/units";
@@ -20554,7 +20559,9 @@ async function addInventoryStock(params: {
         description: normalizeOptionalArticleDescription(
           existingRow.description ?? params.description ?? null
         ),
-        unit: existingRow.unit ?? params.unit ?? null,
+        unit:
+          normalizeInventoryUnitValue(existingRow.unit) ??
+          normalizeInventoryUnitValue(params.unit),
         projectId: inventoryProjectId,
         warehouseId: warehouseAssignment.warehouseId,
         warehouseLocation: warehouseAssignment.warehouseLocation,
@@ -20587,7 +20594,7 @@ async function addInventoryStock(params: {
       description: normalizeOptionalArticleDescription(
         params.description ?? null
       ),
-      unit: params.unit ?? null,
+      unit: normalizeInventoryUnitValue(params.unit),
       currentStock: toDecimalString(quantityToAdd),
       projectId: inventoryProjectId,
       warehouseId: warehouseAssignment.warehouseId,
@@ -21679,53 +21686,15 @@ async function getInventoryIdsByFilters(filters?: InventoryListFilters) {
   return rows.map(row => row.id);
 }
 
-function getInventoryPendingScopeKey(item: any) {
-  return [
-    item.sapItemCode,
-    item.project?.id ?? "no-project",
-    item.warehouse?.id ??
-      item.warehouseId ??
-      item.warehouseLocation ??
-      "no-warehouse",
-  ].join("::");
-}
-
 async function getPendingQuantitiesForInventoryItems(items: any[]) {
-  const pendingQuantityByScope = new Map<
-    string,
-    { totalRequiredQuantity: string; pendingReceiptQuantity: string }
-  >();
-  const pendingQuantityParamsByScope = new Map<
-    string,
-    {
-      sapItemCode: string;
-      projectId: number | null;
-      warehouseId: number | null;
-      warehouseLocation: string | null;
-    }
-  >();
-
-  for (const item of items) {
-    const scopeKey = getInventoryPendingScopeKey(item);
-    if (pendingQuantityParamsByScope.has(scopeKey)) continue;
-    pendingQuantityParamsByScope.set(scopeKey, {
-      sapItemCode: item.sapItemCode,
-      projectId: item.project?.id ?? null,
+  return loadInventoryPendingQuantitiesByScope(items, item =>
+    getInventoryPendingProcessQuantities({
+      sapItemCode: item.sapItemCode?.trim() ?? "",
+      projectId: item.project?.id ?? item.projectId ?? null,
       warehouseId: item.warehouse?.id ?? item.warehouseId ?? null,
       warehouseLocation: item.warehouseLocation ?? null,
-    });
-  }
-
-  for (const [scopeKey, params] of Array.from(
-    pendingQuantityParamsByScope.entries()
-  )) {
-    pendingQuantityByScope.set(
-      scopeKey,
-      await getInventoryPendingProcessQuantities(params)
-    );
-  }
-
-  return pendingQuantityByScope;
+    })
+  );
 }
 
 export async function getInventoryPendingQuantitiesByItemIds(
@@ -21802,6 +21771,7 @@ export async function getInventoryPendingQuantitiesByItemIds(
     );
     return {
       id: item.id,
+      pendingScopeKey: getInventoryPendingScopeKey(item),
       totalRequiredQuantity: pendingQuantity?.totalRequiredQuantity ?? "0.00",
       pendingReceiptQuantity: pendingQuantity?.pendingReceiptQuantity ?? "0.00",
     };
@@ -21939,6 +21909,7 @@ export async function listInventoryItems(filters?: InventoryListFilters) {
   return {
     items: items.map(item => ({
       ...item,
+      pendingScopeKey: getInventoryPendingScopeKey(item),
       totalRequiredQuantity:
         pendingQuantityByScope.get(getInventoryPendingScopeKey(item))
           ?.totalRequiredQuantity ?? "0.00",
@@ -22662,7 +22633,7 @@ export async function getInventoryKardex(params: {
     id: item.id,
     sapItemCode: item.sapItemCode,
     itemName: item.name,
-    unit: item.unit,
+    unit: normalizeInventoryUnitValue(item.unit),
     currentStock: toDecimalString(item.currentStock),
     project,
     warehouse: warehouse
@@ -22849,7 +22820,10 @@ export async function getInventoryKardex(params: {
 
   return {
     balances,
-    movements,
+    movements: movements.map(movement => ({
+      ...movement,
+      unit: normalizeInventoryUnitValue(movement.unit),
+    })),
   };
 }
 
@@ -22922,6 +22896,7 @@ export async function createInventoryItem(data: InsertInventoryItem) {
     ...data,
     name: normalizeArticleDescription(data.name),
     description: normalizeOptionalArticleDescription(data.description),
+    unit: normalizeInventoryUnitValue(data.unit),
   };
   const [inventoryItem] = await db
     .insert(inventoryItems)
@@ -22956,6 +22931,9 @@ export async function updateInventoryItem(
 
   const nextData: Partial<InsertInventoryItem> = {
     ...data,
+    ...(data.unit !== undefined
+      ? { unit: normalizeInventoryUnitValue(data.unit) }
+      : {}),
     ...(data.name !== undefined
       ? { name: normalizeArticleDescription(data.name) }
       : {}),
