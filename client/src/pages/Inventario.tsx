@@ -251,6 +251,8 @@ function formatMovementType(type: string) {
     recepcion_traslado: "Recepción traslado",
     despacho_bodega: "Despacho",
     salida_traslado: "Salida traslado",
+    reubicacion_salida: "Reubicación · salida",
+    reubicacion_entrada: "Reubicación · entrada",
   };
   return labels[type] ?? type.replace(/_/g, " ");
 }
@@ -1615,14 +1617,14 @@ export default function Inventario() {
           if (!open) setKardexItem(null);
         }}
       >
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-6xl">
-          <DialogHeader>
-            <DialogTitle>Kardex · {kardexItem?.sapItemCode}</DialogTitle>
+        <DialogContent className="max-h-[85vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-x-hidden overflow-y-auto p-4 sm:max-w-6xl sm:p-6">
+          <DialogHeader className="min-w-0 pr-6">
+            <DialogTitle className="break-words">Kardex · {kardexItem?.sapItemCode}</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-5 pt-2">
+          <div className="min-w-0 space-y-5 pt-2">
             <div className="rounded-lg border bg-muted/30 p-3">
-              <p className="font-medium text-foreground">{kardexItem?.name}</p>
+              <p className="break-words font-medium text-foreground">{kardexItem?.name}</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {kardexItem?.projectSummaryLabel ??
                   formatProject(kardexItem?.project)}{" "}
@@ -1648,8 +1650,13 @@ export default function Inventario() {
                       Sin existencias actuales.
                     </div>
                   ) : (
-                    <div className="overflow-x-auto rounded-lg border">
-                      <table className="w-full text-sm">
+                    <div
+                      className="overflow-x-auto rounded-lg border"
+                      role="region"
+                      aria-label="Existencias por ubicación"
+                      tabIndex={0}
+                    >
+                      <table className="w-full min-w-[640px] text-sm">
                         <thead>
                           <tr className="border-b bg-muted/40">
                             <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1657,6 +1664,9 @@ export default function Inventario() {
                             </th>
                             <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                               Almacén
+                            </th>
+                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Ubicación
                             </th>
                             <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                               Stock
@@ -1674,6 +1684,9 @@ export default function Inventario() {
                               </td>
                               <td className="p-3 text-xs">
                                 {balance.warehouseLocation || "—"}
+                              </td>
+                              <td className="p-3 text-xs">
+                                {formatStorageLocationLabel(balance.storageLocation)}
                               </td>
                               <td className="p-3 text-right font-medium">
                                 {formatQuantity(balance.currentStock)}{" "}
@@ -1694,13 +1707,21 @@ export default function Inventario() {
 
                 <div className="space-y-2">
                   <h3 className="text-sm font-semibold">Movimientos</h3>
+                  <p className="text-xs text-muted-foreground sm:hidden">
+                    Deslice la tabla para ver las ubicaciones y cantidades.
+                  </p>
                   {(kardexData?.movements.length ?? 0) === 0 ? (
                     <div className="rounded-lg border px-3 py-4 text-sm text-muted-foreground">
                       Sin movimientos registrados.
                     </div>
                   ) : (
-                    <div className="overflow-x-auto rounded-lg border">
-                      <table className="w-full text-sm">
+                    <div
+                      className="overflow-x-auto rounded-lg border"
+                      role="region"
+                      aria-label="Movimientos del kardex"
+                      tabIndex={0}
+                    >
+                      <table className="w-full min-w-[960px] text-sm">
                         <thead>
                           <tr className="border-b bg-muted/40">
                             <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1717,6 +1738,9 @@ export default function Inventario() {
                             </th>
                             <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                               Bodega
+                            </th>
+                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Ubicación
                             </th>
                             <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                               Entrada
@@ -1744,7 +1768,18 @@ export default function Inventario() {
                                 </div>
                                 {movement.sourceNumber ? (
                                   <div className="text-xs text-muted-foreground">
-                                    Origen: {movement.sourceNumber}
+                                    {movement.type === "reubicacion_salida" ||
+                                    movement.type === "reubicacion_entrada"
+                                      ? "Traslado: "
+                                      : "Origen: "}
+                                    {movement.sourceNumber}
+                                  </div>
+                                ) : null}
+                                {(movement.type === "reubicacion_salida" ||
+                                  movement.type === "reubicacion_entrada") &&
+                                movement.notes ? (
+                                  <div className="mt-1 max-w-xs whitespace-pre-line break-words text-xs text-muted-foreground">
+                                    Motivo: {movement.notes}
                                   </div>
                                 ) : null}
                               </td>
@@ -1753,6 +1788,25 @@ export default function Inventario() {
                               </td>
                               <td className="p-3 text-xs">
                                 {formatWarehouseOptionLabel(movement.warehouse)}
+                              </td>
+                              <td className="p-3 text-xs">
+                                {movement.type === "reubicacion_salida" ||
+                                movement.type === "reubicacion_entrada" ? (
+                                  <div className="min-w-28 space-y-1">
+                                    <p className="font-medium">
+                                      {formatStorageLocationLabel(movement.storageLocation)}
+                                    </p>
+                                    <p className="text-muted-foreground">
+                                      {formatStorageLocationLabel(movement.sourceStorageLocation)}
+                                      {" → "}
+                                      {formatStorageLocationLabel(movement.destinationStorageLocation)}
+                                    </p>
+                                  </div>
+                                ) : "storageLocation" in movement ? (
+                                  formatStorageLocationLabel(movement.storageLocation)
+                                ) : (
+                                  "—"
+                                )}
                               </td>
                               <td className="p-3 text-right font-medium text-emerald-700">
                                 {movement.direction === "entrada"

@@ -1,8 +1,16 @@
+import {
+  getInternalRelocationReason,
+  getTransferMovementKind,
+  isInternalRelocationLine,
+} from "../shared/internal-relocations";
+
 export type TransferConversionDestinationItem = {
   itemName?: string | null;
   quantity: string | number;
   sourceProjectId?: number | null;
   sourceWarehouseId?: number | null;
+  sourceStorageLocation?: string | null;
+  materialRequestItemId?: number | null;
 };
 
 export class TransferConversionValidationError extends Error {
@@ -17,6 +25,10 @@ export function assertValidTransferConversionDestination(input: {
   destinationProjectId?: number | null;
   destinationWarehouseId?: number | null;
   fallbackSourceProjectId?: number | null;
+  materialRequestId?: number | null;
+  reverseLogisticId?: number | null;
+  notes?: string | null;
+  relocationReason?: string | null;
   items: TransferConversionDestinationItem[];
 }) {
   if (input.destinationType !== "proyecto") return;
@@ -27,6 +39,13 @@ export function assertValidTransferConversionDestination(input: {
     );
   }
 
+  const request = { ...input, projectId: input.fallbackSourceProjectId };
+  if (getTransferMovementKind(request, input.items) === "mixed") {
+    throw new TransferConversionValidationError(
+      "Separe las reubicaciones internas y los traslados entre bodegas o proyectos en documentos distintos"
+    );
+  }
+
   const conflictingItem = input.items.find(item => {
     if (Number(item.quantity) <= 0) return false;
     const sourceProjectId =
@@ -34,10 +53,28 @@ export function assertValidTransferConversionDestination(input: {
         ? (input.fallbackSourceProjectId ?? null)
         : item.sourceProjectId;
 
-    return (
+    const sameScope =
       sourceProjectId === input.destinationProjectId &&
-      item.sourceWarehouseId === input.destinationWarehouseId
-    );
+      item.sourceWarehouseId === input.destinationWarehouseId;
+    if (sameScope && isInternalRelocationLine(request, item)) {
+      if (
+        !/^\d+(?:\.\d{1,2})?$/.test(String(item.quantity).trim()) ||
+        !Number.isFinite(Number(item.quantity))
+      ) {
+        throw new TransferConversionValidationError(
+          "La cantidad a reubicar debe ser válida y tener como máximo dos decimales"
+        );
+      }
+      if (
+        getInternalRelocationReason(request, input.relocationReason).length < 3
+      ) {
+        throw new TransferConversionValidationError(
+          "Ingrese un motivo de al menos 3 caracteres para la reubicación interna"
+        );
+      }
+      return false;
+    }
+    return sameScope;
   });
 
   if (!conflictingItem) return;

@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { isInternalRelocationLine } from "../shared/internal-relocations";
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
@@ -133,7 +134,9 @@ export async function listTransferReceiptSources(
   const { line, request } = await editableLine(database, input);
   const conditions = stockConditions(line);
   if (input.cursor) conditions.push(gt(inventoryItems.id, input.cursor));
-  if (
+  if (isInternalRelocationLine(request, line)) {
+    conditions.push(eq(inventoryItems.projectId, line.sourceProjectId!));
+  } else if (
     request.destinationType === "proyecto" &&
     request.destinationWarehouseId === line.sourceWarehouseId
   ) {
@@ -179,7 +182,10 @@ export async function changeTransferReceiptSource(
       .where(
         and(
           eq(inventoryItems.id, input.inventoryItemId),
-          ...stockConditions(line)
+          ...stockConditions(line),
+          ...(isInternalRelocationLine(request, line)
+            ? [eq(inventoryItems.projectId, line.sourceProjectId!)]
+            : [])
         )
       )
       .for("update", { of: inventoryItems });
@@ -191,6 +197,7 @@ export async function changeTransferReceiptSource(
       });
     const origin = stock.inventory;
     if (
+      !isInternalRelocationLine(request, line) &&
       request.destinationType === "proyecto" &&
       request.destinationProjectId === origin.projectId &&
       request.destinationWarehouseId === origin.warehouseId

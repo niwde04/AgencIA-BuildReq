@@ -1,6 +1,11 @@
 import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
 import { TransferReceiptSourceSelector } from "@/components/TransferReceiptSourceSelector";
+import {
+  getInternalRelocationDestinationError,
+  getTransferMovementKind,
+  isInternalRelocationLine,
+} from "@shared/internal-relocations";
 import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import { DocumentNumberButton } from "@/components/DocumentNumberButton";
 import {
@@ -1605,11 +1610,27 @@ export default function Recepciones() {
     setExpandedReceiptDetailItemIds([]);
   }, [sourceId, sourceType]);
 
+  const isInternalRelocationReceipt = Boolean(
+    sourceType === "transfer" &&
+      transferDetail?.transferRequest &&
+      getTransferMovementKind(
+        transferDetail.transferRequest,
+        transferDetail.items ?? []
+      ) === "internal"
+  );
+  const isInternalRelocationItem = (item: any) =>
+    Boolean(
+      isInternalRelocationReceipt &&
+        transferDetail?.transferRequest &&
+        isInternalRelocationLine(transferDetail.transferRequest, item)
+    );
+
   const isSameTransferOriginScope = (
     item: any,
     warehouseId?: string | number | null
   ) => {
     if (sourceType !== "transfer") return false;
+    if (isInternalRelocationItem(item)) return false;
     const selectedWarehouseId = Number(warehouseId);
     const sourceWarehouseId = Number(item?.sourceWarehouseId);
     if (
@@ -1638,6 +1659,14 @@ export default function Recepciones() {
     return originProjectId === destinationProjectId;
   };
   const getDefaultReceiptWarehouseIdForItem = (item: any) => {
+    if (isInternalRelocationItem(item)) {
+      return receiptProjectWarehouseOptions.some(
+        (warehouse: any) =>
+          Number(warehouse.id) === Number(item.sourceWarehouseId)
+      )
+        ? String(item.sourceWarehouseId)
+        : "";
+    }
     if (
       receiptWarehouseId &&
       receiptProjectWarehouseOptions.some(
@@ -1655,7 +1684,7 @@ export default function Recepciones() {
 
     if (
       destinationWarehouseId &&
-      lockedReturnDestinationWarehouseId &&
+      lockedTransferDestinationWarehouseId &&
       receiptProjectWarehouseOptions.some(
         (warehouse: any) => String(warehouse.id) === destinationWarehouseId
       ) &&
@@ -1666,13 +1695,15 @@ export default function Recepciones() {
 
     return "";
   };
-  const lockedReturnDestinationWarehouseId =
+  const lockedTransferDestinationWarehouseId =
     sourceType === "transfer" &&
     transferDetail?.transferRequest?.reverseLogisticId &&
     transferDetail.transferRequest.destinationType === "proyecto" &&
     transferDetail.destinationWarehouse?.id
       ? String(transferDetail.destinationWarehouse.id)
-      : "";
+      : isInternalRelocationReceipt
+        ? String(transferDetail?.transferRequest?.destinationWarehouseId || "")
+        : "";
   useEffect(() => {
     if (!dialogOpen || !sourceId || !receiptProjectWarehouseOptions.length) {
       setReceiptWarehouseId("");
@@ -1685,17 +1716,17 @@ export default function Recepciones() {
         receiptProjectWarehouseOptions.some(
           (warehouse: any) => String(warehouse.id) === current
         ) &&
-        (!lockedReturnDestinationWarehouseId ||
-          current === lockedReturnDestinationWarehouseId);
+        (!lockedTransferDestinationWarehouseId ||
+          current === lockedTransferDestinationWarehouseId);
 
       if (currentIsAvailable) return current;
-      if (lockedReturnDestinationWarehouseId)
-        return lockedReturnDestinationWarehouseId;
+      if (lockedTransferDestinationWarehouseId)
+        return lockedTransferDestinationWarehouseId;
       return "";
     });
   }, [
     dialogOpen,
-    lockedReturnDestinationWarehouseId,
+    lockedTransferDestinationWarehouseId,
     receiptProjectWarehouseOptions,
     sourceId,
   ]);
@@ -2175,7 +2206,9 @@ export default function Recepciones() {
       toast.success(
         result.invoiceDocumentNumber
           ? `Recepción registrada y documento ${result.invoiceDocumentNumber} creado`
-          : "Recepción registrada"
+          : isInternalRelocationReceipt
+            ? "Reubicación interna registrada"
+            : "Recepción registrada"
       );
       setDialogOpen(false);
       resetForm();
@@ -2186,6 +2219,9 @@ export default function Recepciones() {
         utils.materialRequests.invalidate(),
         utils.supplyFlows.pendingQueue.invalidate(),
         utils.supplyFlows.invalidate(),
+        ...(isInternalRelocationReceipt
+          ? [utils.inventory.invalidate(), utils.transferRequests.invalidate()]
+          : []),
         sourceType === "transfer" && sourceId
           ? utils.transfers.getById.invalidate({ id: Number(sourceId) })
           : Promise.resolve(),
@@ -2777,8 +2813,8 @@ export default function Recepciones() {
       return false;
     }
     if (
-      lockedReturnDestinationWarehouseId &&
-      warehouseKey !== lockedReturnDestinationWarehouseId
+      lockedTransferDestinationWarehouseId &&
+      warehouseKey !== lockedTransferDestinationWarehouseId
     ) {
       return false;
     }
@@ -2920,6 +2956,16 @@ export default function Recepciones() {
     }
 
     const value = storageLocationByItemId[item.id] ?? "";
+    const internalRelocation = isInternalRelocationItem(item);
+    const relocationLocationError = internalRelocation
+      ? getInternalRelocationDestinationError(
+          transferDetail!.transferRequest!,
+          item,
+          Number(selectedWarehouseValue || warehouseByItemId[item.id]) ||
+            undefined,
+          value
+        )
+      : null;
     const datalistId = `receipt-storage-location-${item.id}`;
     const suggestions =
       storageLocationSuggestionItemId === item.id
@@ -2928,12 +2974,35 @@ export default function Recepciones() {
 
     return (
       <div className="min-w-0 space-y-1.5">
-        {!compact ? <Label>Ubicación</Label> : null}
+        {!compact ? (
+          <Label>
+            {internalRelocation ? "Ubicación destino *" : "Ubicación"}
+          </Label>
+        ) : null}
+        {internalRelocation ? (
+          <p className="text-xs text-muted-foreground">
+            Origen:{" "}
+            <span className="font-semibold">
+              {item.sourceStorageLocation || "Sin ubicación"}
+            </span>
+          </p>
+        ) : null}
         <Input
           list={datalistId}
           maxLength={255}
-          placeholder="Ubicación"
+          placeholder={
+            internalRelocation ? "Nueva ubicación destino" : "Ubicación"
+          }
           value={value}
+          aria-label={
+            internalRelocation
+              ? `Ubicación destino de ${item.itemName}`
+              : undefined
+          }
+          aria-invalid={Boolean(value && relocationLocationError)}
+          aria-describedby={
+            value && relocationLocationError ? `${datalistId}-error` : undefined
+          }
           onFocus={() => setStorageLocationSuggestionItemId(item.id)}
           onChange={event =>
             setStorageLocationByItemId(current => ({
@@ -2953,6 +3022,15 @@ export default function Recepciones() {
             <option key={storageLocation} value={storageLocation} />
           ))}
         </datalist>
+        {value && relocationLocationError ? (
+          <p
+            id={`${datalistId}-error`}
+            role="alert"
+            className="text-xs text-destructive"
+          >
+            {relocationLocationError}
+          </p>
+        ) : null}
       </div>
     );
   };
@@ -2981,7 +3059,7 @@ export default function Recepciones() {
       );
     }
 
-    const lockedDestinationWarehouseId = lockedReturnDestinationWarehouseId;
+    const lockedDestinationWarehouseId = lockedTransferDestinationWarehouseId;
     const itemWarehouseOptions = receiptProjectWarehouseOptions;
     const hasSelectableWarehouses = itemWarehouseOptions.some(
       (warehouse: any) => {
@@ -3033,6 +3111,7 @@ export default function Recepciones() {
           disabled={
             !itemWarehouseOptions.length ||
             !hasSelectableWarehouses ||
+            isInternalRelocationItem(item) ||
             registerMutation.isPending
           }
         >
@@ -3108,7 +3187,9 @@ export default function Recepciones() {
           </p>
         ) : selectedIsWrongReturnDestination ? (
           <p className="text-[10px] font-medium text-destructive">
-            Este traslado debe ingresar a la bodega destino de la devolución.
+            {isInternalRelocationItem(item)
+              ? "La reubicación debe conservar la misma bodega."
+              : "Este traslado debe ingresar a la bodega destino de la devolución."}
           </p>
         ) : selectedWarehouse ? (
           <p className="truncate text-[10px] text-muted-foreground">
@@ -4037,6 +4118,13 @@ export default function Recepciones() {
         const basePayload = {
           requiresWarehouse: !isNonInventoryLine,
           sourceItemId: item.id,
+          ...(isInternalRelocationItem(item)
+            ? {
+                expectedReceivedQuantity: String(item.receivedQuantity ?? "0"),
+                expectedSourceStorageLocation:
+                  item.sourceStorageLocation ?? null,
+              }
+            : {}),
           warehouseId: isNonInventoryLine
             ? undefined
             : warehouseByItemId[item.id]
@@ -4168,6 +4256,31 @@ export default function Recepciones() {
       const sourceItemById = new Map(
         (sourceItems as any[]).map(item => [Number(item.id), item])
       );
+      for (const item of receiptItems) {
+        const sourceItem = sourceItemById.get(Number(item.sourceItemId));
+        if (
+          !sourceItem ||
+          !isInternalRelocationItem(sourceItem) ||
+          Number(item.quantityReceived || 0) <= 0
+        )
+          continue;
+        const error = getInternalRelocationDestinationError(
+          transferDetail!.transferRequest!,
+          sourceItem,
+          Number(item.warehouseId) || undefined,
+          item.storageLocation
+        );
+        if (error) {
+          toast.error(`${sourceItem.itemName}: ${error}`);
+          return;
+        }
+        if (Number(item.quantityReceived) > getPendingQuantity(sourceItem)) {
+          toast.error(
+            `${sourceItem.itemName}: la cantidad supera el saldo pendiente de reubicar`
+          );
+          return;
+        }
+      }
       const sameOriginWarehouse = receiptItems.find(item => {
         if (Number(item.quantityReceived || 0) <= 0 || !item.warehouseId) {
           return false;
@@ -4185,18 +4298,20 @@ export default function Recepciones() {
         if (
           Number(item.quantityReceived || 0) <= 0 ||
           !item.warehouseId ||
-          !lockedReturnDestinationWarehouseId
+          !lockedTransferDestinationWarehouseId
         ) {
           return false;
         }
         return (
           Number(item.warehouseId) !==
-          Number(lockedReturnDestinationWarehouseId)
+          Number(lockedTransferDestinationWarehouseId)
         );
       });
       if (wrongReturnDestinationWarehouse) {
         toast.error(
-          `${wrongReturnDestinationWarehouse.itemName}: debe ingresar a la bodega destino de la devolución`
+          isInternalRelocationReceipt
+            ? `${wrongReturnDestinationWarehouse.itemName}: la reubicación debe conservar la misma bodega`
+            : `${wrongReturnDestinationWarehouse.itemName}: debe ingresar a la bodega destino de la devolución`
         );
         return;
       }
@@ -5158,6 +5273,25 @@ export default function Recepciones() {
               </DialogHeader>
 
               <div className="min-w-0 space-y-5">
+                {isInternalRelocationReceipt ? (
+                  <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
+                    <Badge variant="outline">Reubicación interna</Badge>
+                    <p className="text-sm text-muted-foreground">
+                      El proyecto y la bodega se conservan. Indique la nueva
+                      ubicación de cada artículo; solo se moverá la cantidad
+                      recibida.
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Esta reubicación no cambia la ubicación de otros traslados
+                      o salidas pendientes. Revise esos documentos antes de
+                      mover el saldo.
+                    </p>
+                    <p className="whitespace-pre-wrap text-sm">
+                      <span className="font-semibold">Motivo: </span>
+                      {transferDetail?.transferRequest?.notes}
+                    </p>
+                  </div>
+                ) : null}
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
                   <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
                     <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -5460,7 +5594,7 @@ export default function Recepciones() {
                           onValueChange={handleReceiptHeaderWarehouseChange}
                           disabled={
                             !receiptHeaderWarehouseOptions.length ||
-                            Boolean(lockedReturnDestinationWarehouseId) ||
+                            Boolean(lockedTransferDestinationWarehouseId) ||
                             registerMutation.isPending
                           }
                         >
@@ -6481,6 +6615,7 @@ export default function Recepciones() {
                                       </div>
                                     ) : null}
                                     {sourceType === "transfer" &&
+                                    !isInternalRelocationItem(item) &&
                                     !transferDetail?.transferRequest
                                       ?.reverseLogisticId &&
                                     !item.receiptClosed &&
@@ -7624,7 +7759,9 @@ export default function Recepciones() {
                   >
                     {registerMutation.isPending
                       ? "Registrando..."
-                      : "Registrar recepción"}
+                      : isInternalRelocationReceipt
+                        ? "Registrar reubicación"
+                        : "Registrar recepción"}
                   </Button>
                   {contractReceiptBlockReason ? (
                     <div

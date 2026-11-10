@@ -37,6 +37,14 @@ import {
   TransferConversionValidationError,
 } from "./transferConversionValidation";
 import {
+  getInternalRelocationDestinationError,
+  getInternalRelocationReason,
+  getTransferMovementKind,
+  isInternalRelocationLine,
+  isSameTransferScope,
+  sameStorageLocation,
+} from "../shared/internal-relocations";
+import {
   assertConfirmedTransferCanBeCancelled,
   ConfirmedTransferCancellationError,
 } from "./confirmedTransferCancellation";
@@ -11223,10 +11231,31 @@ export async function getTransferRequestById(id: number) {
 
 export async function updateTransferRequest(
   id: number,
-  data: Partial<InsertTransferRequest>
+  data: Partial<InsertTransferRequest>,
+  options?: { requirePending?: boolean }
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
+  if (options?.requirePending) {
+    const updated = await db
+      .update(transferRequests)
+      .set({ ...data, updatedAt: new Date() })
+      .where(
+        and(
+          eq(transferRequests.id, id),
+          eq(transferRequests.status, "pendiente")
+        )
+      )
+      .returning({ id: transferRequests.id });
+    if (updated.length === 0) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message:
+          "La solicitud ya cambió de estado. Actualice antes de cambiar su destino",
+      });
+    }
+    return { success: true };
+  }
   await db
     .update(transferRequests)
     .set({ ...data, updatedAt: new Date() })
@@ -11325,12 +11354,23 @@ export async function createTransferFromRequest(
     sourceProjectId?: number | null;
     sourceWarehouseId?: number | null;
     sourceStorageLocation?: string | null;
-  }>
-) {
+  }>,
+  options?: { relocationReason?: string }
+): Promise<{
+  id: number;
+  transferNumber: string;
+  guideNumber: string;
+  sapCorrelative: string;
+}> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const detail = await getTransferRequestById(transferRequestId);
   if (!detail) throw new Error("Solicitud de traslado no encontrada");
+  if (detail.transferRequest.status !== "pendiente") {
+    throw new TransferConversionValidationError(
+      "Solo se puede convertir una solicitud de traslado pendiente"
+    );
+  }
 
   assertValidTransferConversionDestination({
     destinationType: detail.transferRequest.destinationType,
@@ -11422,9 +11462,14 @@ export async function createTransferFromRequest(
         destinationProjectId: detail.transferRequest.destinationProjectId,
         destinationWarehouseId: detail.transferRequest.destinationWarehouseId,
         fallbackSourceProjectId: detail.transferRequest.projectId,
+        materialRequestId: detail.transferRequest.materialRequestId,
+        reverseLogisticId: detail.transferRequest.reverseLogisticId,
+        notes: detail.transferRequest.notes,
+        relocationReason: options?.relocationReason,
         items: [
           {
             itemName: item.itemName,
+            materialRequestItemId: item.materialRequestItemId,
             quantity: transferQuantity,
             sourceProjectId,
             sourceWarehouseId,
@@ -11465,6 +11510,53 @@ export async function createTransferFromRequest(
 
   if (!transferItems.some(entry => entry.transferQuantity > 0)) {
     throw new Error("Debe trasladar al menos una cantidad mayor que cero");
+  }
+
+  const movementItems = transferItems.map(entry => ({
+    ...entry.item,
+    quantity: entry.transferQuantity,
+    sourceProjectId: entry.sourceProjectId,
+    sourceWarehouseId: entry.sourceWarehouseId,
+    sourceStorageLocation: entry.sourceStorageLocation,
+  }));
+  assertValidTransferConversionDestination({
+    ...detail.transferRequest,
+    fallbackSourceProjectId: detail.transferRequest.projectId,
+    relocationReason: options?.relocationReason,
+    items: movementItems,
+  });
+  const internalRelocation =
+    getTransferMovementKind(detail.transferRequest, movementItems) ===
+    "internal";
+  const relocationReason = getInternalRelocationReason(
+    detail.transferRequest,
+    options?.relocationReason
+  );
+  if (
+    internalRelocation &&
+    process.env.INTERNAL_RELOCATIONS_ENABLED === "false"
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Las reubicaciones internas están deshabilitadas temporalmente",
+    });
+  }
+  if (internalRelocation && !databaseTransactionScope.getStore()) {
+    return db.transaction(transactionDb =>
+      databaseTransactionScope.run(transactionDb as any, async () => {
+        await transactionDb
+          .select({ id: transferRequests.id })
+          .from(transferRequests)
+          .where(eq(transferRequests.id, transferRequestId))
+          .for("update");
+        return createTransferFromRequest(
+          transferRequestId,
+          confirmedById,
+          itemQuantities,
+          options
+        );
+      })
+    );
   }
 
   await assertAggregatedTransferStockAvailability(transferItems);
@@ -11628,6 +11720,18 @@ export async function createTransferFromRequest(
           : `Proyecto ${detail.transferRequest.destinationProjectId ?? ""}`
       }`,
       `Correlativo SAP: ${sapCorrelative}`,
+      ...(internalRelocation
+        ? [
+            "Movimiento: Reubicación interna en el mismo proyecto y bodega",
+            `Motivo: ${relocationReason}`,
+            ...transferItems
+              .filter(entry => entry.transferQuantity > 0)
+              .map(
+                entry =>
+                  `${entry.item.itemName}: ${toDecimalString(entry.transferQuantity)} ${entry.item.unit ?? ""}; ubicación origen ${entry.sourceStorageLocation || "Sin ubicación"}. Destino: se define en recepción.`
+              ),
+          ]
+        : []),
     ]
   );
 
@@ -11656,6 +11760,7 @@ export async function createTransferFromRequest(
   await updateTransferRequest(transferRequestId, {
     projectId: documentProjectId,
     status: "convertida",
+    ...(internalRelocation ? { notes: relocationReason } : {}),
   });
   if (detail.transferRequest.reverseLogisticId) {
     await updateReverseLogisticStatus(
@@ -13090,6 +13195,8 @@ export async function registerReceipt(
   items: Array<
     Omit<InsertReceiptItem, "receiptId"> & {
       closeRemaining?: boolean;
+      expectedReceivedQuantity?: string;
+      expectedSourceStorageLocation?: string | null;
       closeReason?: string | null;
       closeNote?: string | null;
       closedById?: number | null;
@@ -13122,6 +13229,7 @@ export async function registerReceipt(
   let purchaseOrderDetailForReceipt: Awaited<
     ReturnType<typeof getPurchaseOrderById>
   > = undefined;
+  let transferDetailForReceipt: Awaited<ReturnType<typeof getTransferById>>;
   let receiptBillingAuthorizationId: number | null = null;
   if (data.sourceType === "purchase_order") {
     // Count, grant/revoke and consumption share this lock until commit.
@@ -13196,6 +13304,171 @@ export async function registerReceipt(
     });
   } else if (data.sourceType === "transfer") {
     await lockTransferForReceipt(db, data.sourceId);
+
+    transferDetailForReceipt = await getTransferById(data.sourceId);
+    if (!transferDetailForReceipt?.transferRequest) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "Traslado no encontrado",
+      });
+    }
+    const request = transferDetailForReceipt.transferRequest;
+    const movementKind = getTransferMovementKind(
+      request,
+      transferDetailForReceipt.items
+    );
+    if (movementKind === "mixed") {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "Separe las reubicaciones internas y los traslados entre bodegas o proyectos",
+      });
+    }
+    if (movementKind === "internal") {
+      if (process.env.INTERNAL_RELOCATIONS_ENABLED === "false") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Las reubicaciones internas están deshabilitadas temporalmente",
+        });
+      }
+      if (data.projectId !== request.destinationProjectId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La reubicación debe conservar el proyecto de origen",
+        });
+      }
+      if (getInternalRelocationReason(request).length < 3) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "El traslado interno necesita un motivo",
+        });
+      }
+      // Serialize internal receipts in a warehouse, including creation of a new
+      // destination row, before taking stock row locks. Other operations still
+      // contend on the existing inventory locks when they consume that stock.
+      await db.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`buildreq:internal-relocation:${request.destinationWarehouseId}`}, 0))`
+      );
+      const sources = new Map(
+        transferDetailForReceipt.items.map(line => [line.id, line])
+      );
+      const seen = new Set<number>();
+      const stockEntries: TransferStockValidationEntry[] = [];
+      for (const item of items) {
+        const source = item.sourceItemId
+          ? sources.get(item.sourceItemId)
+          : undefined;
+        if (!source || seen.has(source.id)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "La recepción incluye una línea inexistente o repetida",
+          });
+        }
+        seen.add(source.id);
+        const quantity = Number(item.quantityReceived);
+        const pending = getTransferOpenQuantity(source);
+        if (
+          !/^\d+(?:\.\d{1,2})?$/.test(item.quantityReceived.trim()) ||
+          !Number.isFinite(quantity) ||
+          quantity < 0 ||
+          quantity > pending
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "La cantidad a reubicar supera el saldo pendiente del traslado",
+          });
+        }
+        if (
+          source.receiptClosed ||
+          (pending <= 0 && (quantity > 0 || item.closeRemaining))
+        ) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "La línea de reubicación ya fue recibida o cerrada",
+          });
+        }
+        if (
+          item.expectedReceivedQuantity === undefined ||
+          !Number.isFinite(Number(item.expectedReceivedQuantity)) ||
+          toDecimalString(item.expectedReceivedQuantity) !==
+            toDecimalString(source.receivedQuantity) ||
+          (item.expectedSourceStorageLocation !== undefined &&
+            !sameStorageLocation(
+              item.expectedSourceStorageLocation,
+              source.sourceStorageLocation
+            ))
+        ) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message:
+              "La línea cambió desde que abrió la recepción. Actualice el traslado antes de registrar otra vez",
+          });
+        }
+        if (quantity > 0) {
+          const error = getInternalRelocationDestinationError(
+            request,
+            source,
+            item.warehouseId,
+            item.storageLocation
+          );
+          if (error) throw new TRPCError({ code: "BAD_REQUEST", message: error });
+          if (item.isFixedAsset || item.isLeasing) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "La reubicación no puede cambiar la clasificación del artículo",
+            });
+          }
+          stockEntries.push({
+            item: source,
+            transferQuantity: quantity,
+            sourceProjectId: source.sourceProjectId ?? null,
+            sourceWarehouseId: source.sourceWarehouseId,
+            sourceStorageLocation: source.sourceStorageLocation,
+          });
+        }
+        // Persist the source identity, not an editable name/SAP/unit supplied by
+        // the browser. Only the received quantity and destination can change.
+        item.sapItemCode = source.sapItemCode;
+        item.itemName = source.itemName;
+        item.unit = source.unit;
+        item.quantityExpected = toDecimalString(pending);
+        item.storageLocation = normalizeInventoryStorageLocation(
+          item.storageLocation
+        );
+      }
+      if (
+        !items.some(
+          item => Number(item.quantityReceived) > 0 || item.closeRemaining
+        )
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Ingrese una cantidad mayor que cero o cierre un saldo pendiente",
+        });
+      }
+      await assertAggregatedTransferStockAvailability(stockEntries);
+    } else {
+      for (const item of items) {
+        const source = transferDetailForReceipt.items.find(
+          line => line.id === item.sourceItemId
+        );
+        if (
+          source &&
+          Number(item.quantityReceived) > 0 &&
+          isSameTransferScope(request, source, item.warehouseId)
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "No se puede ingresar a la misma bodega/proyecto de origen desde una requisición o devolución",
+          });
+        }
+      }
+    }
 
     for (const item of items) {
       if (parseDecimal(item.quantityReceived) <= 0) continue;
@@ -13292,6 +13565,8 @@ export async function registerReceipt(
         items.map(item => {
           const {
             closeRemaining: _closeRemaining,
+            expectedReceivedQuantity: _expectedReceivedQuantity,
+            expectedSourceStorageLocation: _expectedSourceStorageLocation,
             closeReason: _closeReason,
             closeNote: _closeNote,
             closedById: _closedById,
@@ -13543,7 +13818,8 @@ export async function registerReceipt(
       }
     }
   } else {
-    const transferDetail = await getTransferById(data.sourceId);
+    const transferDetail =
+      transferDetailForReceipt ?? (await getTransferById(data.sourceId));
     if (transferDetail?.transfer) {
       const destinationProjectId =
         transferDetail.transferRequest?.destinationType === "proyecto"
@@ -22181,11 +22457,7 @@ export async function getInventoryKardex(params: {
 
   const openingItemProjectId = sql<number>`coalesce(${openingBalanceItems.projectId}, ${openingBalances.projectId})`;
   const openingConditions = [eq(openingBalanceItems.sapItemCode, sapItemCode)];
-  applyProjectScope(
-    openingConditions,
-    openingItemProjectId,
-    scopeProjectIds
-  );
+  applyProjectScope(openingConditions, openingItemProjectId, scopeProjectIds);
   if (params.warehouseId) {
     openingConditions.push(eq(openingBalances.warehouseId, params.warehouseId));
   }
@@ -22322,6 +22594,7 @@ export async function getInventoryKardex(params: {
         receiptItem: receiptItems,
         sourceItem: transferRequestItems,
         transfer: transfers,
+        transferRequest: transferRequests,
         project: projects,
         warehouse: warehouses,
       })
@@ -22332,6 +22605,10 @@ export async function getInventoryKardex(params: {
         eq(receiptItems.sourceItemId, transferRequestItems.id)
       )
       .leftJoin(transfers, eq(receipts.sourceId, transfers.id))
+      .leftJoin(
+        transferRequests,
+        eq(transferRequestItems.transferRequestId, transferRequests.id)
+      )
       .leftJoin(projects, eq(receipts.projectId, projects.id))
       .leftJoin(warehouses, eq(receiptItems.warehouseId, warehouses.id))
       .where(and(...transferReceiptConditions))
@@ -22397,10 +22674,60 @@ export async function getInventoryKardex(params: {
         }
       : null,
     warehouseLocation: warehouse?.displayName ?? item.warehouseLocation,
+    storageLocation: item.storageLocation,
     updatedAt: item.updatedAt,
   }));
 
+  const internalRelocationMovements = transferReceiptRows.flatMap(
+    ({
+      receipt,
+      receiptItem,
+      sourceItem,
+      transfer,
+      transferRequest,
+      project,
+      warehouse,
+    }) => {
+      if (
+        !transferRequest ||
+        !isInternalRelocationLine(transferRequest, sourceItem) ||
+        parseDecimal(receiptItem.quantityReceived) <= 0
+      )
+        return [];
+      const common = {
+        documentNumber: receipt.receiptNumber,
+        sourceNumber: transfer?.transferNumber ?? null,
+        date: receipt.receiptDate,
+        project,
+        warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
+        itemName: sourceItem.itemName,
+        quantity: toDecimalString(receiptItem.quantityReceived),
+        unit: sourceItem.unit ?? receiptItem.unit,
+        sourceStorageLocation: sourceItem.sourceStorageLocation,
+        destinationStorageLocation: receiptItem.storageLocation,
+        notes: transferRequest.notes ?? receipt.notes,
+      };
+      return [
+        {
+          ...common,
+          id: `relocation-out-${receiptItem.id}`,
+          type: "reubicacion_salida" as const,
+          direction: "salida" as const,
+          storageLocation: sourceItem.sourceStorageLocation,
+        },
+        {
+          ...common,
+          id: `relocation-in-${receiptItem.id}`,
+          type: "reubicacion_entrada" as const,
+          direction: "entrada" as const,
+          storageLocation: receiptItem.storageLocation,
+        },
+      ];
+    }
+  );
+
   const movements = [
+    ...internalRelocationMovements,
     ...openingRows.map(({ openingBalance, item, project, warehouse }) => ({
       id: `opening-${item.id}`,
       type: "saldo_inicial" as const,
@@ -22445,22 +22772,35 @@ export async function getInventoryKardex(params: {
         notes: receipt.notes,
       })
     ),
-    ...transferReceiptRows.map(
-      ({ receipt, receiptItem, sourceItem, transfer, project, warehouse }) => ({
-        id: `receipt-transfer-${receiptItem.id}`,
-        type: "recepcion_traslado" as const,
-        direction: "entrada" as const,
-        documentNumber: receipt.receiptNumber,
-        sourceNumber: transfer?.transferNumber ?? null,
-        date: receipt.receiptDate,
-        project,
-        warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
-        itemName: sourceItem.itemName,
-        quantity: toDecimalString(receiptItem.quantityReceived),
-        unit: sourceItem.unit ?? receiptItem.unit,
-        notes: receipt.notes,
-      })
-    ),
+    ...transferReceiptRows
+      .filter(
+        ({ transferRequest, sourceItem }) =>
+          !transferRequest ||
+          !isInternalRelocationLine(transferRequest, sourceItem)
+      )
+      .map(
+        ({
+          receipt,
+          receiptItem,
+          sourceItem,
+          transfer,
+          project,
+          warehouse,
+        }) => ({
+          id: `receipt-transfer-${receiptItem.id}`,
+          type: "recepcion_traslado" as const,
+          direction: "entrada" as const,
+          documentNumber: receipt.receiptNumber,
+          sourceNumber: transfer?.transferNumber ?? null,
+          date: receipt.receiptDate,
+          project,
+          warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
+          itemName: sourceItem.itemName,
+          quantity: toDecimalString(receiptItem.quantityReceived),
+          unit: sourceItem.unit ?? receiptItem.unit,
+          notes: receipt.notes,
+        })
+      ),
     ...warehouseExitRows.map(({ warehouseExit, item, project, warehouse }) => ({
       id: `warehouse-exit-${item.id}`,
       type: "despacho_bodega" as const,
@@ -22482,8 +22822,12 @@ export async function getInventoryKardex(params: {
       unit: item.unit,
       notes: item.notes ?? warehouseExit.notes,
     })),
-    ...transferExitRows.map(
-      ({ transfer, transferRequest, item, project, warehouse }) => ({
+    ...transferExitRows
+      .filter(
+        ({ transferRequest, item }) =>
+          !isInternalRelocationLine(transferRequest, item)
+      )
+      .map(({ transfer, transferRequest, item, project, warehouse }) => ({
         id: `transfer-exit-${item.id}`,
         type: "salida_traslado" as const,
         direction: "salida" as const,
@@ -22496,8 +22840,7 @@ export async function getInventoryKardex(params: {
         quantity: toDecimalString(item.quantity),
         unit: item.unit,
         notes: transferRequest.notes,
-      })
-    ),
+      })),
   ].sort((left, right) => {
     const leftTime = left.date ? new Date(left.date).getTime() : 0;
     const rightTime = right.date ? new Date(right.date).getTime() : 0;

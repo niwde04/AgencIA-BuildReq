@@ -2,6 +2,10 @@ import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
 import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import {
+  getTransferMovementKind,
+  isSameTransferScope,
+} from "@shared/internal-relocations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -34,7 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Truck, Ban, Search } from "lucide-react";
+import { Plus, Truck, Ban, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 const PAGE_SIZE = 50;
@@ -223,8 +227,11 @@ function getDestinationWarehouseSummary(detail: any): string {
 export default function TransferRequests() {
   const utils = trpc.useUtils();
   const { user } = useAuth();
-  const allowManualTransferRequests = false;
   const buildreqRole = (user as any)?.buildreqRole;
+  const allowManualTransferRequests =
+    user?.role === "admin" ||
+    buildreqRole === "jefe_bodega_central" ||
+    buildreqRole === "administracion_central";
   const canConvertTransferRequests =
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||
@@ -236,15 +243,24 @@ export default function TransferRequests() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [projectId, setProjectId] = useState("");
-  const [destinationType, setDestinationType] = useState<
-    "proyecto" | "bodega_central"
-  >("proyecto");
-  const [destinationProjectId, setDestinationProjectId] = useState("");
+  const [creationWarehouseId, setCreationWarehouseId] = useState("");
   const [neededBy, setNeededBy] = useState("");
   const [notes, setNotes] = useState("");
   const [itemName, setItemName] = useState("");
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
+  const [sapItemCode, setSapItemCode] = useState("");
+  const [articleSearch, setArticleSearch] = useState("");
+  const debouncedArticleSearch = useDebouncedValue(articleSearch);
+  const [relocationReason, setRelocationReason] = useState("");
+  const [relocationItems, setRelocationItems] = useState<
+    Array<{
+      itemName: string;
+      sapItemCode: string;
+      quantity: string;
+      unit?: string;
+    }>
+  >([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -267,6 +283,20 @@ export default function TransferRequests() {
     useState<Record<number, string>>({});
 
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
+  const articleSearchQuery = trpc.requestItems.searchSapCatalog.useQuery(
+    { search: debouncedArticleSearch.trim() },
+    {
+      enabled:
+        allowManualTransferRequests &&
+        dialogOpen &&
+        debouncedArticleSearch.trim().length >= 2,
+      staleTime: 30_000,
+    }
+  );
+  const creationWarehousesQuery = trpc.warehouses.list.useQuery(
+    { projectId: Number(projectId) || undefined, isActive: true },
+    { enabled: allowManualTransferRequests && dialogOpen && Boolean(projectId) }
+  );
   const {
     data: transferRequestsPage,
     isLoading,
@@ -319,11 +349,31 @@ export default function TransferRequests() {
     destinationProjectByRequestId[detail.transferRequest.id]
       ? Number(destinationProjectByRequestId[detail.transferRequest.id])
       : currentDetailDestinationProjectId;
+  const selectedDetailDestinationWarehouseId = detail?.transferRequest.id
+    ? Number(
+        destinationWarehouseByRequestId[detail.transferRequest.id] ||
+          detail.transferRequest.destinationWarehouseId ||
+          0
+      ) || undefined
+    : undefined;
+  const isIndependentRelocationRequest = Boolean(
+    detail?.transferRequest.materialRequestId === null &&
+      !detail.transferRequest.reverseLogisticId &&
+      detail.transferRequest.destinationType === "proyecto" &&
+      detail.transferRequest.destinationProjectId ===
+        detail.transferRequest.projectId &&
+      (detail.items ?? []).every(
+        (item: any) =>
+          !item.sourceWarehouseId ||
+          isSameTransferScope(detail.transferRequest, item)
+      )
+  );
   const canEditDestinationWarehouse =
     canConvertTransferRequests &&
     detail?.transferRequest.status === "pendiente" &&
     detail?.transferRequest.destinationType === "proyecto" &&
     !detail?.transferRequest.reverseLogisticId &&
+    !isIndependentRelocationRequest &&
     Boolean(selectedDetailDestinationProjectId);
   const {
     data: destinationWarehouses,
@@ -352,16 +402,20 @@ export default function TransferRequests() {
   );
 
   const createMutation = trpc.transferRequests.create.useMutation({
-    onSuccess: () => {
-      toast.success("Solicitud de traslado creada");
+    onSuccess: result => {
+      toast.success("Solicitud de reubicación creada");
       setDialogOpen(false);
       setProjectId("");
-      setDestinationProjectId("");
+      setCreationWarehouseId("");
       setNeededBy("");
       setNotes("");
       setItemName("");
       setQuantity("");
       setUnit("");
+      setSapItemCode("");
+      setArticleSearch("");
+      setRelocationItems([]);
+      setDetailId(result.id);
       void utils.transferRequests.invalidate();
     },
     onError: error => toast.error(error.message),
@@ -380,6 +434,10 @@ export default function TransferRequests() {
     },
     onError: error => toast.error(error.message),
   });
+
+  useEffect(() => {
+    setRelocationReason(detail?.transferRequest.notes ?? "");
+  }, [detail?.transferRequest.id]);
 
   const updateDestinationWarehouseMutation =
     trpc.transferRequests.updateDestinationWarehouse.useMutation({
@@ -509,8 +567,14 @@ export default function TransferRequests() {
       : "");
 
   const getOriginStockOptions = (item: any) => {
-    const options =
-      (originStockRowsByItemId.get(item.id) as any)?.warehouses ?? [];
+    const options = (
+      (originStockRowsByItemId.get(item.id) as any)?.warehouses ?? []
+    ).filter(
+      (option: any) =>
+        !isIndependentRelocationRequest ||
+        (Number(option.projectId) === detail?.transferRequest.projectId &&
+          Number(option.warehouseId) === selectedDetailDestinationWarehouseId)
+    );
     if (canViewOriginQuantities) return options;
 
     const requestProjectId = Number(detail?.transferRequest.projectId ?? 0);
@@ -950,6 +1014,29 @@ export default function TransferRequests() {
             : (item.quantity ?? 0))
     );
 
+  const preparedMovementRequest = detail
+    ? {
+        ...detail.transferRequest,
+        destinationProjectId: selectedDetailDestinationProjectId,
+        destinationWarehouseId: selectedDetailDestinationWarehouseId,
+      }
+    : null;
+  const preparedMovementItems = (detail?.items ?? []).map((item: any) => {
+    const source = parseTransferSourceOptionValue(getSelectedSourceValue(item));
+    return {
+      ...item,
+      quantity: getTransferQuantity(item),
+      sourceProjectId: source ? source.projectId : item.sourceProjectId,
+      sourceWarehouseId: source?.warehouseId ?? item.sourceWarehouseId,
+      sourceStorageLocation: decodeSourceStorageLocationValue(
+        getSelectedSourceStorageLocationValue(item)
+      ),
+    };
+  });
+  const preparedMovementKind = preparedMovementRequest
+    ? getTransferMovementKind(preparedMovementRequest, preparedMovementItems)
+    : "transfer";
+
   const filteredTransferRequests = transferRequests;
 
   useEffect(
@@ -1074,6 +1161,22 @@ export default function TransferRequests() {
       return;
     }
 
+    if (preparedMovementKind === "mixed") {
+      toast.error(
+        "Separe las reubicaciones internas y los traslados entre bodegas en solicitudes distintas"
+      );
+      return;
+    }
+    if (
+      preparedMovementKind === "internal" &&
+      relocationReason.trim().length < 3
+    ) {
+      toast.error(
+        "Ingrese un motivo de al menos 3 caracteres para la reubicación interna"
+      );
+      return;
+    }
+
     if (detail.transferRequest.destinationType === "proyecto") {
       const requestedItemById = new Map(
         (detail.items || []).map((item: any) => [Number(item.id), item])
@@ -1092,13 +1195,17 @@ export default function TransferRequests() {
               : item.sourceProjectId;
           const sourceWarehouseId =
             item.sourceWarehouseId ?? requestedItem?.sourceWarehouseId ?? null;
-          return (
-            sourceProjectId === destinationProjectId &&
-            sourceWarehouseId === destinationWarehouseId
+          return isSameTransferScope(
+            {
+              ...detail.transferRequest,
+              destinationProjectId,
+              destinationWarehouseId,
+            },
+            { sourceProjectId, sourceWarehouseId }
           );
         }
       );
-      if (conflictingItem) {
+      if (conflictingItem && preparedMovementKind !== "internal") {
         const requestedItem: any = requestedItemById.get(
           conflictingItem.transferRequestItemId
         );
@@ -1111,37 +1218,57 @@ export default function TransferRequests() {
     convertMutation.mutate({
       id: detail.transferRequest.id,
       items: validItems,
+      ...(preparedMovementKind === "internal"
+        ? { relocationReason: relocationReason.trim() }
+        : {}),
     });
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 space-y-1">
           <h1>Solicitudes de Traslado</h1>
           <p className="text-sm text-muted-foreground">
-            Los traslados operativos se generan desde la requisición que
-            necesita el material.
+            Los traslados de materiales se generan desde requisiciones. Las
+            reubicaciones internas se solicitan directamente en esta pantalla.
           </p>
         </div>
         {allowManualTransferRequests ? (
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={open =>
+              !createMutation.isPending && setDialogOpen(open)
+            }
+          >
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
-                Nueva solicitud
+                Nueva reubicación
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-2xl overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>Nueva Solicitud de Traslado</DialogTitle>
+                <DialogTitle>Nueva reubicación interna</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-2">
+                <p className="text-sm text-muted-foreground">
+                  Los artículos conservan proyecto y bodega. Seleccionará la
+                  ubicación de origen al confirmar y la nueva ubicación al
+                  recibir.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label>Proyecto origen</Label>
-                    <Select value={projectId} onValueChange={setProjectId}>
-                      <SelectTrigger>
+                    <Label htmlFor="relocation-project">Proyecto *</Label>
+                    <Select
+                      value={projectId}
+                      onValueChange={value => {
+                        setProjectId(value);
+                        setCreationWarehouseId("");
+                      }}
+                      disabled={createMutation.isPending}
+                    >
+                      <SelectTrigger id="relocation-project">
                         <SelectValue placeholder="Seleccione proyecto" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1157,124 +1284,286 @@ export default function TransferRequests() {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Destino</Label>
+                    <Label htmlFor="relocation-warehouse">Bodega *</Label>
                     <Select
-                      value={destinationType}
-                      onValueChange={value =>
-                        setDestinationType(
-                          value as "proyecto" | "bodega_central"
-                        )
+                      value={creationWarehouseId}
+                      onValueChange={setCreationWarehouseId}
+                      disabled={
+                        !projectId ||
+                        creationWarehousesQuery.isFetching ||
+                        createMutation.isPending
                       }
                     >
-                      <SelectTrigger>
-                        <SelectValue />
+                      <SelectTrigger id="relocation-warehouse">
+                        <SelectValue
+                          placeholder={
+                            creationWarehousesQuery.isFetching
+                              ? "Consultando..."
+                              : "Seleccione bodega"
+                          }
+                        />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="proyecto">Proyecto</SelectItem>
-                        <SelectItem value="bodega_central">
-                          Proyecto/bodega en recepción
-                        </SelectItem>
+                        {(creationWarehousesQuery.data || []).map(
+                          (warehouse: any) => (
+                            <SelectItem
+                              key={warehouse.id}
+                              value={String(warehouse.id)}
+                            >
+                              {getWarehouseLabel(warehouse)}
+                            </SelectItem>
+                          )
+                        )}
                       </SelectContent>
                     </Select>
+                    {creationWarehousesQuery.error ? (
+                      <p role="alert" className="text-xs text-destructive">
+                        {creationWarehousesQuery.error.message}
+                      </p>
+                    ) : projectId &&
+                      !creationWarehousesQuery.isFetching &&
+                      !creationWarehousesQuery.data?.length ? (
+                      <p className="text-xs text-muted-foreground">
+                        El proyecto no tiene bodegas disponibles.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
-
-                {destinationType === "proyecto" && (
-                  <div className="space-y-2">
-                    <Label>Proyecto destino</Label>
-                    <Select
-                      value={destinationProjectId}
-                      onValueChange={setDestinationProjectId}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccione proyecto destino" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(projects || []).map((project: any) => (
-                          <SelectItem
-                            key={project.id}
-                            value={String(project.id)}
+                <div className="space-y-2">
+                  <Label htmlFor="relocation-article-search">
+                    Buscar artículo por código o descripción
+                  </Label>
+                  <Input
+                    id="relocation-article-search"
+                    value={articleSearch}
+                    onChange={event => {
+                      setArticleSearch(event.target.value);
+                      setSapItemCode("");
+                      setItemName("");
+                      setUnit("");
+                    }}
+                    placeholder="Escriba al menos 2 caracteres"
+                    disabled={createMutation.isPending}
+                    autoComplete="off"
+                  />
+                  {articleSearchQuery.isFetching ? (
+                    <p role="status" className="text-xs text-muted-foreground">
+                      Consultando artículos...
+                    </p>
+                  ) : articleSearchQuery.error ? (
+                    <p role="alert" className="text-xs text-destructive">
+                      {articleSearchQuery.error.message}
+                    </p>
+                  ) : articleSearch.trim().length >= 2 && !sapItemCode ? (
+                    <div className="max-h-44 overflow-y-auto rounded-md border">
+                      {(articleSearchQuery.data || [])
+                        .filter(
+                          (article: any) =>
+                            Number(article.tipoArticulo ?? 1) === 1
+                        )
+                        .map((article: any) => (
+                          <button
+                            type="button"
+                            key={article.id}
+                            className="flex min-h-11 w-full flex-col gap-0.5 border-b px-3 py-2 text-left text-sm last:border-0 hover:bg-accent focus-visible:bg-accent"
+                            onClick={() => {
+                              setSapItemCode(article.itemCode);
+                              setItemName(article.description);
+                              setUnit(article.unit || "");
+                            }}
                           >
-                            {project.code} — {project.name}
-                          </SelectItem>
+                            <span className="font-mono text-xs font-semibold">
+                              {article.itemCode}
+                            </span>
+                            <span className="break-words">
+                              {article.description}
+                            </span>
+                          </button>
                         ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="space-y-2 md:col-span-2">
-                    <Label>Ítem</Label>
+                      {!(articleSearchQuery.data || []).some(
+                        (article: any) =>
+                          Number(article.tipoArticulo ?? 1) === 1
+                      ) ? (
+                        <p className="p-3 text-sm text-muted-foreground">
+                          No hay artículos de inventario que coincidan.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {sapItemCode ? (
+                    <p className="rounded-md border bg-muted/20 p-2 text-sm">
+                      <span className="font-mono font-semibold">
+                        {sapItemCode}
+                      </span>{" "}
+                      · {itemName}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="min-w-28 flex-1 space-y-2">
+                    <Label htmlFor="relocation-quantity">Cantidad *</Label>
                     <Input
-                      value={itemName}
-                      onChange={event => setItemName(event.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Cantidad</Label>
-                    <Input
+                      id="relocation-quantity"
+                      inputMode="decimal"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
                       value={quantity}
                       onChange={event => setQuantity(event.target.value)}
+                      disabled={createMutation.isPending}
                     />
                   </div>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Unidad</Label>
+                  <div className="w-24 space-y-2">
+                    <Label htmlFor="relocation-unit">Unidad</Label>
                     <Input
+                      id="relocation-unit"
                       value={unit}
-                      onChange={event => setUnit(event.target.value)}
+                      readOnly
+                      placeholder="—"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label>Fecha necesaria</Label>
-                    <Input
-                      type="date"
-                      value={neededBy}
-                      onChange={event => setNeededBy(event.target.value)}
-                    />
-                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={!sapItemCode || createMutation.isPending}
+                    onClick={() => {
+                      if (
+                        !sapItemCode ||
+                        !itemName ||
+                        !/^\d+(?:\.\d{1,2})?$/.test(quantity.trim()) ||
+                        Number(quantity) <= 0
+                      ) {
+                        toast.error(
+                          "Seleccione un artículo y una cantidad positiva con hasta 2 decimales"
+                        );
+                        return;
+                      }
+                      setRelocationItems(current => [
+                        ...current,
+                        {
+                          itemName,
+                          sapItemCode,
+                          quantity: Number(quantity).toFixed(2),
+                          unit: unit || undefined,
+                        },
+                      ]);
+                      setItemName("");
+                      setSapItemCode("");
+                      setArticleSearch("");
+                      setUnit("");
+                      setQuantity("");
+                    }}
+                  >
+                    <Plus className="mr-1.5 h-4 w-4" />
+                    Agregar artículo
+                  </Button>
                 </div>
-
+                <div className="space-y-2 rounded-md border p-3">
+                  <p className="text-xs font-semibold text-muted-foreground">
+                    Artículos incluidos ({relocationItems.length})
+                  </p>
+                  {relocationItems.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Agregue uno o varios artículos a la solicitud.
+                    </p>
+                  ) : (
+                    relocationItems.map((item, index) => (
+                      <div
+                        key={index}
+                        className="flex items-start justify-between gap-3 border-b py-2 last:border-0"
+                      >
+                        <div className="min-w-0 text-sm">
+                          <p className="break-words">
+                            <span className="font-mono font-semibold">
+                              {item.sapItemCode}
+                            </span>{" "}
+                            · {item.itemName}
+                          </p>
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {item.quantity} {item.unit || ""}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={"Quitar " + item.itemName}
+                          disabled={createMutation.isPending}
+                          onClick={() =>
+                            setRelocationItems(current =>
+                              current.filter(
+                                (_, itemIndex) => itemIndex !== index
+                              )
+                            )
+                          }
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
                 <div className="space-y-2">
-                  <Label>Notas</Label>
+                  <Label htmlFor="relocation-reason">
+                    Motivo de la reubicación *
+                  </Label>
                   <Textarea
+                    id="relocation-reason"
                     value={notes}
                     onChange={event => setNotes(event.target.value)}
                     rows={3}
+                    maxLength={2000}
+                    placeholder="Ej.: regularización de ubicación o cambio de estante"
+                    disabled={createMutation.isPending}
                   />
                 </div>
-
+                <div className="space-y-2">
+                  <Label htmlFor="relocation-needed-by">
+                    Fecha necesaria (opcional)
+                  </Label>
+                  <Input
+                    id="relocation-needed-by"
+                    type="date"
+                    value={neededBy}
+                    onChange={event => setNeededBy(event.target.value)}
+                    disabled={createMutation.isPending}
+                  />
+                </div>
                 <Button
                   className="w-full"
+                  disabled={
+                    createMutation.isPending ||
+                    !projectId ||
+                    !creationWarehouseId ||
+                    relocationItems.length === 0 ||
+                    notes.trim().length < 3
+                  }
                   onClick={() => {
-                    if (!projectId || !itemName || !quantity) {
-                      toast.error("Proyecto, ítem y cantidad son obligatorios");
+                    if (
+                      !projectId ||
+                      !creationWarehouseId ||
+                      !relocationItems.length ||
+                      notes.trim().length < 3
+                    ) {
+                      toast.error(
+                        "Seleccione proyecto, bodega, artículos y motivo de la reubicación"
+                      );
                       return;
                     }
                     createMutation.mutate({
                       projectId: Number(projectId),
-                      destinationType,
-                      destinationProjectId:
-                        destinationType === "proyecto" && destinationProjectId
-                          ? Number(destinationProjectId)
-                          : undefined,
+                      destinationType: "proyecto",
+                      destinationProjectId: Number(projectId),
+                      destinationWarehouseId: Number(creationWarehouseId),
                       neededBy: neededBy || undefined,
-                      notes: notes || undefined,
-                      items: [
-                        {
-                          itemName,
-                          quantity,
-                          unit: unit || undefined,
-                        },
-                      ],
+                      notes: notes.trim(),
+                      items: relocationItems,
                     });
                   }}
-                  disabled={createMutation.isPending}
                 >
-                  {createMutation.isPending ? "Creando..." : "Crear solicitud"}
+                  {createMutation.isPending
+                    ? "Creando..."
+                    : "Crear solicitud de reubicación"}
                 </Button>
               </div>
             </DialogContent>
@@ -1472,6 +1761,54 @@ export default function TransferRequests() {
                   </div>
                 </div>
 
+                {isIndependentRelocationRequest ||
+                preparedMovementKind === "internal" ? (
+                  <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                    <Badge variant="outline">Reubicación interna</Badge>
+                    <p className="text-sm text-muted-foreground">
+                      Se conserva proyecto y bodega. El saldo cambia al
+                      registrar la recepción en una ubicación diferente.
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Esta reubicación no cambia la ubicación de otros traslados
+                      o salidas pendientes. Revise esos documentos antes de
+                      mover el saldo.
+                    </p>
+                    {detail.transferRequest.status === "pendiente" ? (
+                      <div className="space-y-1.5">
+                        <Label htmlFor="transfer-relocation-reason">
+                          Motivo de la reubicación *
+                        </Label>
+                        <Textarea
+                          id="transfer-relocation-reason"
+                          value={relocationReason}
+                          onChange={event =>
+                            setRelocationReason(event.target.value)
+                          }
+                          maxLength={2000}
+                          rows={2}
+                          disabled={
+                            !canConvertTransferRequests ||
+                            convertMutation.isPending
+                          }
+                        />
+                      </div>
+                    ) : (
+                      <p className="whitespace-pre-wrap text-sm">
+                        {detail.transferRequest.notes}
+                      </p>
+                    )}
+                  </div>
+                ) : preparedMovementKind === "mixed" ? (
+                  <p
+                    role="alert"
+                    className="rounded-md border border-destructive/30 p-3 text-sm text-destructive"
+                  >
+                    Separe las reubicaciones internas y los traslados entre
+                    bodegas en solicitudes distintas.
+                  </p>
+                ) : null}
+
                 <div className="max-w-full overflow-x-auto rounded border border-border">
                   <table className="w-full min-w-[1640px] table-fixed text-sm">
                     <thead>
@@ -1557,6 +1894,7 @@ export default function TransferRequests() {
                             ? (getSelectedOriginStock(item) ?? 0)
                             : Number(item.originStockQuantity ?? 0)
                           : 0;
+
                         const transferQuantity =
                           detail.transferRequest.status === "pendiente"
                             ? getTransferQuantity(item)
@@ -2132,7 +2470,9 @@ export default function TransferRequests() {
                           <Truck className="mr-2 h-4 w-4" />
                           {convertMutation.isPending
                             ? "Generando..."
-                            : "Convertir a traslado"}
+                            : preparedMovementKind === "internal"
+                              ? "Confirmar reubicación"
+                              : "Convertir a traslado"}
                         </Button>
                       ) : null}
                     </div>

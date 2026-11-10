@@ -41,6 +41,7 @@ import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 import { getDefaultTransferPreparedByName } from "@/lib/transfer-print";
 import { canCancelConfirmedTransfer } from "@shared/confirmed-transfer-cancellation";
+import { getTransferMovementKind } from "@shared/internal-relocations";
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
@@ -172,6 +173,16 @@ function getTransferItemTargetLabel(item: any) {
   return item?.targetLabel || item?.target?.label || "-";
 }
 
+function getStorageLocationLabel(value: unknown) {
+  return String(value ?? "").trim() || "Sin ubicación";
+}
+
+function getInternalDestinationLabel(item: any) {
+  return Number(item.receivedQuantity ?? 0) > 0
+    ? "Consulte la recepción"
+    : "Se define en recepción";
+}
+
 export default function Transfers() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
@@ -205,6 +216,11 @@ export default function Transfers() {
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
   );
+  const selectedIsInternalRelocation = Boolean(
+    detail?.transferRequest &&
+      getTransferMovementKind(detail.transferRequest, detail.items ?? []) ===
+        "internal"
+  );
   const updatePrintFieldsMutation =
     trpc.transfers.updatePrintFields.useMutation({
       onSuccess: transfer => {
@@ -227,7 +243,11 @@ export default function Transfers() {
     });
   const cancelConfirmedMutation = trpc.transfers.cancelConfirmed.useMutation({
     onSuccess: result => {
-      toast.success("Traslado anulado y requisición liberada");
+      toast.success(
+        selectedIsInternalRelocation
+          ? "Reubicación interna anulada"
+          : "Traslado anulado y requisición liberada"
+      );
       setCancelDialogOpen(false);
       setCancelReason("");
       void Promise.all([
@@ -333,6 +353,7 @@ export default function Transfers() {
           ? getWarehouseLabel(detail.destinationWarehouse)
           : detail.destinationProject?.name || destinationLabel;
     const printDestinationWarehouseLabel =
+      !selectedIsInternalRelocation &&
       destinationWarehouseLabel === originWarehouseLabel
         ? "-"
         : destinationWarehouseLabel;
@@ -342,14 +363,22 @@ export default function Transfers() {
         ? `Usuario #${transferRequest.createdById}`
         : "-");
     const documentNumber =
+      (selectedIsInternalRelocation ? transfer.transferNumber : null) ||
       detail.remissionGuide?.guideNumber ||
       transfer.remissionGuideNumber ||
       transfer.sapCorrelative ||
       transfer.transferNumber;
     const referenceLabel =
-      transferRequest?.notes?.trim() ||
+      (selectedIsInternalRelocation
+        ? [transferRequest?.requestNumber, transfer.transferNumber]
+            .filter(Boolean)
+            .join(" · ")
+        : transferRequest?.notes?.trim()) ||
       transferRequest?.requestNumber ||
       transfer.transferNumber;
+    const documentTitle = selectedIsInternalRelocation
+      ? "REUBICACIÓN INTERNA"
+      : "EGRESO POR TRANSFERENCIA";
     const totalQuantity = (detail.items || []).reduce(
       (sum: number, item: any) => {
         const quantity = Number(item.quantity ?? 0);
@@ -363,8 +392,8 @@ export default function Transfers() {
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
-            <td>${escapeHtml(getTransferItemSourceLabel(item))}</td>
-            <td>${escapeHtml(getTransferItemTargetLabel(item))}</td>
+            <td>${escapeHtml(getTransferItemSourceLabel(item))}${selectedIsInternalRelocation ? `<div><strong>Ubicación origen:</strong> ${escapeHtml(getStorageLocationLabel(item.sourceStorageLocation))}</div>` : ""}</td>
+            <td>${escapeHtml(selectedIsInternalRelocation ? getInternalDestinationLabel(item) : getTransferItemTargetLabel(item))}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
             <td>${escapeHtml(referenceLabel)}</td>
@@ -514,6 +543,7 @@ export default function Transfers() {
               .sheet { max-width: none; padding: 0; page-break-after: avoid; }
             }
             ${getReadablePrintStyles()}
+            ${selectedIsInternalRelocation ? ".relocation-note { border: 1px solid #111; margin-top: 4mm; padding: 2mm; white-space: pre-wrap; overflow-wrap: anywhere; } td { overflow-wrap: anywhere; } @media print { html, body { overflow: visible; } .sheet { page-break-after: auto; } tr { break-inside: avoid; } }" : ""}
           </style>
         </head>
         <body>
@@ -523,7 +553,7 @@ export default function Transfers() {
               <div class="title">
                 <div class="company">HIDALGO E HIDALGO HONDURAS S.A. DE C.V.</div>
                 <div>${escapeHtml(originWarehouseLabel)}</div>
-                <div>EGRESO POR TRANSFERENCIA</div>
+                <div>${escapeHtml(documentTitle)}</div>
               </div>
               <div class="document-number">${escapeHtml(documentNumber)}</div>
             </section>
@@ -539,8 +569,8 @@ export default function Transfers() {
                   <div class="value">${escapeHtml(requestedByLabel)}</div>
                 </div>
                 <div class="field">
-                  <div class="label">Tipo Egreso:</div>
-                  <div class="value">EGRESO POR TRANSFERENCIA</div>
+                  <div class="label">${selectedIsInternalRelocation ? "Movimiento:" : "Tipo Egreso:"}</div>
+                  <div class="value">${escapeHtml(documentTitle)}</div>
                 </div>
                 <div class="field">
                   <div class="label">De Bodega:</div>
@@ -563,13 +593,15 @@ export default function Transfers() {
               </div>
             </section>
 
+            ${selectedIsInternalRelocation ? `<section class="relocation-note"><strong>Motivo:</strong> ${escapeHtml(transferRequest?.notes?.trim() || "-")}<br>La ubicación destino y la cantidad efectiva constan en la recepción vinculada.</section>` : ""}
+
             <table>
               <thead>
                 <tr>
                   <th style="width: 14%;">Código/No. Serie</th>
                   <th style="width: 19%;">Identificador</th>
                   <th style="width: 14%;">Proyecto / almacén origen</th>
-                  <th style="width: 18%;">Subproyecto / activo fijo</th>
+                  <th style="width: 18%;">${selectedIsInternalRelocation ? "Ubicación destino" : "Subproyecto / activo fijo"}</th>
                   <th style="width: 9%;" class="numeric">Cantidad</th>
                   <th style="width: 8%;" class="center">U Medida</th>
                   <th style="width: 12%;">Referencia</th>
@@ -749,14 +781,44 @@ export default function Transfers() {
         onOpenChange={open => !open && setSelectedId(null)}
       >
         <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px] sm:p-6 lg:p-7 xl:max-w-[1600px]">
-          <DialogHeader>
-            <DialogTitle>
+          <DialogHeader className="min-w-0 pr-6">
+            <DialogTitle className="break-words">
               {detail?.transfer.transferNumber || "Traslado"}
+              {selectedIsInternalRelocation ? (
+                <Badge
+                  variant="secondary"
+                  className="ml-2 align-middle text-xs"
+                >
+                  Reubicación interna
+                </Badge>
+              ) : null}
             </DialogTitle>
           </DialogHeader>
 
           {detail ? (
-            <div className="space-y-5">
+            <div className="min-w-0 space-y-5">
+              {selectedIsInternalRelocation ? (
+                <div className="rounded-lg border border-border bg-muted/30 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Motivo de la reubicación
+                  </p>
+                  <p className="mt-1 whitespace-pre-line break-words text-sm">
+                    {detail.transferRequest?.notes?.trim() || "—"}
+                  </p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Mismo proyecto y bodega. Las existencias cambian de
+                    ubicación al registrar la recepción.
+                  </p>
+                  {(detail.items || []).some(
+                    (item: any) => Number(item.receivedQuantity ?? 0) > 0
+                  ) ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Para corregir unidades ya recibidas, registre otra
+                      reubicación en sentido contrario, con saldo disponible.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="grid gap-3 md:grid-cols-4">
                 <div className="rounded-lg border border-border p-4">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -840,7 +902,12 @@ export default function Transfers() {
                 </div>
               </div>
 
-              <div className="overflow-x-auto rounded-lg border border-border">
+              <div
+                className="overflow-x-auto rounded-lg border border-border"
+                role="region"
+                aria-label="Artículos del traslado"
+                tabIndex={0}
+              >
                 <table className="w-full min-w-[1280px] text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
@@ -854,7 +921,9 @@ export default function Transfers() {
                         Proyecto / almacén origen
                       </th>
                       <th className="w-56 p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Subproyecto / activo fijo
+                        {selectedIsInternalRelocation
+                          ? "Ubicación destino"
+                          : "Subproyecto / activo fijo"}
                       </th>
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Cantidad
@@ -869,7 +938,9 @@ export default function Transfers() {
                   </thead>
                   <tbody>
                     {(detail.items || []).map((item: any) => {
-                      const lineTargetLabel = getTransferItemTargetLabel(item);
+                      const lineTargetLabel = selectedIsInternalRelocation
+                        ? getInternalDestinationLabel(item)
+                        : getTransferItemTargetLabel(item);
 
                       return (
                         <tr
@@ -884,6 +955,14 @@ export default function Transfers() {
                             <p className="max-w-[220px] truncate text-xs font-medium">
                               {getTransferItemSourceLabel(item)}
                             </p>
+                            {selectedIsInternalRelocation ? (
+                              <p className="mt-1 break-words text-xs text-muted-foreground">
+                                Ubicación:{" "}
+                                {getStorageLocationLabel(
+                                  item.sourceStorageLocation
+                                )}
+                              </p>
+                            ) : null}
                           </td>
                           <td className="p-3">
                             <p className="max-w-[220px] truncate text-xs font-medium">
@@ -985,7 +1064,9 @@ export default function Transfers() {
                   }
                 >
                   <Printer className="mr-2 h-4 w-4" />
-                  Imprimir egreso
+                  {selectedIsInternalRelocation
+                    ? "Imprimir reubicación"
+                    : "Imprimir egreso"}
                 </Button>
               </div>
             </div>
@@ -1016,8 +1097,10 @@ export default function Transfers() {
                 <span className="font-medium text-foreground">
                   {detail?.transfer.transferNumber ?? "el traslado"}
                 </span>
-                , se cancelará su flujo y los ítems volverán a quedar
-                disponibles en la requisición. No se modificará el inventario.
+                {selectedIsInternalRelocation
+                  ? ". Se conservará el antecedente de anulación. Solo se permite si aún no hay recepciones guardadas."
+                  : ", se cancelará su flujo y los ítems volverán a quedar disponibles en la requisición."}{" "}
+                No se modificará el inventario.
               </AlertDialogDescription>
             </AlertDialogHeader>
           </div>

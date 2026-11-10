@@ -10,6 +10,7 @@
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
+    "test:internal-relocations:db": "tsx scripts/test-internal-relocations-db.ts",
     "db:push": "drizzle-kit push",
     "db:reset-demo-clean": "tsx scripts/reset-demo-clean.ts",
     "db:reset-movements": "tsx scripts/reset-operational-movements.ts",

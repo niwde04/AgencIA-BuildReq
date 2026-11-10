@@ -223,6 +223,7 @@ export const transferRequestsRouter = router({
         projectId: z.number(),
         destinationType: z.enum(["proyecto", "bodega_central"]),
         destinationProjectId: z.number().optional(),
+        destinationWarehouseId: z.number().int().positive().optional(),
         neededBy: z.string().optional(),
         notes: z.string().optional(),
         items: z.array(transferItemSchema).min(1),
@@ -236,12 +237,48 @@ export const transferRequestsRouter = router({
         });
       }
 
+      if (input.destinationWarehouseId !== undefined) {
+        if (
+          input.destinationType !== "proyecto" ||
+          !input.destinationProjectId
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Seleccione el proyecto de la bodega destino",
+          });
+        }
+        const destinationProject = await db.getProjectById(
+          input.destinationProjectId
+        );
+        if (!destinationProject || destinationProject.status !== "activo") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Seleccione un proyecto activo para la reubicación",
+          });
+        }
+        const assignedWarehouses = await db.listProjectWarehouses(
+          input.destinationProjectId,
+          { isActive: true }
+        );
+        if (
+          !assignedWarehouses.some(
+            row => row.id === input.destinationWarehouseId
+          )
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "La bodega destino no está activa o asignada al proyecto",
+          });
+        }
+      }
+
       return db.createTransferRequest(
         {
           materialRequestId: input.materialRequestId ?? null,
           projectId: input.projectId,
           destinationType: input.destinationType,
           destinationProjectId: input.destinationProjectId ?? null,
+          destinationWarehouseId: input.destinationWarehouseId ?? null,
           createdById: ctx.user.id,
           status: "pendiente",
           neededBy: input.neededBy ? new Date(input.neededBy) : null,
@@ -440,7 +477,8 @@ export const transferRequestsRouter = router({
             }
           : {
               destinationWarehouseId: input.warehouseId,
-            }
+            },
+        { requirePending: true }
       );
     }),
 
@@ -448,6 +486,7 @@ export const transferRequestsRouter = router({
     .input(
       z.object({
         id: z.number(),
+        relocationReason: z.string().trim().max(2000).optional(),
         items: z
           .array(
             z.object({
@@ -508,6 +547,7 @@ export const transferRequestsRouter = router({
               );
               return {
                 itemName: requestedItem?.itemName,
+                materialRequestItemId: requestedItem?.materialRequestItemId,
                 quantity: item.quantity,
                 sourceProjectId: item.sourceProjectId ?? null,
                 sourceWarehouseId:
@@ -518,6 +558,7 @@ export const transferRequestsRouter = router({
             })
           : (detail.items ?? []).map(item => ({
               itemName: item.itemName,
+              materialRequestItemId: item.materialRequestItemId,
               quantity: item.quantity,
               sourceProjectId: item.sourceWarehouseId
                 ? (item.sourceProjectId ?? null)
@@ -530,6 +571,10 @@ export const transferRequestsRouter = router({
           destinationProjectId: detail.transferRequest.destinationProjectId,
           destinationWarehouseId: detail.transferRequest.destinationWarehouseId,
           fallbackSourceProjectId: detail.transferRequest.projectId,
+          materialRequestId: detail.transferRequest.materialRequestId,
+          reverseLogisticId: detail.transferRequest.reverseLogisticId,
+          notes: detail.transferRequest.notes,
+          relocationReason: input.relocationReason,
           items: validationItems,
         });
 
@@ -554,11 +599,11 @@ export const transferRequestsRouter = router({
           }
         }
 
-        return await db.createTransferFromRequest(
-          input.id,
-          ctx.user.id,
-          input.items
-        );
+        return await (input.relocationReason === undefined
+          ? db.createTransferFromRequest(input.id, ctx.user.id, input.items)
+          : db.createTransferFromRequest(input.id, ctx.user.id, input.items, {
+              relocationReason: input.relocationReason,
+            }));
       } catch (error) {
         if (error instanceof TransferConversionValidationError) {
           throw new TRPCError({

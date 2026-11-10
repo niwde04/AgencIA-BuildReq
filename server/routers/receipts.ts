@@ -1,5 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { getContractBillingDecision } from "@shared/purchase-order-billing";
+import {
+  getInternalRelocationDestinationError,
+  getTransferMovementKind,
+  isInternalRelocationLine,
+} from "@shared/internal-relocations";
 import { z } from "zod";
 import * as db from "../db";
 import { listReceiptsPage } from "../paginatedLists";
@@ -112,8 +117,13 @@ function assertContractReceiptIsAllowed(params: {
     });
   }
 
-  const decision = getContractBillingDecision({ contractSummary, contractEndDate: purchaseOrder.contractEndDate, documentDate });
-  if (!decision.allowed) throw new TRPCError({ code: "BAD_REQUEST", message: decision.error! });
+  const decision = getContractBillingDecision({
+    contractSummary,
+    contractEndDate: purchaseOrder.contractEndDate,
+    documentDate,
+  });
+  if (!decision.allowed)
+    throw new TRPCError({ code: "BAD_REQUEST", message: decision.error! });
 }
 
 function canReadReceipts(user: { role: string; buildreqRole?: string | null }) {
@@ -443,6 +453,17 @@ const receiptItemSchema = z
     itemName: z.string().min(1),
     quantityExpected: z.string().min(1),
     quantityReceived: z.string().min(1),
+    expectedReceivedQuantity: z
+      .string()
+      .trim()
+      .regex(/^\d+(?:\.\d{1,2})?$/)
+      .optional(),
+    expectedSourceStorageLocation: z
+      .string()
+      .trim()
+      .max(255)
+      .nullable()
+      .optional(),
     unit: z.string().optional(),
     unitPrice: z.string().trim().optional(),
     subtotal: z
@@ -1439,6 +1460,19 @@ export const receiptsRouter = router({
         const itemsById = new Map(
           (detail.items ?? []).map((item: any) => [item.id, item])
         );
+        if (
+          detail.transferRequest &&
+          getTransferMovementKind(
+            detail.transferRequest,
+            detail.items ?? []
+          ) === "mixed"
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Separe las reubicaciones internas y los traslados entre bodegas o proyectos",
+          });
+        }
         const lockedReverseLogisticDestinationWarehouseId =
           detail.transferRequest?.reverseLogisticId &&
           detail.transferRequest.destinationType === "proyecto" &&
@@ -1462,6 +1496,10 @@ export const receiptsRouter = router({
 
           const pendingQuantity = getTransferPendingQuantity(sourceItem);
           const requestedQuantity = Number(item.quantityReceived ?? 0);
+          const internalRelocation = Boolean(
+            detail.transferRequest &&
+              isInternalRelocationLine(detail.transferRequest, sourceItem)
+          );
           const closeQuantity = item.closeRemaining
             ? Math.max(pendingQuantity - requestedQuantity, 0)
             : 0;
@@ -1472,6 +1510,7 @@ export const receiptsRouter = router({
             });
           }
           if (
+            !internalRelocation &&
             requestedQuantity > 0 &&
             sourceItem.sourceWarehouseId &&
             item.warehouseId === Number(sourceItem.sourceWarehouseId) &&
@@ -1487,6 +1526,32 @@ export const receiptsRouter = router({
               code: "BAD_REQUEST",
               message: `${sourceItem.itemName}: no se puede ingresar a la misma bodega/proyecto de origen`,
             });
+          }
+          if (internalRelocation) {
+            if (item.expectedReceivedQuantity === undefined) {
+              throw new TRPCError({
+                code: "CONFLICT",
+                message:
+                  "Actualice el traslado antes de registrar la reubicación",
+              });
+            }
+            if (requestedQuantity > pendingQuantity) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message:
+                  "La cantidad a reubicar supera el saldo pendiente del traslado",
+              });
+            }
+            if (requestedQuantity > 0) {
+              const error = getInternalRelocationDestinationError(
+                detail.transferRequest!,
+                sourceItem,
+                item.warehouseId,
+                item.storageLocation
+              );
+              if (error)
+                throw new TRPCError({ code: "BAD_REQUEST", message: error });
+            }
           }
           if (
             requestedQuantity > 0 &&
@@ -1689,6 +1754,14 @@ export const receiptsRouter = router({
             itemName: item.itemName,
             quantityExpected: item.quantityExpected,
             quantityReceived: item.quantityReceived,
+            ...(input.sourceType === "transfer" &&
+            item.expectedReceivedQuantity !== undefined
+              ? {
+                  expectedReceivedQuantity: item.expectedReceivedQuantity,
+                  expectedSourceStorageLocation:
+                    item.expectedSourceStorageLocation,
+                }
+              : {}),
             unit: item.unit,
             unitPrice:
               input.sourceType === "purchase_order"

@@ -20578,9 +20578,11 @@ describe("BuildReq - Transfer Requests", () => {
       isActive: true,
       assignedUserId: 6,
     });
-    expect(updateTransferRequestSpy).toHaveBeenCalledWith(6, {
-      destinationWarehouseId: 102,
-    });
+    expect(updateTransferRequestSpy).toHaveBeenCalledWith(
+      6,
+      { destinationWarehouseId: 102 },
+      { requirePending: true }
+    );
 
     getTransferRequestByIdSpy.mockRestore();
     listProjectWarehousesSpy.mockRestore();
