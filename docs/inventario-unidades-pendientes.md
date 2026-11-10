@@ -4,6 +4,19 @@ Preparado el 10/11/2026 sobre main `99f4be4`. Conserva los ajustes locales del m
 
 El usuario autorizó el 10/11/2026 hacer commit y push a main, publicar y verificar la versión y después aplicar la regularización respaldada. También confirmó que el saldo de 1 und representa físicamente 1 galón. Esta autorización no permite ampliar el alcance a otros artículos o modificar antecedentes.
 
+## Estado operativo verificado
+
+Publicado el **10/11/2026 a las 11:03 Honduras**, commit de código `6290eb216ff5dc5fd73c34a5de778e99b36ef859`, confirmado en origin/main. Health HTTP 200 anuncia ambas capacidades; frontend `/assets/index-ewRdw6u7.js` con SHA256 `37b64fe92c2ba5f35c7624e82bb62e95d71ba394a1755801e1bb63278a43a58f` contiene las siete marcas de inventario y modal. API sin sesión responde 401. Evidencia pública: `output/oil-unit-fix/release/latest.json` en el workspace.
+
+Se aplicó la regularización a las **11:05 Honduras** (17:05:28.196Z), después de verificar publicación y generar/revisar un plan fresco. Recibo **committed**, cuatro IDs exactos 21331/21332/21333/30645; solo cambiaron `unit` y `updatedAt`. Las ocho existencias actuales están en gal y suman **13**. La verificación posterior READ ONLY coincide exactamente con la imagen confirmada y conserva cantidades, mínimos, proyectos, almacenes, estantes, maestro y los 212 antecedentes protegidos. La auditoría independiente del recibo confirmó lo mismo.
+
+- Plan ejecutado: `output/oil-unit-regularization/backups/inventory-unit-20261110T170432107Z-e3087d2c/plan.json`; SHA256 `4d395b89a9cacd9a5ce74130bcf65a527d3ea6a3425959d949a1188807592632`.
+- Recibo confirmado para recuperación: `output/oil-unit-regularization/backups/inventory-unit-20261110T170525639Z-f56096a7/result.json`; SHA256 `c86a3e0eda9b9e1e68939ddde4966a8cece37c91fc56a5f165022ba6d1924795`.
+- Huella posterior: `475957c565ba56a8de84dbc57e9ac0ba487592746af7fbcb62a6986866f87044`; documentos protegidos: `6552967d46b255aba2a5f1c800a31de4415076da0c56009eb254a1055a3efba9`.
+- Verificación independiente de Cloud después del commit: `output/oil-unit-fix/release/regularization-verified.json`.
+
+Las rutas de evidencia se refieren al workspace y no contienen `.env` ni credenciales. El respaldo acotado incluye inventario y hashes, sin contenido financiero. No se modificaron los antecedentes originales en und ni se crearon recepciones/salidas de prueba.
+
 ## Comportamiento corregido
 
 - `normalizeInventoryUnitValue` en `shared/units.ts` es la normalización común de etiquetas. Reconoce GALON/galón/galones→gal y los aliases anteriores de und, incluidos los puntos; conserva unidades históricas desconocidas y no convierte und→gal.
@@ -65,4 +78,4 @@ El CLI exige TLS con verificación completa. Si falta la CA del proveedor, propo
 - QA con APIs simuladas: `output/oil-unit-fix/ui/qa.json`, 16 comprobaciones, 11 capturas y seis XLSX descargados/leídos; 1440/768/390/320 px y oscuro, filtros, ámbitos distintos, fila inicial sin stock, seguimiento, paginación, vacío y errores/reintentos. No creó documentos ni movimientos reales.
 - Dry-run Cloud v2 minimizado aprobado en modo de solo lectura: `output/oil-unit-regularization/backups/inventory-unit-20261110T165629377Z-13c1365c/plan.json` en el workspace; SHA256 `906d0acafb2015025bd1902f027d7b18612e4a52a48d0d64b08e6d2f8f3acc74`. Clasificación pending y cuatro IDs esperados. Se comprobaron los hashes y que OC/facturas exportadas contengan únicamente ID/huella. No se aplicaron cambios. Generar un plan fresco si el estado cambió antes de publicar/aplicar.
 
-Las verificaciones focalizadas no equivalen a ejecutar toda la suite del repositorio. Los resultados finales, respaldo de producción y publicación se deben registrar al completar cada etapa.
+Las verificaciones focalizadas no equivalen a ejecutar toda la suite del repositorio. Los resultados de publicación y operación real están registrados en el estado operativo de esta guía; conservar sus respaldos para cualquier recuperación futura.
