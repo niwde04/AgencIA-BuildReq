@@ -12,6 +12,7 @@ export default defineConfig({
     "./drizzle/retention-documents-schema.ts",
     "./drizzle/cost-matrix-schema.ts",
     "./drizzle/purchase-order-billing-schema.ts",
+    "./drizzle/inventory-cutoff-schema.ts",
   ],
   out: "./drizzle",
   dialect: "postgresql",

@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { InventoryCutoffReportDialog } from "@/components/InventoryCutoffReportDialog";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import {
   buildInventoryExportRows,
@@ -1071,6 +1072,10 @@ export default function Inventario() {
             <Download className="h-4 w-4" />
             {isExportingExcel ? "Exportando..." : "Exportar Excel"}
           </Button>
+          <InventoryCutoffReportDialog
+            defaultProjectId={selectedProjectId}
+            defaultWarehouseId={selectedWarehouseId}
+          />
         </div>
         {canManage ? (
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

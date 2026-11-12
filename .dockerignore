@@ -14,4 +14,6 @@ todo.md
 # Local evidence, database fixtures and operator tools must not enter images.
 output/
 .codex-dev/
+.codex-worktrees/
+.tmp/
 tools/

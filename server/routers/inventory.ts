@@ -4,6 +4,13 @@ import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 import {
+  getInventoryCutoffMetadata,
+  getInventoryCutoffReport,
+  InventoryCutoffReportError,
+  type InventoryCutoffScope,
+} from "../inventoryCutoffReport";
+import { InventoryCutoffSourceLimitError } from "../inventoryCutoffSources";
+import {
   ARTICLE_DESCRIPTION_MAX_LENGTH,
   normalizeArticleDescription,
 } from "@shared/article-descriptions";
@@ -24,7 +31,9 @@ type InventoryAccessUser = {
   assignedProjectIds?: number[] | null;
 };
 
-function assertCanReadInventory(ctx: { user: { buildreqRole?: string | null } }) {
+function assertCanReadInventory(ctx: {
+  user: { buildreqRole?: string | null };
+}) {
   if (ctx.user.buildreqRole === "ingeniero_residente") {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -56,13 +65,14 @@ function canManageWarehousesGlobally(user: {
   buildreqRole?: string | null;
 }) {
   return (
-    user.role === "admin" ||
-    user.buildreqRole === "administracion_central"
+    user.role === "admin" || user.buildreqRole === "administracion_central"
   );
 }
 
 function canReadUnclassifiedInventory(user: InventoryAccessUser) {
-  return canManageWarehousesGlobally(user) || shouldScopeInventoryByWarehouse(user);
+  return (
+    canManageWarehousesGlobally(user) || shouldScopeInventoryByWarehouse(user)
+  );
 }
 
 function isWarehouseAssignedViewer(user: { buildreqRole?: string | null }) {
@@ -102,6 +112,73 @@ async function getReadableInventoryWarehouseIds(user: InventoryAccessUser) {
 }
 
 export const inventoryRouter = router({
+  cutoffMetadata: protectedProcedure.query(async ({ ctx }) => {
+    assertCanReadInventory(ctx);
+    return getInventoryCutoffMetadata();
+  }),
+
+  cutoffReport: protectedProcedure
+    .input(
+      z.object({
+        cutoffDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        projectId: z.number().int().positive().optional(),
+        warehouseId: z.number().int().positive().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      assertCanReadInventory(ctx);
+      let scope: InventoryCutoffScope;
+      if (shouldScopeInventoryByWarehouse(ctx.user)) {
+        const warehouses = await getReadableInventoryWarehouseIds(ctx.user);
+        if (input.warehouseId && !warehouses.includes(input.warehouseId)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tiene acceso a este almacén",
+          });
+        }
+        scope = {
+          warehouseIds: input.warehouseId ? [input.warehouseId] : warehouses,
+          projectIds: input.projectId ? [input.projectId] : null,
+        };
+      } else {
+        if (input.projectId && !canAccessProject(ctx.user, input.projectId)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tiene acceso a este proyecto",
+          });
+        }
+        const projectScope = applyProjectScope<{
+          projectId?: number;
+          projectIds?: number[] | null;
+          warehouseId?: number;
+        }>(input, ctx.user);
+        scope = {
+          projectIds:
+            projectScope.projectIds ??
+            (input.projectId ? [input.projectId] : null),
+          warehouseIds: input.warehouseId ? [input.warehouseId] : null,
+        };
+      }
+      try {
+        return await getInventoryCutoffReport(input, scope);
+      } catch (error) {
+        if (
+          error instanceof InventoryCutoffReportError ||
+          error instanceof InventoryCutoffSourceLimitError
+        ) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+        }
+        if (error instanceof TRPCError) throw error;
+        console.error("[inventory-cutoff] No se pudo preparar el reporte", {
+          code: (error as { code?: string })?.code,
+        });
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "No se pudo preparar el reporte. Intente nuevamente.",
+        });
+      }
+    }),
+
   projectStockForItems: protectedProcedure
     .input(
       z.object({
@@ -181,19 +258,19 @@ export const inventoryRouter = router({
         !input.includeQuantities &&
         ctx.user.role !== "admin" &&
         ctx.user.buildreqRole === "bodeguero_proyecto";
-      const visibleWarehouses = canManageWarehousesGlobally(ctx.user) ||
-        hideQuantities
-        ? await db.listWarehouses({ isActive: true })
-        : isWarehouseAssignedViewer(ctx.user)
-          ? await db.listWarehouses({
-              isActive: true,
-              assignedUserId: ctx.user.id,
-            })
-          : await db.listWarehouses({
-              isActive: scopedWarehouseFilters.isActive,
-              projectId: scopedWarehouseFilters.projectId ?? undefined,
-              projectIds: scopedWarehouseFilters.projectIds ?? undefined,
-            });
+      const visibleWarehouses =
+        canManageWarehousesGlobally(ctx.user) || hideQuantities
+          ? await db.listWarehouses({ isActive: true })
+          : isWarehouseAssignedViewer(ctx.user)
+            ? await db.listWarehouses({
+                isActive: true,
+                assignedUserId: ctx.user.id,
+              })
+            : await db.listWarehouses({
+                isActive: scopedWarehouseFilters.isActive,
+                projectId: scopedWarehouseFilters.projectId ?? undefined,
+                projectIds: scopedWarehouseFilters.projectIds ?? undefined,
+              });
 
       return db.listVisibleWarehouseStockForItems({
         warehouseIds: visibleWarehouses.map(warehouse => Number(warehouse.id)),
@@ -240,10 +317,14 @@ export const inventoryRouter = router({
       if (input?.unclassifiedOnly && !canManageWarehousesGlobally(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo Administración Central puede ver inventario por clasificar",
+          message:
+            "Solo Administración Central puede ver inventario por clasificar",
         });
       }
-      if (input?.includeUnclassified && !canReadUnclassifiedInventory(ctx.user)) {
+      if (
+        input?.includeUnclassified &&
+        !canReadUnclassifiedInventory(ctx.user)
+      ) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene acceso a inventario sin proyecto asignado",
@@ -254,8 +335,9 @@ export const inventoryRouter = router({
         : (input ?? {});
 
       if (shouldScopeInventoryByWarehouse(ctx.user)) {
-        const readableWarehouseIds =
-          await getReadableInventoryWarehouseIds(ctx.user);
+        const readableWarehouseIds = await getReadableInventoryWarehouseIds(
+          ctx.user
+        );
 
         if (
           input?.warehouseId &&
@@ -278,7 +360,9 @@ export const inventoryRouter = router({
         });
       }
 
-      return db.listInventoryItems(applyProjectScope(normalizedInput, ctx.user));
+      return db.listInventoryItems(
+        applyProjectScope(normalizedInput, ctx.user)
+      );
     }),
 
   pendingQuantities: protectedProcedure
