@@ -32,13 +32,21 @@ ejecutar `drizzle/20261112000000_user_profile_fields.sql`. La migración es
 repetible: agrega columnas anulables sin modificar usuarios anteriores, índices,
 RLS ni permisos. No agrega datos a Supabase Auth ni a sus metadatos.
 
-La migración y la publicación en producción no se han ejecutado como parte de
-esta preparación local. Para revertir la aplicación se pueden conservar las
-columnas; no se deben eliminar si ya contienen datos capturados.
+La migración se aplicó al Cloud autorizado el 12/11/2026 a las 08:49 Honduras,
+proyecto `ovaergjxbzrirmdwnwot`. La verificación transaccional conservó los 75
+usuarios, sus datos originales, RLS, permisos, políticas e índices. No se crearon
+cuentas de prueba. Evidencia del workspace:
+`output/user-profile/cloud-activation-20261112T144947414Z.json`.
+
+Para revertir la aplicación se pueden conservar las columnas; no se deben
+eliminar si ya contienen datos capturados. Esta activación corresponde solamente
+a Cloud; el servidor SSH conserva su configuración.
 
 La entrega se preparó sobre `main`, preservando los cambios pendientes de `demo`.
-La imagen Docker incluye el runner de migración; después de publicar, `/health`
-identifica el servidor compatible con `capabilities.userProfileFields: 1`.
+La imagen Docker incluye el runner de migración. La publicación se realiza por
+el flujo existente de `main`/Dokploy y se verifica en
+`https://buildreq.aibdev.com/health` mediante `capabilities.userProfileFields: 1`,
+las etiquetas del frontend publicado y la autenticación de la API.
 
 ## Verificación local
 
