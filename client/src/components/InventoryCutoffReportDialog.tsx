@@ -90,14 +90,6 @@ export function InventoryCutoffReportDialog({
   const optionsLoading = projectsQuery.isLoading || warehousesQuery.isLoading;
   const optionsError = Boolean(projectsQuery.error || warehousesQuery.error);
   const busy = isGenerating || isDownloading;
-  const unavailableRows =
-    report?.inventory.filter(row => row.stock === null).length ?? 0;
-  const hasObservations = Boolean(
-    report &&
-      (report.coverage.kind === "documentary_partial" ||
-        unavailableRows > 0 ||
-        report.coverage.warnings.length > 0)
-  );
 
   function invalidateReport() {
     requestSequence.current += 1;
@@ -234,24 +226,7 @@ export function InventoryCutoffReportDialog({
                     "Todavía no hay información disponible para este reporte."}
                 </AlertDescription>
               </Alert>
-            ) : (
-              <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
-                <p>
-                  Disponible desde el{" "}
-                  <strong>
-                    {formatInventoryCutoffDate(
-                      metadata.data.earliestDate ?? ""
-                    )}
-                  </strong>
-                  . El corte incluye el día completo, en hora de Honduras.
-                </p>
-                {metadata.data.message ? (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {metadata.data.message}
-                  </p>
-                ) : null}
-              </div>
-            )}
+            ) : null}
 
             <div className="grid min-w-0 gap-4 sm:grid-cols-2">
               <div className="min-w-0 space-y-2 sm:col-span-2">
@@ -365,39 +340,6 @@ export function InventoryCutoffReportDialog({
                     </div>
                   ))}
                 </div>
-                <Alert>
-                  {hasObservations ? <AlertTriangle /> : <FileSpreadsheet />}
-                  <AlertTitle>
-                    {hasObservations
-                      ? "Reporte con observaciones"
-                      : "Reporte preparado"}
-                  </AlertTitle>
-                  <AlertDescription>
-                    <p>{report.coverage.message}</p>
-                    {unavailableRows > 0 ? (
-                      <p>
-                        {unavailableRows.toLocaleString("es-HN")} ubicación(es)
-                        sin saldo comprobable. Se muestran como N/D en el Excel.
-                      </p>
-                    ) : null}
-                    {report.coverage.warnings.length > 0 ? (
-                      <ul className="list-disc space-y-1 pl-4">
-                        {Array.from(new Set(report.coverage.warnings)).map(
-                          warning => (
-                            <li key={warning}>{warning}</li>
-                          )
-                        )}
-                      </ul>
-                    ) : null}
-                  </AlertDescription>
-                </Alert>
-                <p className="text-xs text-muted-foreground">
-                  Movimientos desde el{" "}
-                  {formatInventoryCutoffDate(report.periodStartDate)} hasta el{" "}
-                  {formatInventoryCutoffDate(report.cutoffDate)}. Los pendientes
-                  históricos sin información suficiente figuran como N/D; las
-                  observaciones se incluyen en las tres hojas.
-                </p>
               </div>
             ) : null}
           </div>
