@@ -6,6 +6,7 @@ Aplicación de compras, recepciones, inventario, facturas de proveedores y tesor
 
 - Rutas y menú: `client/src/App.tsx`, `client/src/components/DashboardLayout.tsx`.
 - Autenticación/contexto: `server/_core/context.ts`, `server/_core/supabaseAuth.ts`. Permisos por proyecto: `server/projectAccess.ts`; roles: `shared/buildreq-roles.ts`.
+- Perfil de usuarios: `phone`, `jobTitle`, `identityNumber` son datos opcionales de `users`; las referencias operativas usan `server/userPublicProjection.ts` para excluirlos. Aplicar la migración de perfil antes de publicar el servidor. Guía: [usuarios-datos-personales.md](usuarios-datos-personales.md).
 - Esquema base: `drizzle/schema.ts`. Esquema de notas: `drizzle/financial-notes-schema.ts`. Ambos están en `drizzle.config.ts`.
 - Facturas, recepciones e inventario: `server/db.ts` y routers específicos en `server/routers/`.
 - Inventario: etiquetas canónicas en `normalizeInventoryUnitValue` (`shared/units.ts`); no convertir medidas al normalizar. Pendientes por artículo/proyecto con `pendingScopeKey` (`shared/inventory-pending.ts`), sin sumarlos por cada fila/estante. Excel los cuenta una vez entre filas exportadas positivas y marca las referencias; API y UI conservan acceso por proyecto/almacén. Regularización explícita y recuperación acotada del aceite `010200003`: [inventario-unidades-pendientes.md](inventario-unidades-pendientes.md).

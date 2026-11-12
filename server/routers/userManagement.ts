@@ -14,6 +14,21 @@ import {
 
 const buildreqRoleSchema = z.enum(BUILDREQ_ROLE_CODES);
 
+const optionalProfileText = (maxLength: number) =>
+  z
+    .string()
+    .trim()
+    .max(maxLength)
+    .nullable()
+    .optional()
+    .transform(value => (value === undefined ? undefined : value || null));
+
+const userProfileFields = {
+  phone: optionalProfileText(50),
+  jobTitle: optionalProfileText(150),
+  identityNumber: optionalProfileText(50),
+};
+
 type UserManager = {
   role: string;
   buildreqRole?: string | null;
@@ -211,6 +226,7 @@ export const userManagementRouter = router({
         name: z.string().trim().min(1),
         email: z.string().trim().email(),
         password: z.string().min(8),
+        ...userProfileFields,
         buildreqRole: buildreqRoleSchema,
         assignedProjectId: z.number().int().positive().nullable().optional(),
         assignedProjectIds: z.array(z.number().int().positive()).optional(),
@@ -269,6 +285,9 @@ export const userManagementRouter = router({
           openId: data.user.id,
           name,
           email,
+          phone: input.phone,
+          jobTitle: input.jobTitle,
+          identityNumber: input.identityNumber,
           loginMethod: "email",
           role: "user",
           buildreqRole: input.buildreqRole,
@@ -337,6 +356,7 @@ export const userManagementRouter = router({
         userId: z.number(),
         name: z.string().trim().min(1).max(255),
         email: z.string().trim().email(),
+        ...userProfileFields,
         buildreqRole: buildreqRoleSchema,
         assignedProjectId: z.number().int().positive().nullable().optional(),
         assignedProjectIds: z.array(z.number().int().positive()).optional(),
@@ -402,6 +422,11 @@ export const userManagementRouter = router({
         return db.updateUserAdmin(input.userId, {
           name,
           email,
+          ...(input.phone !== undefined ? { phone: input.phone } : {}),
+          ...(input.jobTitle !== undefined ? { jobTitle: input.jobTitle } : {}),
+          ...(input.identityNumber !== undefined
+            ? { identityNumber: input.identityNumber }
+            : {}),
           buildreqRole: input.buildreqRole,
           assignedProjectIds,
           isActive: input.isActive,

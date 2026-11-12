@@ -47,6 +47,7 @@ async function startServer() {
         transferReceiptSourceSelection: 1,
         inventoryPendingScopes: 1,
         inventoryUnitAliases: 1,
+        userProfileFields: 1,
       },
       legacyManualCaptureEnabled:
         process.env.LEGACY_MANUAL_ADVANCES_ENABLED !== "false",

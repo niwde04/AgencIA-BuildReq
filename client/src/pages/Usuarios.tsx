@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { UserProfileFields } from "@/components/UserProfileFields";
 import {
   Popover,
   PopoverContent,
@@ -142,6 +143,9 @@ function getUserSearchText(user: any) {
   return [
     user?.name,
     user?.email,
+    user?.phone,
+    user?.jobTitle,
+    user?.identityNumber,
     user?.role === "admin" ? "Administrador" : "Usuario",
     ROLE_LABELS[user?.buildreqRole],
     user?.buildreqRole,
@@ -259,9 +263,9 @@ function ProjectMultiSelect({
         <Button
           type="button"
           variant="outline"
-          className={`justify-between ${compact ? "h-8 w-56 text-xs" : "w-full"}`}
+          className={`min-w-0 max-w-full justify-between ${compact ? "h-8 w-56 text-xs" : "w-full"}`}
         >
-          <span className="truncate text-left">{label}</span>
+          <span className="min-w-0 flex-1 truncate text-left">{label}</span>
           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
         </Button>
       </PopoverTrigger>
@@ -398,6 +402,9 @@ export default function Usuarios() {
   const [invProjectIds, setInvProjectIds] = useState<number[]>([]);
   const [directName, setDirectName] = useState("");
   const [directEmail, setDirectEmail] = useState("");
+  const [directPhone, setDirectPhone] = useState("");
+  const [directJobTitle, setDirectJobTitle] = useState("");
+  const [directIdentityNumber, setDirectIdentityNumber] = useState("");
   const [directPassword, setDirectPassword] = useState("");
   const [directRole, setDirectRole] = useState<string>("");
   const [directProjectIds, setDirectProjectIds] = useState<number[]>([]);
@@ -405,6 +412,9 @@ export default function Usuarios() {
   const [editingUser, setEditingUser] = useState<any | null>(null);
   const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editJobTitle, setEditJobTitle] = useState("");
+  const [editIdentityNumber, setEditIdentityNumber] = useState("");
   const [editRole, setEditRole] = useState<string>("");
   const [editProjectIds, setEditProjectIds] = useState<number[]>([]);
   const [editIsActive, setEditIsActive] = useState(true);
@@ -441,6 +451,12 @@ export default function Usuarios() {
           {
             header: "Correo electrónico",
             value: (entry: any) => entry.email || "—",
+          },
+          { header: "Teléfono", value: (entry: any) => entry.phone || "—" },
+          { header: "Cargo", value: (entry: any) => entry.jobTitle || "—" },
+          {
+            header: "Número de identidad",
+            value: (entry: any) => entry.identityNumber || "—",
           },
           {
             header: "Rol del sistema",
@@ -588,6 +604,9 @@ export default function Usuarios() {
   function resetDirectForm() {
     setDirectName("");
     setDirectEmail("");
+    setDirectPhone("");
+    setDirectJobTitle("");
+    setDirectIdentityNumber("");
     setDirectPassword("");
     setDirectRole("");
     setDirectProjectIds([]);
@@ -599,6 +618,9 @@ export default function Usuarios() {
     setEditingUser(user);
     setEditName(user.name || "");
     setEditEmail(user.email || "");
+    setEditPhone(user.phone || "");
+    setEditJobTitle(user.jobTitle || "");
+    setEditIdentityNumber(user.identityNumber || "");
     setEditRole(role);
     setEditProjectIds(
       isProjectAssignableRole(role) ? getAssignedProjectIds(user) : []
@@ -610,6 +632,9 @@ export default function Usuarios() {
     setEditingUser(null);
     setEditName("");
     setEditEmail("");
+    setEditPhone("");
+    setEditJobTitle("");
+    setEditIdentityNumber("");
     setEditRole("");
     setEditProjectIds([]);
     setEditIsActive(true);
@@ -644,6 +669,9 @@ export default function Usuarios() {
       userId: editingUser.id,
       name: editName,
       email: editEmail,
+      phone: editPhone.trim() || null,
+      jobTitle: editJobTitle.trim() || null,
+      identityNumber: editIdentityNumber.trim() || null,
       buildreqRole: editRole as any,
       assignedProjectIds: getAssignedProjectIdsPayload(
         editRole,
@@ -689,6 +717,9 @@ export default function Usuarios() {
     createDirectUserMutation.mutate({
       name: directName,
       email: directEmail,
+      phone: directPhone.trim() || null,
+      jobTitle: directJobTitle.trim() || null,
+      identityNumber: directIdentityNumber.trim() || null,
       password: directPassword,
       buildreqRole: directRole as any,
       assignedProjectIds: getAssignedProjectIdsPayload(
@@ -725,10 +756,10 @@ export default function Usuarios() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1>Gestión de Usuarios</h1>
         {canManageAccounts ? (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {canUseInvitations ? (
               <Button
                 variant="outline"
@@ -786,7 +817,8 @@ export default function Usuarios() {
               <Input
                 value={userSearchTerm}
                 onChange={event => setUserSearchTerm(event.target.value)}
-                placeholder="Buscar usuarios por nombre, email, rol o proyecto..."
+                aria-label="Buscar usuarios"
+                placeholder="Buscar por nombre, email, teléfono, identidad, cargo, rol o proyecto..."
                 className="h-10 pl-9 pr-10"
               />
               {hasUserSearch ? (
@@ -862,14 +894,17 @@ export default function Usuarios() {
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full min-w-[1400px] text-sm">
                     <thead>
                       <tr className="border-b border-border">
                         <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
-                          Nombre
+                          Nombre / Cargo
                         </th>
                         <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
-                          Email
+                          Email / Teléfono
+                        </th>
+                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                          Identidad
                         </th>
                         <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                           Rol Sistema
@@ -899,10 +934,18 @@ export default function Usuarios() {
                             key={u.id}
                             className={`border-b border-border last:border-0 hover:bg-muted/30 transition-colors ${u.isActive === false ? "opacity-70" : ""}`}
                           >
-                            <td className="p-3 font-medium">{u.name || "—"}</td>
-                            <td className="p-3 text-xs text-muted-foreground">
+                            <td className="min-w-56 p-3 font-medium">
+                              <p>{u.name || "—"}</p>
+                              {u.jobTitle ? (
+                                <p className="mt-1 text-xs font-normal text-muted-foreground">
+                                  {u.jobTitle}
+                                </p>
+                              ) : null}
+                            </td>
+                            <td className="min-w-56 p-3 text-xs text-muted-foreground">
                               <div className="space-y-1">
                                 <p>{u.email || "—"}</p>
+                                {u.phone ? <p>{u.phone}</p> : null}
                                 {u.mustChangePassword ? (
                                   <Badge
                                     variant="secondary"
@@ -913,6 +956,9 @@ export default function Usuarios() {
                                   </Badge>
                                 ) : null}
                               </div>
+                            </td>
+                            <td className="p-3 whitespace-nowrap text-xs text-muted-foreground">
+                              {u.identityNumber || "—"}
                             </td>
                             <td className="p-3">
                               <Badge
@@ -1217,17 +1263,18 @@ export default function Usuarios() {
           if (!open) closeEditUserDialog();
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Pencil className="h-5 w-5" />
               Editar Usuario
             </DialogTitle>
             <DialogDescription>
-              Actualiza los datos de acceso y permisos del usuario.
+              Actualiza los datos y permisos del usuario. Teléfono, cargo e
+              identidad son opcionales.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div className="min-w-0 space-y-4 py-2">
             <div className="space-y-2">
               <Label htmlFor="edit-name">Nombre completo</Label>
               <Input
@@ -1245,6 +1292,15 @@ export default function Usuarios() {
                 onChange={event => setEditEmail(event.target.value)}
               />
             </div>
+            <UserProfileFields
+              idPrefix="edit"
+              phone={editPhone}
+              identityNumber={editIdentityNumber}
+              jobTitle={editJobTitle}
+              onPhoneChange={setEditPhone}
+              onIdentityNumberChange={setEditIdentityNumber}
+              onJobTitleChange={setEditJobTitle}
+            />
             <div className="space-y-2">
               <Label>Rol en BuildReq</Label>
               <Select
@@ -1256,7 +1312,7 @@ export default function Usuarios() {
                   }
                 }}
               >
-                <SelectTrigger>
+                <SelectTrigger className="w-full min-w-0">
                   <SelectValue placeholder="Seleccionar rol" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1416,17 +1472,18 @@ export default function Usuarios() {
         open={showDirectUserDialog}
         onOpenChange={setShowDirectUserDialog}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <UserPlus className="h-5 w-5" />
               Crear Usuario
             </DialogTitle>
             <DialogDescription>
-              Crea una cuenta activa en Supabase con contraseña temporal.
+              Crea una cuenta con contraseña temporal. Teléfono, cargo e
+              identidad son opcionales.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div className="min-w-0 space-y-4 py-2">
             <div className="space-y-2">
               <Label htmlFor="direct-name">Nombre completo</Label>
               <Input
@@ -1446,6 +1503,15 @@ export default function Usuarios() {
                 onChange={e => setDirectEmail(e.target.value)}
               />
             </div>
+            <UserProfileFields
+              idPrefix="direct"
+              phone={directPhone}
+              identityNumber={directIdentityNumber}
+              jobTitle={directJobTitle}
+              onPhoneChange={setDirectPhone}
+              onIdentityNumberChange={setDirectIdentityNumber}
+              onJobTitleChange={setDirectJobTitle}
+            />
             <div className="space-y-2">
               <Label htmlFor="direct-password">Contraseña temporal</Label>
               <div className="relative">
@@ -1486,7 +1552,7 @@ export default function Usuarios() {
                   }
                 }}
               >
-                <SelectTrigger>
+                <SelectTrigger className="w-full min-w-0">
                   <SelectValue placeholder="Seleccionar rol" />
                 </SelectTrigger>
                 <SelectContent>

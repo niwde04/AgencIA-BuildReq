@@ -53,6 +53,7 @@ COPY --from=builder /app/scripts/migrate-legacy-manual-advances.ts ./scripts/mig
 COPY --from=builder /app/scripts/enable-legacy-manual-advances.ts ./scripts/enable-legacy-manual-advances.ts
 COPY --from=builder /app/scripts/migrate-invoice-settlement.ts ./scripts/migrate-invoice-settlement.ts
 COPY --from=builder /app/scripts/migrate-purchase-order-billing.ts ./scripts/migrate-purchase-order-billing.ts
+COPY --from=builder /app/scripts/migrate-user-profile-fields.ts ./scripts/migrate-user-profile-fields.ts
 COPY --from=builder /app/scripts/activate-invoice-settlement.ts ./scripts/activate-invoice-settlement.ts
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY --from=builder /app/package.json ./package.json

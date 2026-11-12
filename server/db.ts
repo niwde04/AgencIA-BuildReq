@@ -1,6 +1,11 @@
 import { assertContractualInvoiceReady, getContractualInvoiceContext, getInvoiceAdvanceReconciliationMap, lockInvoiceAdvanceOrder, prepareContractualAmortization, saveContractualSnapshot } from "./contractualAdvances";
 import { enrollNewInvoiceSettlement, getInvoiceSettlementMap } from "./invoiceSettlement";
 import { TRPCError } from "@trpc/server";
+import {
+  omitUserProfileFields,
+  selectPublicUserColumns,
+  type PublicUser,
+} from "./userPublicProjection";
 import * as purchaseOrderBilling from "./purchaseOrderBilling";
 import { getContractBillingDecision } from "../shared/purchase-order-billing";
 import { getFixedAssetExportDescription } from "./fixedAssetExportDescriptions";
@@ -1334,7 +1339,7 @@ export function calculateProjectScopedWarehouseAssignmentChanges(params: {
 
 function mapWarehouseAssignedUser(row: {
   assignment: typeof warehouseUserAssignments.$inferSelect;
-  user: User;
+  user: PublicUser;
 }) {
   return {
     assignmentId: row.assignment.id,
@@ -1483,9 +1488,9 @@ async function replaceInvitationProjectAssignmentsForInvitation(
   }
 }
 
-async function hydrateUsersWithAssignedProjects<T extends User>(
-  rows: T[]
-): Promise<
+async function hydrateUsersWithAssignedProjects<
+  T extends Pick<User, "id" | "assignedProjectId">,
+>(rows: T[]): Promise<
   Array<T & { assignedProjectIds: number[]; assignedProjects: any[] }>
 > {
   const db = await getDb();
@@ -1590,7 +1595,14 @@ export async function upsertUser(
   const values: InsertUser = { openId: user.openId };
   const updateSet: Record<string, unknown> = {};
 
-  const textFields = ["name", "email", "loginMethod"] as const;
+  const textFields = [
+    "name",
+    "email",
+    "loginMethod",
+    "phone",
+    "jobTitle",
+    "identityNumber",
+  ] as const;
   type TextField = (typeof textFields)[number];
   const assignNullable = (field: TextField) => {
     const value = user[field];
@@ -1788,6 +1800,9 @@ export async function updateUserAdmin(
   data: {
     name: string;
     email: string;
+    phone?: string | null;
+    jobTitle?: string | null;
+    identityNumber?: string | null;
     buildreqRole: BuildReqRole;
     assignedProjectIds?: number[] | null;
     isActive: boolean;
@@ -1804,6 +1819,11 @@ export async function updateUserAdmin(
     .set({
       name: data.name,
       email: data.email,
+      ...(data.phone !== undefined ? { phone: data.phone } : {}),
+      ...(data.jobTitle !== undefined ? { jobTitle: data.jobTitle } : {}),
+      ...(data.identityNumber !== undefined
+        ? { identityNumber: data.identityNumber }
+        : {}),
       buildreqRole: data.buildreqRole,
       assignedProjectId: legacyAssignedProjectId,
       isActive: data.isActive,
@@ -2687,7 +2707,7 @@ export async function listMaterialRequests(filters?: {
     .select({
       request: materialRequests,
       project: projects,
-      requestedBy: users,
+      requestedBy: selectPublicUserColumns(users),
     })
     .from(materialRequests)
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
@@ -3560,7 +3580,7 @@ export async function getMaterialRequestById(id: number) {
     .select({
       request: materialRequests,
       project: projects,
-      requestedBy: users,
+      requestedBy: selectPublicUserColumns(users),
     })
     .from(materialRequests)
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
@@ -6368,7 +6388,7 @@ async function buildOfficialPurchaseOrderDocument(
       purchaseRequest: purchaseRequests,
       project: projects,
       supplier: suppliers,
-      createdBy: users,
+      createdBy: selectPublicUserColumns(users),
     })
     .from(purchaseOrders)
     .leftJoin(
@@ -6494,7 +6514,10 @@ async function buildOfficialPurchaseOrderDocument(
   const sourceRequestRows =
     sourceMaterialRequestIds.length > 0
       ? await database
-          .select({ request: materialRequests, requester: users })
+          .select({
+            request: materialRequests,
+            requester: selectPublicUserColumns(users),
+          })
           .from(materialRequests)
           .leftJoin(users, eq(materialRequests.requestedById, users.id))
           .where(inArray(materialRequests.id, sourceMaterialRequestIds))
@@ -6502,7 +6525,7 @@ async function buildOfficialPurchaseOrderDocument(
   const [purchaseRequestCreatedBy] =
     sourceRequestRows.length === 0 && header.purchaseRequest?.createdById
       ? await database
-          .select()
+          .select(selectPublicUserColumns(users))
           .from(users)
           .where(eq(users.id, header.purchaseRequest.createdById))
           .limit(1)
@@ -7029,8 +7052,8 @@ export async function listPurchaseRequests(filters?: {
       ),
       project: projects,
       materialRequest: materialRequests,
-      requestedBy: materialRequestRequestedByUsers,
-      createdBy: purchaseRequestCreatedByUsers,
+      requestedBy: selectPublicUserColumns(materialRequestRequestedByUsers),
+      createdBy: selectPublicUserColumns(purchaseRequestCreatedByUsers),
     })
     .from(purchaseRequests)
     .leftJoin(projects, eq(purchaseRequests.projectId, projects.id))
@@ -7238,7 +7261,7 @@ export async function listPurchaseRequests(filters?: {
   const requestedByUsers =
     requestedByUserIds.length > 0
       ? await db
-          .select()
+          .select(selectPublicUserColumns(users))
           .from(users)
           .where(inArray(users.id, requestedByUserIds))
       : [];
@@ -7255,7 +7278,7 @@ export async function listPurchaseRequests(filters?: {
   const approverUsers =
     approvedByUserIds.length > 0
       ? await db
-          .select()
+          .select(selectPublicUserColumns(users))
           .from(users)
           .where(inArray(users.id, approvedByUserIds))
       : [];
@@ -7285,12 +7308,12 @@ export async function listPurchaseRequests(filters?: {
       requestedByIdsByPurchaseRequestId.get(row.purchaseRequest.id) ?? [];
     const requestedByUsers = requestedByIds
       .map(id => requestedByUsersById.get(id))
-      .filter((user): user is User => Boolean(user));
+      .filter((user): user is PublicUser => Boolean(user));
     const approvedByIds =
       approvedByIdsByPurchaseRequestId.get(row.purchaseRequest.id) ?? [];
     const approvedByUsers = approvedByIds
       .map(id => approvedByUsersById.get(id))
-      .filter((user): user is User => Boolean(user));
+      .filter((user): user is PublicUser => Boolean(user));
     const approvalHistory =
       approvalHistoryByPurchaseRequestId.get(row.purchaseRequest.id) ?? [];
     const approvalActor = mapApprovalActorFromHistory(approvalHistory);
@@ -7421,7 +7444,10 @@ export async function getPurchaseRequestById(id: number) {
   );
   const userRows =
     userIds.length > 0
-      ? await db.select().from(users).where(inArray(users.id, userIds))
+      ? await db
+          .select(selectPublicUserColumns(users))
+          .from(users)
+          .where(inArray(users.id, userIds))
       : [];
   const usersById = new Map(userRows.map(user => [user.id, user]));
 
@@ -8605,7 +8631,7 @@ export async function createPurchaseOrder(
         .limit(1)
     : [null];
   const [createdBy] = await db
-    .select()
+    .select(selectPublicUserColumns(users))
     .from(users)
     .where(eq(users.id, data.createdById))
     .limit(1);
@@ -8851,7 +8877,7 @@ export async function listPurchaseOrders(filters?: {
       materialRequest: purchaseOrderMaterialRequests,
       project: projects,
       supplier: suppliers,
-      createdBy: purchaseOrderCreatedByUsers,
+      createdBy: selectPublicUserColumns(purchaseOrderCreatedByUsers),
     })
     .from(purchaseOrders)
     .leftJoin(
@@ -9037,7 +9063,7 @@ export async function listPurchaseOrders(filters?: {
   const requestedByUsers =
     requestedByUserIds.length > 0
       ? await db
-          .select()
+          .select(selectPublicUserColumns(users))
           .from(users)
           .where(inArray(users.id, requestedByUserIds))
       : [];
@@ -9055,7 +9081,7 @@ export async function listPurchaseOrders(filters?: {
       requestedByIdsByOrderId.get(row.purchaseOrder.id) ?? [];
     const requestedByUsers = requestedByIds
       .map(id => requestedByUsersById.get(id))
-      .filter((user): user is User => Boolean(user));
+      .filter((user): user is PublicUser => Boolean(user));
     const totalAmount = summarizePurchaseOrderLines(
       (purchaseOrderLinesByOrderId.get(row.purchaseOrder.id) ?? []).map(
         item => ({
@@ -9094,7 +9120,7 @@ export async function getPurchaseOrderById(id: number) {
       purchaseRequest: purchaseRequests,
       project: projects,
       supplier: suppliers,
-      createdBy: users,
+      createdBy: selectPublicUserColumns(users),
     })
     .from(purchaseOrders)
     .leftJoin(
@@ -9294,7 +9320,7 @@ export async function getPurchaseOrderById(id: number) {
       ? await db
           .select({
             request: materialRequests,
-            requester: users,
+            requester: selectPublicUserColumns(users),
           })
           .from(materialRequests)
           .leftJoin(users, eq(materialRequests.requestedById, users.id))
@@ -9307,7 +9333,9 @@ export async function getPurchaseOrderById(id: number) {
   const originalRequester =
     sourceRequestRows.find(row => row.requester?.name || row.requester?.email)
       ?.requester ??
-    purchaseRequestCreatedBy ??
+    (purchaseRequestCreatedBy
+      ? omitUserProfileFields(purchaseRequestCreatedBy)
+      : null) ??
     rows[0].createdBy ??
     null;
   const originalRequestNumbers = Array.from(
@@ -9323,7 +9351,7 @@ export async function getPurchaseOrderById(id: number) {
   const auditLogs = await db
     .select({
       log: purchaseOrderAuditLogs,
-      changedBy: users,
+      changedBy: selectPublicUserColumns(users),
     })
     .from(purchaseOrderAuditLogs)
     .leftJoin(users, eq(purchaseOrderAuditLogs.changedById, users.id))
@@ -12167,8 +12195,8 @@ export async function getTransferById(id: number) {
       transferRequest: transferRequests,
       project: projects,
       remissionGuide: remissionGuides,
-      createdBy: transferRequestCreatedByUsers,
-      confirmedBy: transferConfirmedByUsers,
+      createdBy: selectPublicUserColumns(transferRequestCreatedByUsers),
+      confirmedBy: selectPublicUserColumns(transferConfirmedByUsers),
     })
     .from(transfers)
     .leftJoin(
@@ -14236,8 +14264,8 @@ export async function getReceiptById(id: number) {
       warehouse: warehouses,
       purchaseOrder: purchaseOrders,
       supplier: suppliers,
-      receivedBy: users,
-      voidedBy: voidedByUsers,
+      receivedBy: selectPublicUserColumns(users),
+      voidedBy: selectPublicUserColumns(voidedByUsers),
     })
     .from(receipts)
     .leftJoin(projects, eq(receipts.projectId, projects.id))
@@ -14994,7 +15022,7 @@ export async function listInvoices(filters?: {
       purchaseOrder: purchaseOrders,
       project: projects,
       supplier: suppliers,
-      createdBy: invoiceCreatedByUsers,
+      createdBy: selectPublicUserColumns(invoiceCreatedByUsers),
     })
     .from(invoices)
     .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
@@ -15076,7 +15104,7 @@ export async function listInvoices(filters?: {
   const requestedByUsers =
     requestedByUserIds.length > 0
       ? await db
-          .select()
+          .select(selectPublicUserColumns(users))
           .from(users)
           .where(inArray(users.id, requestedByUserIds))
       : [];
@@ -15090,7 +15118,7 @@ export async function listInvoices(filters?: {
     const requestedByIds = requestedByIdsByInvoiceId.get(row.invoice.id) ?? [];
     const requestedByUsers = requestedByIds
       .map(id => requestedByUsersById.get(id))
-      .filter((user): user is User => Boolean(user));
+      .filter((user): user is PublicUser => Boolean(user));
 
     return {
       ...row,
@@ -15730,8 +15758,8 @@ export async function getInvoiceById(id: number) {
       project: projects,
       supplier: suppliers,
       supplierContact: supplierContacts,
-      createdBy: invoiceCreatedByUsers,
-      voidedBy: voidedByUsers,
+      createdBy: selectPublicUserColumns(invoiceCreatedByUsers),
+      voidedBy: selectPublicUserColumns(voidedByUsers),
     })
     .from(invoices)
     .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
@@ -17414,7 +17442,7 @@ export async function listWarehouseExits(filters?: {
       ),
       project: projects,
       warehouse: warehouses,
-      createdBy: users,
+      createdBy: selectPublicUserColumns(users),
       itemCount: count(warehouseExitItems.id),
       totalQuantity: sql<string>`coalesce(sum(${warehouseExitItems.quantity}), 0)`,
     })
@@ -17540,7 +17568,7 @@ export async function getWarehouseExitById(id: number) {
       warehouse: warehouses,
       destinationProject: destinationProjects,
       destinationWarehouse: destinationWarehouses,
-      createdBy: users,
+      createdBy: selectPublicUserColumns(users),
     })
     .from(warehouseExits)
     .leftJoin(projects, eq(warehouseExits.projectId, projects.id))
@@ -17776,7 +17804,7 @@ export async function getWarehouseExitById(id: number) {
     const [requestRow] = await db
       .select({
         request: materialRequests,
-        requestedBy: users,
+        requestedBy: selectPublicUserColumns(users),
         requestProject: requestProjects,
       })
       .from(materialRequests)
@@ -18584,7 +18612,7 @@ export async function listOpeningBalances(filters?: {
       openingBalance: openingBalances,
       project: projects,
       warehouse: warehouses,
-      createdBy: users,
+      createdBy: selectPublicUserColumns(users),
       itemCount: count(openingBalanceItems.id),
       totalQuantity: sql<string>`coalesce(sum(${openingBalanceItems.quantity}), 0)`,
     })
@@ -18678,7 +18706,7 @@ export async function getOpeningBalanceById(id: number) {
       openingBalance: openingBalances,
       project: projects,
       warehouse: warehouses,
-      createdBy: users,
+      createdBy: selectPublicUserColumns(users),
     })
     .from(openingBalances)
     .leftJoin(projects, eq(openingBalances.projectId, projects.id))
@@ -19260,7 +19288,7 @@ export async function getReverseLogisticById(id: number) {
       sourceWarehouseExit: warehouseExits,
       sourceReceipt: receipts,
       sourceWarehouse: warehouses,
-      createdBy: users,
+      createdBy: selectPublicUserColumns(users),
     })
     .from(reverseLogistics)
     .leftJoin(projects, eq(reverseLogistics.sourceProjectId, projects.id))
@@ -20168,7 +20196,7 @@ async function getWarehouseAssignedUsersByWarehouseIds(warehouseIds: number[]) {
     .select({
       warehouseId: warehouseUserAssignments.warehouseId,
       assignment: warehouseUserAssignments,
-      user: users,
+      user: selectPublicUserColumns(users),
     })
     .from(warehouseUserAssignments)
     .innerJoin(users, eq(warehouseUserAssignments.userId, users.id))
@@ -21448,7 +21476,7 @@ export async function listWarehouseAssignableUsers() {
   if (!db) return [];
 
   const rows = await db
-    .select()
+    .select(selectPublicUserColumns(users))
     .from(users)
     .where(inArray(users.buildreqRole, WAREHOUSE_ASSIGNABLE_ROLES))
     .orderBy(asc(users.name), asc(users.email));
@@ -21482,7 +21510,7 @@ export async function assignUserToWarehouse(params: {
   }
 
   const [targetUser] = await db
-    .select()
+    .select(selectPublicUserColumns(users))
     .from(users)
     .where(eq(users.id, params.userId))
     .limit(1);
@@ -24194,8 +24222,8 @@ export async function listArticles(filters?: ArticleListFilters) {
       financialGroupDescription: financialGroups.financialGroupDescription,
       projectCode: projects.code,
       projectName: projects.name,
-      createdBy: articleCreatedByUsers,
-      updatedBy: articleUpdatedByUsers,
+      createdBy: selectPublicUserColumns(articleCreatedByUsers),
+      updatedBy: selectPublicUserColumns(articleUpdatedByUsers),
     })
     .from(sapCatalog)
     .leftJoin(
@@ -25302,8 +25330,8 @@ export async function listSupplierCatalog(filters?: SupplierListFilters) {
   const rows = await db
     .select({
       supplier: suppliers,
-      createdBy: supplierCreatedByUsers,
-      updatedBy: supplierUpdatedByUsers,
+      createdBy: selectPublicUserColumns(supplierCreatedByUsers),
+      updatedBy: selectPublicUserColumns(supplierUpdatedByUsers),
     })
     .from(suppliers)
     .leftJoin(

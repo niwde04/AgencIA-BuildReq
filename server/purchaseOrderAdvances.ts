@@ -5,6 +5,7 @@ import {
 } from "./contractualAdvances";
 import { getInvoiceSettlementMap } from "./invoiceSettlement";
 import { randomUUID } from "node:crypto";
+import { selectPublicUserColumns } from "./userPublicProjection";
 import {
   and,
   asc,
@@ -844,7 +845,7 @@ export async function listPurchaseOrderAdvances(filters?: {
       purchaseOrder: purchaseOrders,
       supplier: suppliers,
       project: projects,
-      createdBy: users,
+      createdBy: selectPublicUserColumns(users),
     })
     .from(purchaseOrderAdvances)
     .innerJoin(
