@@ -123,6 +123,7 @@ export type DmcReportSourceItem = {
   itemName: string;
   sapItemCode?: string | null;
   articleDescription?: string | null;
+  subProjectLabel?: string | null;
   financialGroupCode?: string | null;
   financialGroupDescription?: string | null;
   taxCode?: string | null;

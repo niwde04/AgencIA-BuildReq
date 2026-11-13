@@ -592,7 +592,9 @@ function buildSystemInvoiceSheet(XLSX: Xlsx, payload: SystemWorkbookPayload) {
     invoiceRows,
     [
       2,
-      ...SYSTEM_INVOICE_HEADERS.map(header => (header === "Notas" ? 60 : 17)),
+      ...SYSTEM_INVOICE_HEADERS.map(header =>
+        header === "Notas" ? 60 : header === "Destino (Subproyecto)" ? 42 : 17
+      ),
     ],
     { dateColumns: systemDateColumns(SYSTEM_INVOICE_HEADERS), dataStartRow: 2 }
   );

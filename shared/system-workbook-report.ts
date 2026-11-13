@@ -79,6 +79,7 @@ export const SYSTEM_INVOICE_HEADERS = [
   "Fecha Vencimiento Crédito",
   "Tipo_de_compra",
   "Notas",
+  "Destino (Subproyecto)",
 ] as const;
 
 export const TREASURY_INVOICE_SUMMARY_HEADERS = [
@@ -455,6 +456,9 @@ export function buildSystemWorkbookPayload(
         ),
         Tipo_de_compra: invoice.purchaseType ?? "",
         Notas: invoice.notes ?? "",
+        "Destino (Subproyecto)": invoiceItem
+          ? (invoiceItem.subProjectLabel ?? "")
+          : String(row.level3 ?? ""),
       };
     });
   });

@@ -15327,9 +15327,27 @@ export async function listDmcReportSourceInvoices(filters?: {
     "dmc_purchase_request_item_subprojects"
   );
 
+  const purchaseRequestSourceItemSubprojects = alias(
+    projectSubprojects,
+    "dmc_purchase_request_source_item_subprojects"
+  );
+
   const sourceRows = await db
     .select({
       invoiceId: invoiceItems.invoiceId,
+      invoiceItemId: invoiceItems.id,
+      invoiceTargetType: invoiceItems.targetType,
+      invoiceSubprojectId: invoiceItems.subProjectId,
+      directTargetType: directSourceItems.targetType,
+      directSubprojectId: directSourceItems.subProjectId,
+      purchaseRequestTargetType: purchaseRequestItems.targetType,
+      purchaseRequestSubprojectId: purchaseRequestItems.subProjectId,
+      purchaseRequestSourceTargetType: purchaseRequestSourceItems.targetType,
+      purchaseRequestSourceSubprojectId: purchaseRequestSourceItems.subProjectId,
+      purchaseRequestSourceSubprojectCode:
+        purchaseRequestSourceItemSubprojects.code,
+      purchaseRequestSourceSubprojectName:
+        purchaseRequestSourceItemSubprojects.name,
       directRequestId: directSourceRequests.id,
       directRequestNumber: directSourceRequests.requestNumber,
       directItemAssignedFlow: directSourceItems.assignedFlow,
@@ -15385,6 +15403,13 @@ export async function listDmcReportSourceInvoices(filters?: {
       purchaseRequestItemSubprojects,
       eq(purchaseRequestItems.subProjectId, purchaseRequestItemSubprojects.id)
     )
+    .leftJoin(
+      purchaseRequestSourceItemSubprojects,
+      eq(
+        purchaseRequestSourceItems.subProjectId,
+        purchaseRequestSourceItemSubprojects.id
+      )
+    )
     .where(inArray(invoiceItems.invoiceId, invoiceIds))
     .orderBy(asc(invoiceItems.invoiceId), asc(invoiceItems.id));
 
@@ -15393,6 +15418,7 @@ export async function listDmcReportSourceInvoices(filters?: {
     Pick<DmcReportSourceInvoice, "materialRequests" | "subProjectLabels">
   >();
   const seenRequestIdsByInvoiceId = new Map<number, Set<number>>();
+  const subprojectLabelsByItemId = new Map<number, string>();
 
   const getSourceData = (invoiceId: number) => {
     const existing = sourceDataByInvoiceId.get(invoiceId);
@@ -15440,6 +15466,47 @@ export async function listDmcReportSourceInvoices(filters?: {
   };
 
   sourceRows.forEach(row => {
+    const subprojectSource = [
+      {
+        targetType: row.invoiceTargetType,
+        id: row.invoiceSubprojectId,
+        code: row.invoiceSubprojectCode,
+        name: row.invoiceSubprojectName,
+      },
+      {
+        targetType: row.purchaseRequestTargetType,
+        id: row.purchaseRequestSubprojectId,
+        code: row.purchaseRequestSubprojectCode,
+        name: row.purchaseRequestSubprojectName,
+      },
+      {
+        targetType: row.directTargetType,
+        id: row.directSubprojectId,
+        code: row.directSubprojectCode,
+        name: row.directSubprojectName,
+      },
+      {
+        targetType: row.purchaseRequestSourceTargetType,
+        id: row.purchaseRequestSourceSubprojectId,
+        code: row.purchaseRequestSourceSubprojectCode,
+        name: row.purchaseRequestSourceSubprojectName,
+      },
+    ].find(
+      source =>
+        source.targetType === "activo_fijo" ||
+        source.id ||
+        source.code ||
+        source.name
+    );
+    const subprojectLabel =
+      subprojectSource && subprojectSource.targetType !== "activo_fijo"
+        ? [subprojectSource.code, subprojectSource.name]
+            .filter(Boolean)
+            .join(" - ")
+            .trim() ||
+          (subprojectSource.id ? `Subproyecto #${subprojectSource.id}` : "")
+        : "";
+    subprojectLabelsByItemId.set(row.invoiceItemId, subprojectLabel);
     addMaterialRequest(
       row.invoiceId,
       row.directRequestId,
@@ -15526,6 +15593,7 @@ export async function listDmcReportSourceInvoices(filters?: {
         sapItemCode:
           row.item.currentSapItemCode ?? row.item.originalSapItemCode,
         articleDescription: row.articleDescription,
+        subProjectLabel: subprojectLabelsByItemId.get(row.item.id) ?? "",
         financialGroupCode: row.financialGroupCode,
         financialGroupDescription: row.financialGroupDescription,
         taxCode: row.item.taxCode,

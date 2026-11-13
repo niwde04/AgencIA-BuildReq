@@ -1316,7 +1316,8 @@ describe("invoice report notes", () => {
           defval: "",
         });
         const column = rows[1].indexOf("Notas");
-        expect(column).toBe(rows[1].length - 1);
+        expect(rows[1].slice(-2)).toEqual(["Notas", "Destino (Subproyecto)"]);
+        expect(column).toBe(rows[1].length - 2);
         expect(rows.slice(2, 4).map(row => row[column])).toEqual([
           notes ?? "",
           notes ?? "",
