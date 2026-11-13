@@ -7,14 +7,16 @@ entradas y salidas, incluyendo recepciones de traslado, devoluciones y reversos.
 ## Período y alcance
 
 La fecha inicial se obtiene de los respaldos verificados que se hayan incorporado.
-La ampliación preparada el 13/11/2026 permite comenzar el **08/07/2026**, desde el
-inventario de arranque. Cloud conserva por ahora el inicio del 30/09/2026 hasta
-publicar el lector actualizado e importar la apertura inicial.
+La ampliación activada en Cloud el **13/11/2026 a las 15:13 Honduras** permite
+comenzar el **08/07/2026**, desde el inventario de arranque. El lector actualizado
+está publicado y la apertura inicial está incorporada.
 
 Cada corte documental utiliza el respaldo válido más cercano anterior a su cierre.
-El período de movimientos se consulta completo aunque comience antes de ese respaldo;
-las hojas muestran como máximo los dos meses anteriores al corte, limitados por la
-fecha inicial disponible. No se ofrecen fechas sin una base verificada.
+El período de movimientos se consulta completo desde la fecha inicial disponible
+hasta el corte, aunque comience antes del respaldo utilizado para el saldo. No se
+recorta a los dos últimos meses. La corrección de esta ventana está preparada y
+requiere publicar el marcador `inventoryCutoffFullHistory: 1`; la base inicial de
+julio ya está activada y no necesita otra importación. No se ofrecen fechas sin una base verificada.
 
 El corte usa el día de Honduras, con límite exclusivo de las 00:00 del siguiente
 día. Para hoy, refleja los datos hasta el momento de consulta. Las fechas del
@@ -130,9 +132,15 @@ base con el procedimiento privado validado y comprobar que los metadatos anuncie
 `.tmp/activate-inventory-startup-extension.mjs`: sin argumentos hace solo lectura;
 `--apply` exige el marcador del lector publicado y conserva inventario, historial,
 copias anteriores y permisos bajo comprobaciones transaccionales. El usuario
-realiza el despliegue en Dokploy; la carga queda pendiente hasta confirmarlo.
+realizó el despliegue en Dokploy; el marcador publicado se confirmó antes de
+incorporar la base inicial como copia 3. Las 7.361 filas guardadas coinciden
+exactamente con el artefacto privado. Existencias, historial, copias anteriores
+y permisos permanecieron idénticos bajo comprobación transaccional.
 Las copias de septiembre y de activación se conservan. No basta con
 quitar la validación del calendario o cambiar la fecha de un respaldo posterior.
+Con la copia inicial incorporada, conservar el lector multi-base del commit
+`97ba21c` o posterior: un lector anterior podría usar julio para cortes posteriores.
+La recuperación debe mantener las copias y corregir el lector hacia adelante.
 
 Pruebas: 50 casos focalizados y PostgreSQL aislado aprobados; importación de las
 7.361 filas repetida sin duplicar ni modificar el stock local, con anon y
@@ -140,7 +148,11 @@ authenticated denegados. Ensayo del lector real en una única transacción Cloud
 de solo lectura con la base inicial inyectada solamente en memoria: 08/07,
 31/07, 31/08, 30/09, 31/10 y fecha actual. Existencias de octubre y actuales
 conservadas; los saldos sin evidencia continúan como N/D. Evidencia agregada:
-`output/inventory-history-start/`. Activación Cloud pendiente.
+`output/inventory-history-start/`. La verificación posterior de solo lectura confirmó
+metadatos desde 08/07, cortes 08/07 y 31/07 y saldos de 31/10 y del día actual
+conservados. `anon` y `authenticated` no pueden leer las copias y ambas rutas
+publicadas responden 401 sin sesión. Recibos: `cloud-extension-activation.json`
+y `cloud-extension-verification.json` en ese directorio privado.
 
 ## Verificación
 
@@ -173,3 +185,25 @@ El marcador público `capabilities.inventoryCutoffReport: 1` en `/health`
 identifica el servidor publicado. Confirmar también el botón del frontend, las
 rutas protegidas por autenticación y una consulta del reporte sin escribir
 movimientos reales.
+
+## Corrección de la ventana de movimientos (13/11/2026)
+
+La ampliación de la base inicial habilitó cortes de julio, pero permaneció un
+límite distinto: el Excel calculaba su período como el mayor entre la base inicial
+y dos meses antes del corte. Para el 13/11 eso comenzaba el 13/09. Se eliminó ese
+recorte: entradas y salidas abarcan desde 08/07 hasta la fecha seleccionada, y el
+saldo continúa usando el respaldo válido más cercano o los cambios registrados.
+Se conservan permisos, cobertura N/D y los límites explícitos de 50.000 filas.
+
+La regresión PostgreSQL reproduce un movimiento de 90 días antes: falló con el
+lector anterior y pasó con el corregido. Pasaron las 50 pruebas focalizadas, tipos
+y compilación. Se compararon ambos lectores con datos reales en una transacción
+Cloud de solo lectura; octubre y hoy conservaron sus filas de inventario y todos
+los movimientos previamente visibles. El XLSX se serializó y leyó en memoria con
+las tres hojas y fechas desde julio. Evidencia agregada privada:
+`output/inventory-history-start/full-history-readonly-verification.json`.
+
+Publicación pendiente en Dokploy, a cargo del usuario. Confirmar
+`capabilities.inventoryCutoffFullHistory: 1` en `/health` y que el reporte de hoy
+indique movimientos desde 08/07/2026. No ejecutar migraciones ni importar otra vez
+la base histórica para este cambio.

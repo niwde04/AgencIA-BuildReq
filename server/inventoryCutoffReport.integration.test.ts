@@ -345,11 +345,11 @@ describe.skipIf(!source)(
         )
       ).toBe(false);
     });
-    it("extends the initial date with an older backup, preserving nearer stock anchors and the complete movement window", async () => {
+    it("extends the initial date with an older backup, preserving nearer stock anchors and movements older than two months", async () => {
       const scope = { projectIds: [1], warehouseIds: [10] };
       await client.query(
         `insert into "warehouseExits"(id,"exitNumber","projectId","warehouseId","createdById",status,"exitDate","emittedAt") values(2,'SB-001-00000002',1,10,1,'emitida',$1,$1)`,
-        [`${dateBefore(5)}T18:00:00Z`]
+        [`${dateBefore(90)}T18:00:00Z`]
       );
       await client.query(
         `insert into "warehouseExitItems"(id,"warehouseExitId","warehouseId","sapItemCode","itemName",quantity,unit,"storageLocation") values(2,2,10,'0001','Repuesto real',1,'und','C1')`
@@ -362,7 +362,7 @@ describe.skipIf(!source)(
         { cutoffDate: today },
         scope
       );
-      const earlierDay = dateBefore(6);
+      const earlierDay = dateBefore(100);
       const earlier = await client.query(
         `insert into "inventoryReportSnapshots"("sourceKey","sourceHash","capturedAt",kind,"rowsCount",metadata) values('cloud-backup-earlier-fixture',$1,$2,'backup',6,$3) returning id`,
         [
@@ -383,13 +383,13 @@ describe.skipIf(!source)(
         earliestDate: earlierDay,
       });
       await expect(
-        getInventoryCutoffReport({ cutoffDate: dateBefore(7) }, scope)
+        getInventoryCutoffReport({ cutoffDate: dateBefore(101) }, scope)
       ).rejects.toThrow("Hay información disponible desde");
       const early = await getInventoryCutoffReport(
-        { cutoffDate: dateBefore(5) },
+        { cutoffDate: dateBefore(90) },
         scope
       );
-      expect(early.cutoffDate).toBe(dateBefore(5));
+      expect(early.cutoffDate).toBe(dateBefore(90));
       expect(
         early.inventory.find(
           row => row.sapItemCode === "0001" && row.storageLocation === "A1"
@@ -403,13 +403,20 @@ describe.skipIf(!source)(
       expect(later.entries).toEqual(previous.entries);
       expect(
         later.exits.find(row => row.exitNumber === "SB-001-00000002")
-      ).toMatchObject({ quantity: 1, exitDate: dateBefore(5) });
+      ).toMatchObject({ quantity: 1, exitDate: dateBefore(90) });
       expect(
         previous.exits.some(row => row.exitNumber === "SB-001-00000002")
       ).toBe(false);
+      expect(later.periodStartDate).toBe(earlierDay);
+      const currentExtended = await getInventoryCutoffReport(
+        { cutoffDate: today },
+        scope
+      );
+      expect(currentExtended.inventory).toEqual(current.inventory);
+      expect(currentExtended.periodStartDate).toBe(earlierDay);
       expect(
-        (await getInventoryCutoffReport({ cutoffDate: today }, scope)).inventory
-      ).toEqual(current.inventory);
+        currentExtended.exits.find(row => row.exitNumber === "SB-001-00000002")
+      ).toMatchObject({ quantity: 1, exitDate: dateBefore(90) });
     });
   }
 );

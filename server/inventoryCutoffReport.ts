@@ -25,7 +25,6 @@ import {
   reconstructDocumentaryStock,
   reconstructRecordedStock,
   stockKey,
-  twoMonthsBefore,
   type CutoffChange,
   type CutoffStock,
 } from "./inventoryCutoffReconstruction";
@@ -228,9 +227,7 @@ export async function getInventoryCutoffReport(
               cutoffInstant(snapshot.capturedAt) < cutoffInstant(requestedEnd)
           )
           .at(-1) ?? first;
-      const periodStartDate = [earliest, twoMonthsBefore(input.cutoffDate)]
-        .sort()
-        .at(-1)!;
+      const periodStartDate = earliest;
       const periodStart = cutoffDayStart(periodStartDate);
       const baselineStart =
         documentaryBaseline.metadata?.captureStartedAt ??

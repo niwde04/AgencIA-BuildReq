@@ -50,6 +50,7 @@ async function startServer() {
         userProfileFields: 1,
         inventoryCutoffReport: 1,
         inventoryCutoffMultiBaseline: 1,
+        inventoryCutoffFullHistory: 1,
       },
       legacyManualCaptureEnabled:
         process.env.LEGACY_MANUAL_ADVANCES_ENABLED !== "false",
