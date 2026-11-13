@@ -161,6 +161,7 @@ export type DmcReportSourceInvoice = {
   invoiceId: number;
   invoiceDocumentNumber: string;
   invoiceNumber?: string | null;
+  notes?: string | null;
   status: string;
   isFiscalDocument?: boolean | null;
   cai?: string | null;

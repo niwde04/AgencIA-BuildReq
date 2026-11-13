@@ -96,6 +96,7 @@ function sarInvoice(
     invoiceId: overrides.invoiceId ?? 100,
     invoiceDocumentNumber: overrides.invoiceDocumentNumber ?? "FT-2026-0001",
     invoiceNumber: overrides.invoiceNumber ?? "000-001-01-00000001",
+    notes: overrides.notes,
     status: overrides.status ?? "borrador",
     isFiscalDocument: overrides.isFiscalDocument ?? true,
     cai: overrides.cai ?? "338827-15203E-A419E0-63BE03-0909A6-53",
@@ -1270,6 +1271,94 @@ describe("internal BuildReq workbook", () => {
     expect(rows.flat()).not.toContain("Artículo A");
     expect(rows.flat()).not.toContain("Artículo B");
   });
+});
+
+describe("invoice report notes", () => {
+  it.each([
+    undefined,
+    null,
+    "",
+    "Boleto aéreo para viaje de trabajo — César, compra de noviembre.",
+    "Primera línea\nSegunda línea con acentos: compra, recepción y envío.",
+    "Nota extensa: ".padEnd(2000, "á"),
+    "=SUM(1,2)",
+    "+Compra de materiales",
+    "@Referencia de compra",
+  ])(
+    "preserves header notes as text in every invoice line and both Excel exports: %j",
+    notes => {
+      const source = sarInvoice({ notes });
+      source.items = [source.items[0], { ...source.items[0], id: 2 }];
+      const params = { generatedAt: new Date("2026-11-13T12:00:00.000Z") };
+      const payload = buildSystemWorkbookPayload([source], [], params);
+      const withoutNotes = buildSystemWorkbookPayload(
+        [{ ...source, notes: undefined }],
+        [],
+        params
+      );
+      expect(payload.summary).toEqual(withoutNotes.summary);
+      expect(payload.invoices.map(({ Notas, ...row }) => row)).toEqual(
+        withoutNotes.invoices.map(({ Notas, ...row }) => row)
+      );
+      expect(payload.invoices.map(row => row.Notas)).toEqual([
+        notes ?? "",
+        notes ?? "",
+      ]);
+      for (const build of [buildSystemInvoicesWorkbook, buildSystemWorkbook]) {
+        const workbook = build(XLSX, JSON.parse(JSON.stringify(payload)));
+        const restored = XLSX.read(
+          XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }),
+          { type: "buffer" }
+        );
+        const sheet = restored.Sheets["Registro Facturacion"];
+        const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+          header: 1,
+          defval: "",
+        });
+        const column = rows[1].indexOf("Notas");
+        expect(column).toBe(rows[1].length - 1);
+        expect(rows.slice(2, 4).map(row => row[column])).toEqual([
+          notes ?? "",
+          notes ?? "",
+        ]);
+        expect(rows[4][column]).toBe("");
+        for (const row of [2, 3]) {
+          const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+          expect(cell?.f).toBeUndefined();
+          if (notes) expect(cell).toMatchObject({ t: "s", v: notes });
+        }
+        expect(
+          workbook.Sheets["Registro Facturacion"]["!cols"]?.[column]?.wch
+        ).toBe(60);
+      }
+    }
+  );
+
+  it.each(["systemInvoices", "systemWorkbook"] as const)(
+    "includes saved invoice notes through %s",
+    async endpoint => {
+      const notes = "Compra de boletos para viaje de trabajo de César.";
+      vi.spyOn(db, "listDmcReportSourceInvoices").mockResolvedValue([
+        sarInvoice({ notes }),
+        sarInvoice({ invoiceId: 101, notes: null }),
+      ]);
+      vi.spyOn(db, "listSystemReportPurchaseOrderLines").mockResolvedValue([]);
+      vi.spyOn(db, "getDb").mockResolvedValue({} as any);
+      vi.spyOn(settlement, "getInvoiceSettlementMap").mockResolvedValue(
+        new Map()
+      );
+      vi.spyOn(
+        invoiceReportPayments,
+        "getInvoiceReportPaymentMetadata"
+      ).mockResolvedValue(new Map());
+      const caller = appRouter.createCaller(createUserContext());
+      const payload = await caller.reports[endpoint]({
+        dateFrom: null,
+        dateTo: null,
+      });
+      expect(payload.invoices.map(row => row.Notas)).toEqual([notes, ""]);
+    }
+  );
 });
 
 describe("DMC report authorization", () => {

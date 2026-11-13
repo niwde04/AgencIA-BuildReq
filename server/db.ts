@@ -15479,6 +15479,7 @@ export async function listDmcReportSourceInvoices(filters?: {
       invoiceId: invoice.id,
       invoiceDocumentNumber: invoice.invoiceDocumentNumber,
       invoiceNumber: invoice.invoiceNumber,
+      notes: invoice.notes,
       status: invoice.status,
       isFiscalDocument: invoice.isFiscalDocument,
       cai: invoice.cai,

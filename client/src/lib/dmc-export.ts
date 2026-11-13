@@ -590,7 +590,10 @@ function buildSystemInvoiceSheet(XLSX: Xlsx, payload: SystemWorkbookPayload) {
   const invoiceSheet = makeSheet(
     XLSX,
     invoiceRows,
-    [2, ...Array(SYSTEM_INVOICE_HEADERS.length).fill(17)],
+    [
+      2,
+      ...SYSTEM_INVOICE_HEADERS.map(header => (header === "Notas" ? 60 : 17)),
+    ],
     { dateColumns: systemDateColumns(SYSTEM_INVOICE_HEADERS), dataStartRow: 2 }
   );
   return invoiceSheet;

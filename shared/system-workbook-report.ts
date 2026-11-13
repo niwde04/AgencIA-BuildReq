@@ -78,6 +78,7 @@ export const SYSTEM_INVOICE_HEADERS = [
   "Neto_Pagar",
   "Fecha Vencimiento Crédito",
   "Tipo_de_compra",
+  "Notas",
 ] as const;
 
 export const TREASURY_INVOICE_SUMMARY_HEADERS = [
@@ -453,6 +454,7 @@ export function buildSystemWorkbookPayload(
           row.fechaVencimiento as Date | string | null
         ),
         Tipo_de_compra: invoice.purchaseType ?? "",
+        Notas: invoice.notes ?? "",
       };
     });
   });
