@@ -6,11 +6,15 @@ entradas y salidas, incluyendo recepciones de traslado, devoluciones y reversos.
 
 ## Período y alcance
 
-El primer respaldo identificado y verificado para este Cloud permite ofrecer
-cortes desde el **30/09/2026**, aproximadamente seis semanas al preparar esta
-entrega del 12/11/2026. No se ofrecen fechas anteriores por suposición. Las hojas
-de movimientos muestran como máximo los dos meses anteriores al corte, limitados
-por la fecha inicial disponible.
+La fecha inicial se obtiene de los respaldos verificados que se hayan incorporado.
+La ampliación preparada el 13/11/2026 permite comenzar el **08/07/2026**, desde el
+inventario de arranque. Cloud conserva por ahora el inicio del 30/09/2026 hasta
+publicar el lector actualizado e importar la apertura inicial.
+
+Cada corte documental utiliza el respaldo válido más cercano anterior a su cierre.
+El período de movimientos se consulta completo aunque comience antes de ese respaldo;
+las hojas muestran como máximo los dos meses anteriores al corte, limitados por la
+fecha inicial disponible. No se ofrecen fechas sin una base verificada.
 
 El corte usa el día de Honduras, con límite exclusivo de las 00:00 del siguiente
 día. Para hoy, refleja los datos hasta el momento de consulta. Las fechas del
@@ -104,6 +108,39 @@ La migración es repetible y no reemplaza la primera apertura. Para revertir sol
 el código, conservar tablas y captura: protege la historia mientras el código
 anterior sigue operando. No borrar las copias ni modificar cantidades para una
 reversión de interfaz.
+
+## Ampliación desde el arranque (13/11/2026)
+
+El respaldo privado de arranque contiene 7.361 filas de inventario y ninguna
+requisición, recepción o salida. Su captura conservadora comprende el
+08/07/2026 de 07:09:41 a 07:10:13.582 UTC, antes de los primeros documentos
+operativos conservados. Dos copias del arranque coinciden en todos los campos
+de inventario. Los conteos y huellas agregadas de identificadores y códigos
+coinciden con las filas iniciales que conserva el Cloud del cliente.
+
+El artefacto tiene origen `cloud-backup-20260708T070941Z` y permanece privado en
+`.tmp/inventory-cutoff-report-private/cloud-20260708-report-snapshot.json` del
+workspace principal. Incorporarlo agrega exclusivamente una copia histórica a
+las dos tablas del reporte. No reemplaza inventario actual ni documentos.
+
+Orden de activación: publicar el lector y comprobar
+`capabilities.inventoryCutoffMultiBaseline: 1` en `/health`; después importar la
+base con el procedimiento privado validado y comprobar que los metadatos anuncien
+08/07/2026. El operador privado del workspace principal es
+`.tmp/activate-inventory-startup-extension.mjs`: sin argumentos hace solo lectura;
+`--apply` exige el marcador del lector publicado y conserva inventario, historial,
+copias anteriores y permisos bajo comprobaciones transaccionales. El usuario
+realiza el despliegue en Dokploy; la carga queda pendiente hasta confirmarlo.
+Las copias de septiembre y de activación se conservan. No basta con
+quitar la validación del calendario o cambiar la fecha de un respaldo posterior.
+
+Pruebas: 50 casos focalizados y PostgreSQL aislado aprobados; importación de las
+7.361 filas repetida sin duplicar ni modificar el stock local, con anon y
+authenticated denegados. Ensayo del lector real en una única transacción Cloud
+de solo lectura con la base inicial inyectada solamente en memoria: 08/07,
+31/07, 31/08, 30/09, 31/10 y fecha actual. Existencias de octubre y actuales
+conservadas; los saldos sin evidencia continúan como N/D. Evidencia agregada:
+`output/inventory-history-start/`. Activación Cloud pendiente.
 
 ## Verificación
 

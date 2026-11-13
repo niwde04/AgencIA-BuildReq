@@ -345,5 +345,71 @@ describe.skipIf(!source)(
         )
       ).toBe(false);
     });
+    it("extends the initial date with an older backup, preserving nearer stock anchors and the complete movement window", async () => {
+      const scope = { projectIds: [1], warehouseIds: [10] };
+      await client.query(
+        `insert into "warehouseExits"(id,"exitNumber","projectId","warehouseId","createdById",status,"exitDate","emittedAt") values(2,'SB-001-00000002',1,10,1,'emitida',$1,$1)`,
+        [`${dateBefore(5)}T18:00:00Z`]
+      );
+      await client.query(
+        `insert into "warehouseExitItems"(id,"warehouseExitId","warehouseId","sapItemCode","itemName",quantity,unit,"storageLocation") values(2,2,10,'0001','Repuesto real',1,'und','C1')`
+      );
+      const previous = await getInventoryCutoffReport(
+        { cutoffDate: legacyDay },
+        scope
+      );
+      const current = await getInventoryCutoffReport(
+        { cutoffDate: today },
+        scope
+      );
+      const earlierDay = dateBefore(6);
+      const earlier = await client.query(
+        `insert into "inventoryReportSnapshots"("sourceKey","sourceHash","capturedAt",kind,"rowsCount",metadata) values('cloud-backup-earlier-fixture',$1,$2,'backup',6,$3) returning id`,
+        [
+          "d".repeat(64),
+          cutoffDayStart(earlierDay),
+          {
+            earliestOfferedDay: earlierDay,
+            captureStartedAt: cutoffDayStart(earlierDay),
+            approximate: false,
+          },
+        ]
+      );
+      await client.query(
+        `insert into "inventoryReportSnapshotRows"("snapshotId","inventoryItemId","rowData") select $1,r."inventoryItemId",case when r."inventoryItemId"=1 then jsonb_set(r."rowData",'{currentStock}','"20.00"') else r."rowData" end from "inventoryReportSnapshotRows" r join "inventoryReportSnapshots" s on s.id=r."snapshotId" where s."sourceKey"='cloud-backup-local-fixture'`,
+        [earlier.rows[0].id]
+      );
+      await expect(getInventoryCutoffMetadata()).resolves.toMatchObject({
+        earliestDate: earlierDay,
+      });
+      await expect(
+        getInventoryCutoffReport({ cutoffDate: dateBefore(7) }, scope)
+      ).rejects.toThrow("Hay información disponible desde");
+      const early = await getInventoryCutoffReport(
+        { cutoffDate: dateBefore(5) },
+        scope
+      );
+      expect(early.cutoffDate).toBe(dateBefore(5));
+      expect(
+        early.inventory.find(
+          row => row.sapItemCode === "0001" && row.storageLocation === "A1"
+        )
+      ).toMatchObject({ stock: null, coverage: "unavailable" });
+      const later = await getInventoryCutoffReport(
+        { cutoffDate: legacyDay },
+        scope
+      );
+      expect(later.inventory).toEqual(previous.inventory);
+      expect(later.entries).toEqual(previous.entries);
+      expect(
+        later.exits.find(row => row.exitNumber === "SB-001-00000002")
+      ).toMatchObject({ quantity: 1, exitDate: dateBefore(5) });
+      expect(
+        previous.exits.some(row => row.exitNumber === "SB-001-00000002")
+      ).toBe(false);
+      expect(
+        (await getInventoryCutoffReport({ cutoffDate: today }, scope)).inventory
+      ).toEqual(current.inventory);
+    });
   }
 );

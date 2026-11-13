@@ -219,12 +219,26 @@ export async function getInventoryCutoffReport(
       ).toISOString();
       const isRecorded =
         cutoffInstant(requestedEnd) > cutoffInstant(activation.capturedAt);
+      const documentaryBaseline =
+        available
+          .filter(
+            snapshot =>
+              snapshot.kind === "backup" &&
+              earliestDay(snapshot) <= input.cutoffDate &&
+              cutoffInstant(snapshot.capturedAt) < cutoffInstant(requestedEnd)
+          )
+          .at(-1) ?? first;
       const periodStartDate = [earliest, twoMonthsBefore(input.cutoffDate)]
         .sort()
         .at(-1)!;
-      const sourceStart = isRecorded
-        ? cutoffDayStart(periodStartDate)
-        : (first.metadata?.captureStartedAt ?? first.capturedAt);
+      const periodStart = cutoffDayStart(periodStartDate);
+      const baselineStart =
+        documentaryBaseline.metadata?.captureStartedAt ??
+        documentaryBaseline.capturedAt;
+      const sourceStart =
+        isRecorded || cutoffInstant(periodStart) < cutoffInstant(baselineStart)
+          ? periodStart
+          : baselineStart;
       const through = new Date(
         Math.max(cutoffInstant(end), cutoffInstant(activation.capturedAt))
       ).toISOString();
@@ -254,9 +268,9 @@ export async function getInventoryCutoffReport(
         });
       } else {
         stock = reconstructDocumentaryStock({
-          baseline: await snapshotRows(tx, first, scope),
-          baselineAt: first.capturedAt,
-          captureStartedAt: first.metadata?.captureStartedAt,
+          baseline: await snapshotRows(tx, documentaryBaseline, scope),
+          baselineAt: documentaryBaseline.capturedAt,
+          captureStartedAt: documentaryBaseline.metadata?.captureStartedAt,
           activation: await snapshotRows(tx, activation, scope),
           activationAt: activation.capturedAt,
           cutoffExclusive: requestedEnd,
