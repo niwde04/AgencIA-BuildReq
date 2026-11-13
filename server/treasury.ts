@@ -1444,6 +1444,13 @@ export async function listTreasuryBatches(filters?: {
             .filter((value): value is string => Boolean(value))
         )
       ),
+      bankReferences: Array.from(
+        new Set(
+          included
+            .map(item => item.bankReference?.trim())
+            .filter((value): value is string => Boolean(value))
+        )
+      ),
       paymentRegistrationDate:
         getTreasuryBatchPaymentRegistrationDate(included),
       supplierCount: new Set(

@@ -83,6 +83,54 @@ describe("treasury batch search", () => {
   });
 });
 
+describe("treasury batch bank reference search", () => {
+  const batch = {
+    values: ["TES-2026-000754", "001", "Oficina Central"],
+    bankReferences: [null, "FT263033PW74", "RF0000123", undefined, ""],
+  };
+
+  it.each([
+    "FT263033PW74",
+    "ft263033pw74",
+    "  FT263033PW74  ",
+    "263033",
+    "pw74",
+    "RF0000123",
+  ])("finds full and partial bank references: %s", search => {
+    expect(matchesTreasuryBatchSearch({ search, ...batch })).toBe(true);
+  });
+
+  it.each(["FT263033ZZZZ", "RF00123", "REF-AJENA"])(
+    "does not change reference digits or match unrelated references: %s",
+    search => {
+      expect(matchesTreasuryBatchSearch({ search, ...batch })).toBe(false);
+    }
+  );
+
+  it("supports empty searches and batches without bank references", () => {
+    expect(
+      matchesTreasuryBatchSearch({
+        search: "  ",
+        values: [],
+        bankReferences: [],
+      })
+    ).toBe(true);
+    expect(matchesTreasuryBatchSearch({ search: "REF", values: [] })).toBe(
+      false
+    );
+  });
+
+  it("does not join separate references into an artificial match", () => {
+    expect(
+      matchesTreasuryBatchSearch({
+        search: "ABC DEF",
+        values: [],
+        bankReferences: ["ABC", "DEF"],
+      })
+    ).toBe(false);
+  });
+});
+
 describe("invoice advance balance preview", () => {
   it("shows an accounted supplier advance on a draft invoice balance", () => {
     expect(

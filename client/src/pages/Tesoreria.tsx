@@ -3711,6 +3711,7 @@ export default function Tesoreria() {
         ],
         invoiceDocumentNumbers: row.invoiceDocumentNumbers,
         invoiceNumbers: row.invoiceNumbers,
+        bankReferences: row.bankReferences,
       });
       const matchesDateRange =
         (!dateFrom && !dateTo) ||
@@ -4561,15 +4562,15 @@ export default function Tesoreria() {
             </AccordionTrigger>
             <AccordionContent className="pb-0">
               <CardContent className="space-y-4 border-t pt-6">
-                <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[minmax(18rem,1fr)_15rem_11rem_11rem_auto_auto_auto]">
-                  <div className="space-y-2">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="min-w-0 flex-[1_1_18rem] space-y-2">
                     <Label htmlFor="treasury-search">Buscar</Label>
                     <div className="relative">
                       <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                       <Input
                         id="treasury-search"
                         className="pl-9"
-                        placeholder="Buscar lote, proyecto o factura"
+                        placeholder="Buscar lote, proyecto, factura o referencia bancaria"
                         value={search}
                         onChange={event => {
                           setSearch(event.target.value);
@@ -4578,7 +4579,7 @@ export default function Tesoreria() {
                       />
                     </div>
                   </div>
-                  <div className="space-y-2">
+                  <div className="min-w-0 flex-[1_1_10rem] space-y-2">
                     <Label>Estado</Label>
                     <Select
                       value={statusFilter}
@@ -4609,7 +4610,7 @@ export default function Tesoreria() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
+                  <div className="min-w-0 flex-[1_1_9rem] space-y-2">
                     <Label htmlFor="treasury-date-from">Desde</Label>
                     <Input
                       id="treasury-date-from"
@@ -4622,7 +4623,7 @@ export default function Tesoreria() {
                       }}
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="min-w-0 flex-[1_1_9rem] space-y-2">
                     <Label htmlFor="treasury-date-to">Hasta</Label>
                     <Input
                       id="treasury-date-to"
@@ -4653,6 +4654,7 @@ export default function Tesoreria() {
                     Exportar Excel
                   </Button>
                   <Button
+                    className="max-w-full whitespace-normal"
                     onClick={() => void exportPaymentsReport()}
                     disabled={
                       exportingPaymentsReport ||

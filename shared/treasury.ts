@@ -100,9 +100,18 @@ export function matchesTreasuryBatchSearch(input: {
   values: unknown[];
   invoiceDocumentNumbers?: Array<string | null | undefined>;
   invoiceNumbers?: Array<string | null | undefined>;
+  bankReferences?: Array<string | null | undefined>;
 }) {
   const term = normalizeTreasurySearchText(input.search);
   if (!term) return true;
+
+  if (
+    input.bankReferences?.some(value =>
+      normalizeTreasurySearchText(value).includes(term)
+    )
+  ) {
+    return true;
+  }
 
   const searchableText = input.values
     .map(normalizeTreasurySearchText)
