@@ -6628,18 +6628,16 @@ export default function Facturas() {
                             <div className="flex flex-col items-end gap-1">
                               {treasuryPayments.map(payment =>
                                 canOpenTreasuryBatches ? (
-                                  <button
+                                  <a
                                     key={payment.batchId}
-                                    type="button"
+                                    href={`/tesoreria?lote=${payment.batchId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label={`Abrir lote ${payment.batchNumber} en una pestaña nueva`}
                                     className="font-semibold text-primary underline-offset-4 hover:underline"
-                                    onClick={() =>
-                                      setLocation(
-                                        `/tesoreria?lote=${payment.batchId}`
-                                      )
-                                    }
                                   >
                                     {payment.batchNumber}
-                                  </button>
+                                  </a>
                                 ) : (
                                   <span
                                     key={payment.batchId}
