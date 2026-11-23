@@ -313,7 +313,7 @@ export default function Home() {
               </form>
 
               {/* Toggle mode */}
-              <div className="text-center space-y-2">
+              <div hidden className="text-center space-y-2">
                 <button
                   type="button"
                   onClick={() => {
