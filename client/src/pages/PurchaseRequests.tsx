@@ -68,7 +68,7 @@ import {
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
+import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSettings";
@@ -278,6 +278,22 @@ function formatPurchaseRequestApprovedBy(row: any) {
   return getApprovalEventActorName(approval) || "—";
 }
 
+function getPurchaseRequestExportDate(value: Date | string | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  // Encode the displayed calendar date without historical time zone offsets.
+  const calendarDate = Date.UTC(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate()
+  );
+  const excelEpoch = Date.UTC(1899, 11, 30);
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+  return (calendarDate - excelEpoch) / millisecondsPerDay;
+}
+
 type RequestTargetSelection =
   | {
       targetType: "subproyecto";
@@ -477,7 +493,7 @@ export default function PurchaseRequests() {
   const [searchTerm, setSearchTerm] = useState("");
   const [page, setPage] = useState(1);
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
-  const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [projectFilter, setProjectFilter] = useState("all");
   const [purchaseTypeFilter, setPurchaseTypeFilter] = useState<
     PurchaseType | "all"
@@ -1947,12 +1963,11 @@ export default function PurchaseRequests() {
     printWindowWhenReady(printWindow);
   };
 
-  const exportPurchaseRequestsCsv = async () => {
-    if (isExportingCsv) return;
-    setIsExportingCsv(true);
-    let exportRows: any[];
+  const exportPurchaseRequestsExcel = async () => {
+    if (isExportingExcel) return;
+    setIsExportingExcel(true);
     try {
-      exportRows = await fetchAllFilteredPages((exportPage, pageSize) =>
+      const exportRows = await fetchAllFilteredPages((exportPage, pageSize) =>
         utils.purchaseRequests.listPage.fetch({
           projectId:
             projectFilter === "all" ? undefined : Number(projectFilter),
@@ -1963,90 +1978,89 @@ export default function PurchaseRequests() {
             effectiveStatusFilter === "all" ? undefined : effectiveStatusFilter,
           page: exportPage,
           pageSize,
+          includePrintedDocumentContent: false,
         })
       );
+      if (exportRows.length === 0) {
+        toast.error("No hay solicitudes de compra para exportar");
+        return;
+      }
+
+      type ExportRow = (typeof exportRows)[number] & {
+        projectSummary?: { label?: string | null } | null;
+        approvalSummary?: { isPartiallyApproved?: boolean } | null;
+      };
+      await downloadExcel<ExportRow>(
+        buildDatedExcelFileName("solicitudes-compra"),
+        "Solicitudes de Compra",
+        [
+          {
+            header: "No. Solicitud",
+            value: row => row.purchaseRequest.requestNumber,
+          },
+          {
+            header: "No. Req.",
+            value: formatPurchaseRequestRequestNumbers,
+          },
+          {
+            header: "Proyecto",
+            value: row =>
+              row.projectSummary?.label ||
+              (row.project ? `${row.project.code} — ${row.project.name}` : "—"),
+          },
+          {
+            header: "Requiriente",
+            value: formatPurchaseRequestRequestedBy,
+          },
+          {
+            header: "Aprobado por",
+            value: formatPurchaseRequestApprovedBy,
+          },
+          {
+            header: "Tipo de Compra",
+            value: row =>
+              getPurchaseTypeLabel(row.purchaseRequest.purchaseType),
+          },
+          {
+            header: "Fecha creación",
+            value: row =>
+              getPurchaseRequestExportDate(row.purchaseRequest.createdAt),
+            numFmt: "dd/mm/yyyy",
+          },
+          {
+            header: "Doc SAP",
+            value: row => row.purchaseRequest.sapDocumentNumber || "—",
+          },
+          {
+            header: "Estatus",
+            value: row =>
+              STATUS_LABELS[
+                getEffectivePurchaseRequestStatus(
+                  row.purchaseRequest.status,
+                  row.purchaseRequest.approvalStatus,
+                  row.approvalSummary
+                )
+              ] || row.purchaseRequest.status,
+          },
+          {
+            header: "Fecha necesaria",
+            value: row =>
+              getPurchaseRequestExportDate(row.purchaseRequest.neededBy),
+            numFmt: "dd/mm/yyyy",
+          },
+          {
+            header: "Documento",
+            value: row =>
+              row.purchaseRequest.hasPrintedDocument ? "Listo" : "Pendiente",
+          },
+        ],
+        exportRows
+      );
     } catch {
-      toast.error("No se pudo exportar el archivo CSV");
-      setIsExportingCsv(false);
-      return;
+      toast.error("No se pudo exportar el archivo Excel");
+    } finally {
+      setIsExportingExcel(false);
     }
-    if (exportRows.length === 0) {
-      toast.error("No hay solicitudes de compra para exportar");
-      setIsExportingCsv(false);
-      return;
-    }
-    downloadCsv(
-      buildDatedCsvFileName("solicitudes-compra"),
-      [
-        {
-          header: "No. Solicitud",
-          value: (row: any) => row.purchaseRequest.requestNumber,
-        },
-        {
-          header: "No. Req.",
-          value: (row: any) => formatPurchaseRequestRequestNumbers(row),
-        },
-        {
-          header: "Proyecto",
-          value: (row: any) =>
-            row.projectSummary?.label ||
-            (row.project ? `${row.project.code} — ${row.project.name}` : "—"),
-        },
-        {
-          header: "Requiriente",
-          value: (row: any) => formatPurchaseRequestRequestedBy(row),
-        },
-        {
-          header: "Aprobado por",
-          value: (row: any) => formatPurchaseRequestApprovedBy(row),
-        },
-        {
-          header: "Tipo de Compra",
-          value: (row: any) =>
-            getPurchaseTypeLabel(row.purchaseRequest.purchaseType),
-        },
-        {
-          header: "Fecha creación",
-          value: (row: any) =>
-            row.purchaseRequest.createdAt
-              ? new Date(row.purchaseRequest.createdAt).toLocaleDateString(
-                  "es-HN"
-                )
-              : "—",
-        },
-        {
-          header: "Doc SAP",
-          value: (row: any) => row.purchaseRequest.sapDocumentNumber || "—",
-        },
-        {
-          header: "Estatus",
-          value: (row: any) =>
-            STATUS_LABELS[
-              getEffectivePurchaseRequestStatus(
-                row.purchaseRequest.status,
-                row.purchaseRequest.approvalStatus,
-                row.approvalSummary
-              )
-            ] || row.purchaseRequest.status,
-        },
-        {
-          header: "Fecha necesaria",
-          value: (row: any) =>
-            row.purchaseRequest.neededBy
-              ? new Date(row.purchaseRequest.neededBy).toLocaleDateString(
-                  "es-HN"
-                )
-              : "—",
-        },
-        {
-          header: "Documento",
-          value: (row: any) =>
-            row.purchaseRequest.hasPrintedDocument ? "Listo" : "Pendiente",
-        },
-      ],
-      exportRows
-    );
-    setIsExportingCsv(false);
   };
 
   return (
@@ -2057,11 +2071,11 @@ export default function PurchaseRequests() {
           <Button
             type="button"
             variant="outline"
-            onClick={() => void exportPurchaseRequestsCsv()}
-            disabled={!requestsPage?.total || isExportingCsv}
+            onClick={() => void exportPurchaseRequestsExcel()}
+            disabled={!requestsPage?.total || isExportingExcel}
           >
             <Download className="mr-2 h-4 w-4" />
-            {isExportingCsv ? "Exportando..." : "Exportar CSV"}
+            {isExportingExcel ? "Exportando..." : "Exportar Excel"}
           </Button>
           {canConvert && selectedRequestIds.length > 1 ? (
             <div className="flex flex-wrap items-center gap-2">
