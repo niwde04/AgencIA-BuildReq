@@ -202,4 +202,58 @@ describe("reporte de detalle de pago de Tesorería", () => {
       "&lt;script&gt;alert(&#039;nota&#039;)&lt;/script&gt;"
     );
   });
+
+  it("distingue los importes histórico, revertido y vigente en una reversión parcial", () => {
+    const payload = reportPayload();
+    payload.batch.paymentKind = "purchase_order_advance";
+    payload.paymentTotals = {
+      originalBankPaidTotal: 18231.49,
+      reversedBankPaidTotal: 14156.99,
+      effectiveBankPaidTotal: 4074.5,
+    };
+    payload.lines[0].paymentItem.bankPaidAmount = 4074.5;
+    payload.reversalLines = [
+      {
+        documentNumber: "ANT-2026-000144",
+        orderNumber: "CD-010-00000403",
+        amount: 14156.99,
+        cause: "Transferencia devuelta",
+        reason: "<script>alert('motivo')</script>",
+        decidedAt: "2026-11-26",
+      },
+    ];
+
+    const html = buildTreasuryPaymentReportHtml(payload);
+
+    expect(html).toContain(
+      "<strong>Pago original registrado</strong> L 18,231.49"
+    );
+    expect(html).toContain("<strong>Pago revertido</strong> L 14,156.99");
+    expect(html).toContain("<strong>Pago vigente</strong> L 4,074.50");
+    expect(html).toContain("ANT-2026-000144");
+    expect(html).toContain("CD-010-00000403");
+    expect(html).toContain("26/11/2026");
+    expect(html).toContain("DETALLE PAGO A PROVEEDORES");
+    expect(html).not.toContain("<script>alert('motivo')</script>");
+    expect(html).toContain(
+      "&lt;script&gt;alert(&#039;motivo&#039;)&lt;/script&gt;"
+    );
+  });
+
+  it("imprime una constancia de reversión total sin tabla de pagos vigentes", () => {
+    const payload = reportPayload();
+    payload.lines = [];
+    payload.paymentTotals = {
+      originalBankPaidTotal: 18231.49,
+      reversedBankPaidTotal: 18231.49,
+      effectiveBankPaidTotal: 0,
+    };
+
+    const html = buildTreasuryPaymentReportHtml(payload);
+
+    expect(html).toContain("CONSTANCIA DE REVERSIÓN DE PAGO");
+    expect(html).toContain("<strong>Pago vigente</strong> L 0.00");
+    expect(html).not.toContain("Neto pagar");
+    expect(html).not.toContain("<strong>Son:</strong>");
+  });
 });

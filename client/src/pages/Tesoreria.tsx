@@ -102,6 +102,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { PurchaseOrderAdvanceDialog } from "@/components/PurchaseOrderAdvanceDialog";
+import {
+  TREASURY_REVERSAL_CAUSE_LABELS,
+  TreasuryPaymentReversals,
+  type TreasuryReversalItem,
+} from "@/components/TreasuryPaymentReversals";
 
 type PreparedBankAttachment = {
   fileName: string;
@@ -402,6 +407,46 @@ const TREASURY_BATCH_EXPORT_COLUMNS: ExcelColumn<any>[] = [
   },
 ];
 
+const TREASURY_BATCH_SUMMARY_EXPORT_COLUMNS: ExcelColumn<any>[] = [
+  ...TREASURY_BATCH_EXPORT_COLUMNS.map(column => {
+    if (column.header === "Pagado")
+      return {
+        ...column,
+        header: "Pago vigente",
+        value: (row: any) =>
+          Number(
+            row.paymentTotals?.effectiveBankPaidTotal ?? row.paidTotal ?? 0
+          ),
+        numFmt: "#,##0.00",
+      };
+    if (column.header === "Facturas")
+      return { ...column, header: "Documentos" };
+    if (column.header === "Estado")
+      return {
+        ...column,
+        value: (row: any) =>
+          row.paymentTotals?.reversedBankPaidTotal > 0 &&
+          row.paymentTotals.effectiveBankPaidTotal === 0
+            ? "Anulado por reversión"
+            : column.value(row),
+      };
+    return column;
+  }),
+  {
+    header: "Pago original registrado",
+    value: row =>
+      Number(row.paymentTotals?.originalBankPaidTotal ?? row.paidTotal ?? 0),
+    width: 24,
+    numFmt: "#,##0.00",
+  },
+  {
+    header: "Pago revertido",
+    value: row => Number(row.paymentTotals?.reversedBankPaidTotal ?? 0),
+    width: 20,
+    numFmt: "#,##0.00",
+  },
+];
+
 function downloadBase64File(
   fileName: string,
   mimeType: string,
@@ -501,6 +546,11 @@ function auditActionLabel(action: string) {
     registrar_pago_banco: "registrar pago bancario",
     rechazar_pago_contabilidad: "rechazar pago desde Contabilidad",
     corregir_pago_contabilidad: "corregir pago rechazado por Contabilidad",
+    solicitar_reversion_pago: "solicitar reversión de pago",
+    aprobar_reversion_pago: "aprobar reversión de pago",
+    rechazar_reversion_pago: "rechazar solicitud de reversión",
+    revertir_pago_banco: "revertir línea de pago",
+    liberar_retencion_anticipo_reversion: "liberar bloqueo de reprogramación",
     reabrir_respuesta_bancaria: "restaurar respuesta bancaria",
     reabrir_lote: "reabrir lote para corregir respuesta bancaria",
     regresar_borrador: "regresar lote a borrador",
@@ -1904,6 +1954,15 @@ function BatchDetailDialog({
 
   const detail = detailQuery.data;
   const batch = detail?.batch;
+  const reversalRequests = detail?.reversalRequests ?? [];
+  const hasPendingReversal = reversalRequests.some(
+    request => request.status === "pending"
+  );
+  const reversedPaymentTotal =
+    detail?.paymentTotals?.reversedBankPaidTotal ?? 0;
+  const hasReversedPayment = reversedPaymentTotal > 0;
+  const fullyReversed =
+    hasReversedPayment && detail?.paymentTotals?.effectiveBankPaidTotal === 0;
   const isAdvanceBatch = batch?.paymentKind === "purchase_order_advance";
   const isQualityReleaseBatch =
     batch?.paymentKind === "quality_retention_release";
@@ -1917,6 +1976,8 @@ function BatchDetailDialog({
     user?.role === "admin" || user?.buildreqRole === "contable";
   const approvalsEnabled =
     settingsQuery.data?.treasuryBatchApprovalsEnabled === true;
+  const paymentReversalsEnabled =
+    settingsQuery.data?.paymentReversalsEnabled === true;
   const isApprover = settingsQuery.data?.isApprover === true;
   const canExportBankWorkbook =
     settingsQuery.data?.permissions.canExportBankWorkbook === true;
@@ -1954,8 +2015,14 @@ function BatchDetailDialog({
   const currentBankReference =
     (detail?.items ?? []).find((item: any) => item.status === "pagada")
       ?.bankReference ?? "";
-  const currentPaymentAttachmentId = (detail?.attachments ?? [])
-    .filter((attachment: any) => attachment.category === "comprobante_pago")
+  const reversalAttachmentIds = new Set(
+    reversalRequests.map(request => request.evidenceAttachmentId)
+  );
+  const bankAttachments = (detail?.attachments ?? []).filter(
+    attachment => !reversalAttachmentIds.has(attachment.id)
+  );
+  const currentPaymentAttachmentId = bankAttachments
+    .filter(attachment => attachment.category === "comprobante_pago")
     .reduce(
       (latestId: number, attachment: any) =>
         Math.max(latestId, Number(attachment.id) || 0),
@@ -1964,10 +2031,15 @@ function BatchDetailDialog({
   const canRejectPaymentForCorrection =
     status === "pendiente_contabilizacion" &&
     isAccountant &&
+    !hasPendingReversal &&
     (detail?.items ?? []).some((item: any) => item.status === "pagada") &&
     !(detail?.items ?? []).some((item: any) => item.status === "contabilizada");
+  const canAccountPaidItems =
+    status === "pendiente_contabilizacion" &&
+    isAccountant &&
+    !hasPendingReversal;
   const canCorrectRejectedPayment =
-    status === "rechazado_contabilidad" && isCentral;
+    status === "rechazado_contabilidad" && isCentral && !hasPendingReversal;
   const visibleDetailItems = useMemo(
     () =>
       (detail?.items ?? []).filter((item: any) =>
@@ -1994,12 +2066,17 @@ function BatchDetailDialog({
   const detailTableColumnCount =
     16 +
     (isInvoiceBatch ? 1 : 0) +
-    (status === "pendiente_contabilizacion" && isAccountant ? 1 : 0) +
+    (canAccountPaidItems ? 1 : 0) +
     (editableAdjustments ? 1 : 0) +
     (status === "borrador" && canManageDrafts ? 1 : 0);
 
   function currentPaymentAmount(item: any) {
-    if (item.status === "excluida" || excludedIds.has(item.id)) return 0;
+    if (
+      item.status === "excluida" ||
+      item.status === "revertida" ||
+      excludedIds.has(item.id)
+    )
+      return 0;
     const value = editableAdjustments
       ? amounts[item.id]
       : (item.bankPaidAmount ?? item.approvedAmount ?? item.requestedAmount);
@@ -2072,7 +2149,7 @@ function BatchDetailDialog({
   }
 
   function submitAccountingCorrection() {
-    if (!detail) return;
+    if (!detail || !canCorrectRejectedPayment) return;
     const normalizedBankReference = correctedBankReference.trim();
     const bankReferenceChanged =
       normalizedBankReference !== String(currentBankReference).trim();
@@ -2131,8 +2208,29 @@ function BatchDetailDialog({
         id: batch.id,
       });
       reportWindow.document.open();
+      const reversalLines = payload.reversalRequests
+        .filter(request => request.status === "approved" && request.decidedAt)
+        .flatMap(request =>
+          request.items.map(line => {
+            const item = detail?.items.find(
+              (item: TreasuryReversalItem) => item.id === line.paymentItemId
+            );
+            return {
+              documentNumber:
+                item?.invoiceDocumentNumber ?? String(line.paymentItemId),
+              orderNumber: item?.orderNumber ?? item?.invoiceNumber,
+              amount: line.amountCents / 100,
+              cause: TREASURY_REVERSAL_CAUSE_LABELS[request.cause],
+              reason: line.reason,
+              decidedAt: request.decidedAt,
+            };
+          })
+        );
       reportWindow.document.write(
-        buildTreasuryPaymentReportHtml(payload as TreasuryPaymentReportPayload)
+        buildTreasuryPaymentReportHtml({
+          ...(payload as TreasuryPaymentReportPayload),
+          reversalLines,
+        })
       );
       reportWindow.document.close();
       printWindowWhenReady(reportWindow);
@@ -2298,10 +2396,12 @@ function BatchDetailDialog({
             )}
             {status && (
               <Badge variant={statusVariant(status)}>
-                {getTreasuryBatchStatusLabel(
-                  status,
-                  batch?.approvalBypassed === true
-                )}
+                {fullyReversed
+                  ? "Anulado por reversión"
+                  : getTreasuryBatchStatusLabel(
+                      status,
+                      batch?.approvalBypassed === true
+                    )}
               </Badge>
             )}
           </DialogTitle>
@@ -2443,19 +2543,33 @@ function BatchDetailDialog({
               <Card>
                 <CardContent className="pt-5">
                   <div className="text-xs text-muted-foreground">
-                    Pagado por banco
+                    {hasReversedPayment ? "Pago vigente" : "Pagado por banco"}
                   </div>
                   <div className="text-lg font-semibold">
                     {formatMoney(
-                      detail.items.reduce(
-                        (sum: number, item: any) =>
-                          sum +
-                          roundTreasuryMoney(Number(item.bankPaidAmount ?? 0)),
-                        0
-                      ),
+                      detail.paymentTotals?.effectiveBankPaidTotal ??
+                        detail.items.reduce(
+                          (sum: number, item: any) =>
+                            sum +
+                            roundTreasuryMoney(
+                              Number(item.bankPaidAmount ?? 0)
+                            ),
+                          0
+                        ),
                       detail.batch.currency
                     )}
                   </div>
+                  {hasReversedPayment && (
+                    <p className="text-xs text-muted-foreground">
+                      Original{" "}
+                      {formatMoney(
+                        detail.paymentTotals?.originalBankPaidTotal ?? 0,
+                        detail.batch.currency
+                      )}
+                      {" · "}Revertido{" "}
+                      {formatMoney(reversedPaymentTotal, detail.batch.currency)}
+                    </p>
+                  )}
                 </CardContent>
               </Card>
               <Card>
@@ -2499,9 +2613,7 @@ function BatchDetailDialog({
               >
                 <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-muted">
                   <TableRow>
-                    {status === "pendiente_contabilizacion" && isAccountant && (
-                      <TableHead className="w-10" />
-                    )}
+                    {canAccountPaidItems && <TableHead className="w-10" />}
                     <TableHead className="min-w-48">Proveedor</TableHead>
                     <TableHead className="min-w-40">
                       {isAdvanceBatch
@@ -2564,23 +2676,22 @@ function BatchDetailDialog({
                 <TableBody>
                   {visibleDetailItems.map((item: any) => (
                     <TableRow key={item.id}>
-                      {status === "pendiente_contabilizacion" &&
-                        isAccountant && (
-                          <TableCell>
-                            <Checkbox
-                              disabled={item.status !== "pagada"}
-                              checked={accountItemIds.has(item.id)}
-                              onCheckedChange={checked =>
-                                setAccountItemIds(current => {
-                                  const next = new Set(current);
-                                  if (checked === true) next.add(item.id);
-                                  else next.delete(item.id);
-                                  return next;
-                                })
-                              }
-                            />
-                          </TableCell>
-                        )}
+                      {canAccountPaidItems && (
+                        <TableCell>
+                          <Checkbox
+                            disabled={item.status !== "pagada"}
+                            checked={accountItemIds.has(item.id)}
+                            onCheckedChange={checked =>
+                              setAccountItemIds(current => {
+                                const next = new Set(current);
+                                if (checked === true) next.add(item.id);
+                                else next.delete(item.id);
+                                return next;
+                              })
+                            }
+                          />
+                        </TableCell>
+                      )}
                       <TableCell className="whitespace-normal">
                         <div className="font-medium">{item.supplierName}</div>
                         {item.exclusionReason && (
@@ -2721,10 +2832,21 @@ function BatchDetailDialog({
                         ) : (
                           <div className="tabular-nums">
                             {formatMoney(
-                              item.bankPaidAmount ??
-                                item.approvedAmount ??
-                                item.requestedAmount,
+                              item.status === "revertida"
+                                ? 0
+                                : (item.bankPaidAmount ??
+                                    item.approvedAmount ??
+                                    item.requestedAmount),
                               detail.batch.currency
+                            )}
+                            {item.status === "revertida" && (
+                              <div className="text-xs text-muted-foreground">
+                                Original{" "}
+                                {formatMoney(
+                                  item.bankPaidAmount,
+                                  detail.batch.currency
+                                )}
+                              </div>
                             )}
                             {item.bankReference && (
                               <div className="text-xs text-muted-foreground">
@@ -2990,11 +3112,45 @@ function BatchDetailDialog({
               </div>
             )}
 
-            {detail.attachments.length > 0 && (
+            {isAdvanceBatch && (
+              <TreasuryPaymentReversals
+                key={detail.batch.id}
+                batchId={detail.batch.id}
+                batchNumber={detail.batch.batchNumber}
+                currency={detail.batch.currency}
+                canRequest={
+                  paymentReversalsEnabled &&
+                  isCentral &&
+                  (status === "rechazado_contabilidad" || status === "pendiente_contabilizacion") &&
+                  !batch?.accountedAt &&
+                  !detail.items.some((item: TreasuryReversalItem) =>
+                    item.status === "contabilizada" || item.status === "con_diferencia" || item.accountedAt
+                  )
+                }
+                canDecide={isAccountant}
+                approvalsEnabled={paymentReversalsEnabled}
+                currentUserId={user?.id}
+                items={detail.items}
+                requests={reversalRequests}
+                attachments={detail.attachments}
+                prepareAttachment={prepareBankAttachment}
+                formatDate={formatDate}
+                onChange={async () => {
+                  await Promise.all([
+                    refresh(),
+                    utils.treasury.eligibleAdvances.invalidate(),
+                    utils.purchaseOrderAdvances.list.invalidate(),
+                    utils.purchaseOrderAdvances.eligiblePurchaseOrders.invalidate(),
+                  ]);
+                }}
+              />
+            )}
+
+            {bankAttachments.length > 0 && (
               <div className="space-y-2">
                 <h3 className="font-semibold">Archivos bancarios</h3>
                 <div className="flex flex-wrap gap-2">
-                  {detail.attachments.map((attachment: any) => (
+                  {bankAttachments.map(attachment => (
                     <div
                       key={attachment.id}
                       className="flex items-center gap-1"
@@ -3012,14 +3168,17 @@ function BatchDetailDialog({
                       {attachment.category === "comprobante_pago" && (
                         <Badge
                           variant={
-                            attachment.id === currentPaymentAttachmentId
+                            attachment.id === currentPaymentAttachmentId &&
+                            !fullyReversed
                               ? "default"
                               : "outline"
                           }
                         >
-                          {attachment.id === currentPaymentAttachmentId
-                            ? "Vigente"
-                            : "Anterior"}
+                          {fullyReversed
+                            ? "Histórico"
+                            : attachment.id === currentPaymentAttachmentId
+                              ? "Vigente"
+                              : "Anterior"}
                         </Badge>
                       )}
                     </div>
@@ -3160,7 +3319,7 @@ function BatchDetailDialog({
                   <CheckCircle2 className="mr-2 h-4 w-4" /> Registrar
                 </Button>
               )}
-              {status === "pendiente_contabilizacion" && isAccountant && (
+              {canAccountPaidItems && (
                 <Button
                   onClick={() =>
                     accountMutation.mutate({
@@ -3199,7 +3358,9 @@ function BatchDetailDialog({
                 )}
                 {generatingPaymentReport
                   ? "Generando reporte..."
-                  : "Generar reporte de pago"}
+                  : fullyReversed
+                    ? "Imprimir constancia de reversión"
+                    : "Generar reporte de pago"}
               </Button>
               {canReopenClosedBatch && (
                 <Button
@@ -3515,6 +3676,7 @@ function BatchDetailDialog({
               type="button"
               disabled={
                 correctRejectedPaymentMutation.isPending ||
+                !canCorrectRejectedPayment ||
                 preparingCorrectionAttachment ||
                 correctionComment.trim().length < 5 ||
                 !correctedBankReference.trim() ||
@@ -3910,7 +4072,7 @@ export default function Tesoreria() {
       await downloadExcel(
         fileName,
         "Lotes de pago",
-        TREASURY_BATCH_EXPORT_COLUMNS,
+        TREASURY_BATCH_SUMMARY_EXPORT_COLUMNS,
         visibleBatches
       );
       toast.success(
@@ -4638,7 +4800,7 @@ export default function Tesoreria() {
                   </div>
                   <Button
                     variant="outline"
-                    className="hidden"
+                    className="max-w-full whitespace-normal"
                     onClick={() => void exportFilteredBatches()}
                     disabled={
                       exporting ||
@@ -4651,7 +4813,7 @@ export default function Tesoreria() {
                     ) : (
                       <FileSpreadsheet className="mr-2 h-4 w-4" />
                     )}
-                    Exportar Excel
+                    Exportar lotes a Excel
                   </Button>
                   <Button
                     className="max-w-full whitespace-normal"
@@ -4735,7 +4897,7 @@ export default function Tesoreria() {
                         <TableHead>Fecha de registro de pago</TableHead>
                         <TableHead>Proveedores</TableHead>
                         <TableHead>Solicitado</TableHead>
-                        <TableHead>Pagado</TableHead>
+                        <TableHead>Pago vigente</TableHead>
                         <TableHead />
                       </TableRow>
                     </TableHeader>
@@ -4818,11 +4980,19 @@ export default function Tesoreria() {
                             </TableCell>
                             <TableCell>
                               <Badge variant={statusVariant(row.batch.status)}>
-                                {getTreasuryBatchStatusLabel(
-                                  row.batch.status as TreasuryBatchStatus,
-                                  row.batch.approvalBypassed === true
-                                )}
+                                {row.paymentTotals?.reversedBankPaidTotal > 0 &&
+                                row.paymentTotals.effectiveBankPaidTotal === 0
+                                  ? "Anulado por reversión"
+                                  : getTreasuryBatchStatusLabel(
+                                      row.batch.status as TreasuryBatchStatus,
+                                      row.batch.approvalBypassed === true
+                                    )}
                               </Badge>
+                              {row.hasPendingPaymentReversal && (
+                                <div className="mt-1">
+                                  <Badge variant="outline">Reversión pendiente</Badge>
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell>
                               {formatDate(row.paymentRegistrationDate)}
@@ -4835,7 +5005,20 @@ export default function Tesoreria() {
                               )}
                             </TableCell>
                             <TableCell>
-                              {formatMoney(row.paidTotal, row.batch.currency)}
+                              {formatMoney(
+                                row.paymentTotals?.effectiveBankPaidTotal ??
+                                  row.paidTotal,
+                                row.batch.currency
+                              )}
+                              {row.paymentTotals?.reversedBankPaidTotal > 0 && (
+                                <div className="text-xs text-muted-foreground">
+                                  Revertido{" "}
+                                  {formatMoney(
+                                    row.paymentTotals.reversedBankPaidTotal,
+                                    row.batch.currency
+                                  )}
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell>
                               <Button

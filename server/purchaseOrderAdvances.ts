@@ -12,6 +12,7 @@ import {
   desc,
   eq,
   inArray,
+  isNotNull,
   isNull,
   ne,
   notExists,
@@ -19,6 +20,7 @@ import {
   sql,
 } from "drizzle-orm";
 import {
+  attachments,
   invoices,
   invoiceContractualAmortizations,
   advanceFinancialEvents,
@@ -30,7 +32,10 @@ import {
   purchaseOrders,
   receipts,
   suppliers,
+  treasuryPaymentEvents,
   treasuryPaymentItems,
+  treasuryPaymentReversalItems,
+  treasuryPaymentReversals,
   users,
 } from "../drizzle/schema";
 import {
@@ -93,6 +98,7 @@ export type PurchaseOrderAdvanceMoneySummary = {
   status:
     | "pendiente_pago"
     | "en_lote"
+    | "retenido_por_reversion"
     | "pagado_pendiente_contabilizacion"
     | "parcialmente_contabilizado"
     | "contabilizado"
@@ -124,6 +130,7 @@ export function buildPurchaseOrderAdvanceMoneySummary(input: {
   appliedAmount?: string | number | null;
   applicationMode?: AdvanceApplicationMode;
   cancelled?: boolean;
+  reversalHeld?: boolean;
 }): PurchaseOrderAdvanceMoneySummary {
   const requestedAmount = money(input.requestedAmount);
   const accountedAmount = money(input.accountedAmount);
@@ -131,12 +138,15 @@ export function buildPurchaseOrderAdvanceMoneySummary(input: {
   const bankPaidPendingAmount = money(input.bankPaidPendingAmount);
   const appliedAmount = Math.min(accountedAmount, money(input.appliedAmount));
   const availableToPayAmount = money(
-    Math.max(0, requestedAmount - accountedAmount - reservedAmount)
+    input.reversalHeld
+      ? 0
+      : Math.max(0, requestedAmount - accountedAmount - reservedAmount)
   );
   const unappliedAmount = money(Math.max(0, accountedAmount - appliedAmount));
 
   let status: PurchaseOrderAdvanceMoneySummary["status"];
   if (input.cancelled) status = "anulado";
+  else if (input.reversalHeld) status = "retenido_por_reversion";
   else if (bankPaidPendingAmount > 0)
     status = "pagado_pendiente_contabilizacion";
   else if (reservedAmount > 0) status = "en_lote";
@@ -296,6 +306,7 @@ async function getAdvanceFinancialMap(
         appliedAmount,
         applicationMode: advance.applicationMode,
         cancelled: Boolean(advance.cancelledAt),
+        reversalHeld: advance.reversalHoldId != null,
       })
     );
   }
@@ -384,7 +395,8 @@ export async function getPurchaseOrderAdvanceBlockingSet(
     const summary = financials.get(advance.id);
     if (
       summary &&
-      (summary.availableToPayAmount > 0 ||
+      (advance.reversalHoldId != null ||
+        summary.availableToPayAmount > 0 ||
         summary.reservedAmount > 0 ||
         summary.bankPaidPendingAmount > 0)
     ) {
@@ -595,6 +607,25 @@ export async function listEligiblePurchaseOrdersForAdvance(filters?: {
   );
 }
 
+async function hasRegisteredPurchaseOrderReceipt(
+  executor: DbExecutor,
+  purchaseOrderId: number
+) {
+  const [registeredReceipt] = await executor
+    .select({ id: receipts.id })
+    .from(receipts)
+    .where(
+      and(
+        eq(receipts.sourceType, "purchase_order"),
+        eq(receipts.sourceId, purchaseOrderId),
+        ne(receipts.status, "borrador"),
+        ne(receipts.status, "anulada")
+      )
+    )
+    .limit(1);
+  return Boolean(registeredReceipt);
+}
+
 export async function createPurchaseOrderAdvance(input: {
   actor: PurchaseOrderAdvanceActor;
   purchaseOrderId: number;
@@ -656,19 +687,7 @@ export async function createPurchaseOrderAdvance(input: {
       );
     }
 
-    const [registeredReceipt] = await tx
-      .select({ id: receipts.id })
-      .from(receipts)
-      .where(
-        and(
-          eq(receipts.sourceType, "purchase_order"),
-          eq(receipts.sourceId, purchaseOrder.id),
-          ne(receipts.status, "borrador"),
-          ne(receipts.status, "anulada")
-        )
-      )
-      .limit(1);
-    if (registeredReceipt) {
+    if (await hasRegisteredPurchaseOrderReceipt(tx, purchaseOrder.id)) {
       throw new PurchaseOrderAdvanceRuleError(
         "No se pueden crear nuevos anticipos después de registrar la primera recepción."
       );
@@ -924,6 +943,16 @@ export async function getPurchaseOrderAdvanceSnapshots(
   if (rows.length !== uniqueIds.length) {
     throw new PurchaseOrderAdvanceRuleError("Uno o más anticipos no existen.");
   }
+  if (
+    rows.some(
+      (row: { advance: typeof purchaseOrderAdvances.$inferSelect }) =>
+        row.advance.reversalHoldId != null
+    )
+  ) {
+    throw new PurchaseOrderAdvanceRuleError(
+      "El anticipo está retenido por una reversión bancaria y requiere una liberación autorizada antes de volver a pagarse."
+    );
+  }
   const financials = await getAdvanceFinancialMap(
     executor,
     uniqueIds,
@@ -933,6 +962,175 @@ export async function getPurchaseOrderAdvanceSnapshots(
     ...row,
     money: financials.get(row.advance.id)!,
   }));
+}
+
+export async function releasePurchaseOrderAdvanceReversalHold(input: {
+  advanceId: number;
+  reversalId: number;
+  actor: PurchaseOrderAdvanceActor;
+  reason: string;
+  evidenceNote: string;
+}) {
+  const reason = input.reason.trim();
+  const evidenceNote = input.evidenceNote.trim();
+  if (
+    reason.length < 5 ||
+    reason.length > 2000 ||
+    evidenceNote.length < 5 ||
+    evidenceNote.length > 2000
+  ) {
+    throw new PurchaseOrderAdvanceRuleError(
+      "Ingrese un motivo y una justificación del respaldo de 5 a 2.000 caracteres cada uno."
+    );
+  }
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [source] = await tx
+      .select({ orderId: purchaseOrderAdvances.purchaseOrderId })
+      .from(purchaseOrderAdvances)
+      .where(eq(purchaseOrderAdvances.id, input.advanceId));
+    if (!source) {
+      throw new PurchaseOrderAdvanceRuleError("Anticipo no encontrado.");
+    }
+    await lockAdvanceOrder(tx, source.orderId);
+
+    const [target] = await tx
+      .select({ advance: purchaseOrderAdvances, order: purchaseOrders })
+      .from(purchaseOrderAdvances)
+      .innerJoin(
+        purchaseOrders,
+        eq(purchaseOrders.id, purchaseOrderAdvances.purchaseOrderId)
+      )
+      .where(eq(purchaseOrderAdvances.id, input.advanceId));
+    if (!target || target.advance.cancelledAt) {
+      throw new PurchaseOrderAdvanceRuleError(
+        "Solo se puede liberar la retención de un anticipo activo."
+      );
+    }
+    const { advance, order } = target;
+    if (advance.reversalHoldId !== input.reversalId) {
+      throw new PurchaseOrderAdvanceRuleError(
+        "La retención del anticipo cambió. Actualice e intente nuevamente."
+      );
+    }
+
+    if (
+      !["emitida", "enviada"].includes(order.status) ||
+      !allowsPurchaseOrderAdvance(order.paymentMethod) ||
+      order.projectId !== advance.projectId ||
+      order.supplierId !== advance.supplierId ||
+      order.currency !== advance.currency
+    ) {
+      throw new PurchaseOrderAdvanceRuleError(
+        "La orden de compra ya no reúne las condiciones para volver a pagar el anticipo."
+      );
+    }
+    if (await hasRegisteredPurchaseOrderReceipt(tx, order.id)) {
+      throw new PurchaseOrderAdvanceRuleError(
+        "La orden de compra ya tiene una recepción registrada."
+      );
+    }
+
+    const [proof] = await tx
+      .select({
+        batchId: treasuryPaymentReversals.batchId,
+        itemId: treasuryPaymentReversalItems.paymentItemId,
+        evidenceAttachmentId: treasuryPaymentReversals.evidenceAttachmentId,
+      })
+      .from(treasuryPaymentReversals)
+      .innerJoin(
+        treasuryPaymentReversalItems,
+        eq(treasuryPaymentReversalItems.reversalId, treasuryPaymentReversals.id)
+      )
+      .innerJoin(
+        treasuryPaymentItems,
+        and(
+          eq(
+            treasuryPaymentItems.id,
+            treasuryPaymentReversalItems.paymentItemId
+          ),
+          eq(treasuryPaymentItems.batchId, treasuryPaymentReversals.batchId)
+        )
+      )
+      .innerJoin(
+        attachments,
+        eq(attachments.id, treasuryPaymentReversals.evidenceAttachmentId)
+      )
+      .where(
+        and(
+          eq(treasuryPaymentReversals.id, input.reversalId),
+          eq(treasuryPaymentReversals.status, "approved"),
+          isNotNull(treasuryPaymentReversalItems.appliedAt),
+          eq(treasuryPaymentItems.sourceType, "purchase_order_advance"),
+          eq(treasuryPaymentItems.purchaseOrderAdvanceId, advance.id),
+          eq(treasuryPaymentItems.status, "revertida"),
+          eq(attachments.entityType, "treasury_payment_batch"),
+          eq(attachments.entityId, treasuryPaymentReversals.batchId),
+          eq(attachments.category, "comprobante_reversion_pago")
+        )
+      )
+      .limit(1);
+    if (!proof) {
+      throw new PurchaseOrderAdvanceRuleError(
+        "El anticipo no tiene un reverso aplicado con respaldo bancario válido."
+      );
+    }
+
+    const financials = await getAdvanceFinancialMap(tx, [advance.id]);
+    const summary = financials.get(advance.id)!;
+    const [application] = await tx
+      .select({ id: purchaseOrderAdvanceApplications.id })
+      .from(purchaseOrderAdvanceApplications)
+      .where(
+        eq(purchaseOrderAdvanceApplications.purchaseOrderAdvanceId, advance.id)
+      )
+      .limit(1);
+    if (
+      summary.reservedAmount > 0 ||
+      summary.bankPaidPendingAmount > 0 ||
+      application
+    ) {
+      throw new PurchaseOrderAdvanceRuleError(
+        "El anticipo tiene reservas, pagos pendientes o aplicaciones que deben conciliarse antes de liberarlo."
+      );
+    }
+    if (summary.requestedAmount <= summary.accountedAmount) {
+      throw new PurchaseOrderAdvanceRuleError(
+        "El anticipo ya no tiene saldo disponible para un nuevo pago."
+      );
+    }
+
+    await tx
+      .update(purchaseOrderAdvances)
+      .set({ reversalHoldId: null, updatedAt: new Date() })
+      .where(eq(purchaseOrderAdvances.id, advance.id));
+    await tx.insert(treasuryPaymentEvents).values({
+      batchId: proof.batchId,
+      itemId: proof.itemId,
+      action: "liberar_retencion_anticipo_reversion",
+      previousStatus: "retenido_por_reversion",
+      newStatus:
+        summary.accountedAmount > 0
+          ? "parcialmente_contabilizado"
+          : "pendiente_pago",
+      actorUserId: input.actor.id,
+      actorName: input.actor.name?.trim() || `Usuario ${input.actor.id}`,
+      actorRole:
+        input.actor.role === "admin"
+          ? "admin"
+          : input.actor.buildreqRole || "sin_rol",
+      comment: reason,
+      metadata: {
+        advanceId: advance.id,
+        reversalId: input.reversalId,
+        evidenceAttachmentId: proof.evidenceAttachmentId,
+        evidenceNote,
+      },
+    });
+    return { advanceId: advance.id, reversalId: input.reversalId };
+  });
 }
 
 export async function cancelPurchaseOrderAdvance(input: {

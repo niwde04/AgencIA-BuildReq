@@ -145,6 +145,33 @@ describe("purchase order advance balances", () => {
     });
   });
 
+  it("blocks payment of an advance held by an applied reversal", () => {
+    const input = { requestedAmount: 14_156.99 };
+    expect(
+      buildPurchaseOrderAdvanceMoneySummary({ ...input, reversalHeld: true })
+    ).toMatchObject({
+      requestedAmount: 14_156.99,
+      availableToPayAmount: 0,
+      bankPaidPendingAmount: 0,
+      accountedAmount: 0,
+      status: "retenido_por_reversion",
+    });
+    expect(buildPurchaseOrderAdvanceMoneySummary(input)).toMatchObject({
+      availableToPayAmount: 14_156.99,
+      status: "pendiente_pago",
+    });
+  });
+
+  it("shows cancellation as the final status of an advance with a reversal hold", () => {
+    expect(
+      buildPurchaseOrderAdvanceMoneySummary({
+        requestedAmount: 200,
+        reversalHeld: true,
+        cancelled: true,
+      })
+    ).toMatchObject({ availableToPayAmount: 0, status: "anulado" });
+  });
+
   it("never applies more than the accounted amount", () => {
     expect(
       buildPurchaseOrderAdvanceMoneySummary({

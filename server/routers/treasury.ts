@@ -416,6 +416,7 @@ function rethrowTreasuryError(error: unknown): never {
 export const treasuryRouter = router({
   settings: protectedProcedure.query(async ({ ctx }) => ({
     ...(await treasury.getTreasurySettings()),
+    paymentReversalsEnabled: treasury.treasuryPaymentReversalsEnabled(),
     canAccess: await canAccessTreasury(ctx.user),
     isApprover: ctx.user.buildreqRole === "financiero",
     permissions: {
@@ -1247,6 +1248,72 @@ export const treasuryRouter = router({
           bankReference: input.bankReference,
           attachment: input.attachment,
           comment: input.comment,
+        });
+      } catch (error) {
+        rethrowTreasuryError(error);
+      }
+    }),
+
+
+  submitPaymentReversal: protectedProcedure
+    .input(
+      z.object({
+        batchId: z.number().int().positive(),
+        clientRequestId: z.string().uuid(),
+        cause: z.enum(["no_disbursement", "bank_return"]),
+        items: z
+          .array(
+            z.object({
+              itemId: z.number().int().positive(),
+              reason: z.string().trim().min(5).max(2000),
+            })
+          )
+          .min(1)
+          .max(500),
+        attachment: bankResponseAttachmentSchema,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      if (!isCentral(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Solo Administración Central puede solicitar la reversión.",
+        });
+      }
+      await assertBatchAccess(ctx.user, input.batchId);
+      try {
+        return await treasury.submitTreasuryPaymentReversal({
+          ...input,
+          actor: ctx.user,
+        });
+      } catch (error) {
+        rethrowTreasuryError(error);
+      }
+    }),
+
+  decidePaymentReversal: protectedProcedure
+    .input(
+      z.object({
+        batchId: z.number().int().positive(),
+        reversalId: z.number().int().positive(),
+        decision: z.enum(["approve", "reject"]),
+        comment: z.string().trim().max(2000).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      if (!isAccountant(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Solo Contabilidad puede decidir la reversión.",
+        });
+      }
+      await assertBatchAccess(ctx.user, input.batchId);
+      try {
+        return await treasury.decideTreasuryPaymentReversal({
+          ...input,
+          actor: ctx.user,
         });
       } catch (error) {
         rethrowTreasuryError(error);

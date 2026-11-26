@@ -5,7 +5,7 @@ describe("purchase order advances migration", () => {
   const migration = readFileSync(
     new URL("../drizzle/0126_purchase_order_advances.sql", import.meta.url),
     "utf8"
-  );
+  ).replace(/\r\n/g, "\n");
 
   it("creates advances and FIFO application records", () => {
     expect(migration).toContain(

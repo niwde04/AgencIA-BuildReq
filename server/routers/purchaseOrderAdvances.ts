@@ -19,6 +19,10 @@ function canManageAdvances(user: User) {
   );
 }
 
+function canReleaseReversalHold(user: User) {
+  return user.role === "admin" || user.buildreqRole === "contable";
+}
+
 function parseDate(value: string) {
   const date = new Date(`${value}T00:00:00.000Z`);
   if (Number.isNaN(date.getTime())) {
@@ -205,6 +209,37 @@ export const purchaseOrderAdvancesRouter = router({
           amortizationMode: input.amortizationMode,
           amortizationValue: input.amortizationValue,
           amortizationBase: input.amortizationBase,
+        });
+      } catch (error) {
+        rethrowAdvanceError(error);
+      }
+    }),
+
+  releaseReversalHold: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        reversalId: z.number().int().positive(),
+        reason: z.string().trim().min(5).max(2000),
+        evidenceNote: z.string().trim().min(5).max(2000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canReleaseReversalHold(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo Contabilidad o un administrador pueden liberar un anticipo retenido por reversión.",
+        });
+      }
+      await assertAdvanceAccess(ctx.user, input.id);
+      try {
+        return await advances.releasePurchaseOrderAdvanceReversalHold({
+          advanceId: input.id,
+          reversalId: input.reversalId,
+          actor: ctx.user,
+          reason: input.reason,
+          evidenceNote: input.evidenceNote,
         });
       } catch (error) {
         rethrowAdvanceError(error);

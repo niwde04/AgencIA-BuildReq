@@ -146,6 +146,7 @@ export const TREASURY_ITEM_STATUS_CODES = [
   "rechazada_banco",
   "con_diferencia",
   "contabilizada",
+  "revertida",
 ] as const;
 
 export type TreasuryItemStatus = (typeof TREASURY_ITEM_STATUS_CODES)[number];
@@ -160,6 +161,7 @@ export const TREASURY_ITEM_STATUS_LABELS: Readonly<
   rechazada_banco: "Rechazada por el banco",
   con_diferencia: "Con diferencia",
   contabilizada: "Contabilizada",
+  revertida: "Pago revertido",
 };
 
 export const TREASURY_PAYMENT_STATUS_CODES = [

@@ -2,7 +2,7 @@ import { getInvoiceAdvanceReconciliationMap, getInvoiceContractualAmortizationMa
 import { loadTreasuryPaymentCostMatrixEntries } from "./treasuryPaymentCostLevels";
 import { invoiceCommittedMoneySql, invoiceSettlementNetSql } from "./invoiceMoney";
 import { getInvoiceSettlementMap } from "./invoiceSettlement";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   and,
   asc,
@@ -26,6 +26,7 @@ import {
   invoices,
   notifications,
   projects,
+  purchaseOrderAdvanceApplications,
   purchaseOrderAdvances,
   purchaseOrders,
   sapCatalog,
@@ -34,8 +35,11 @@ import {
   treasuryPaymentBatches,
   treasuryPaymentEvents,
   treasuryPaymentItems,
+  treasuryPaymentReversals,
+  treasuryPaymentReversalItems,
   users,
 } from "../drizzle/schema";
+import { decimalToMinorUnits } from "../shared/money";
 import type { PurchaseCurrency } from "../shared/purchase-orders";
 import {
   buildTreasuryPaymentsReportRows,
@@ -255,6 +259,7 @@ const FINAL_ITEM_STATUSES = new Set<TreasuryItemStatus>([
   "excluida",
   "rechazada_banco",
   "contabilizada",
+  "revertida",
 ]);
 
 const REOPENABLE_CLOSED_ITEM_STATUSES = new Set<TreasuryItemStatus>([
@@ -448,11 +453,39 @@ export function resolveTreasuryPaymentSignatures(
   };
 }
 
+export function getTreasuryPaymentTotals(
+  items: ReadonlyArray<{
+    status: string;
+    sourceType?: string;
+    bankPaidAmount?: string | number | null;
+  }>
+) {
+  let originalCents = 0;
+  let reversedCents = 0;
+  for (const item of items) {
+    if (
+      item.status === "excluida" ||
+      (item.status === "rechazada_banco" &&
+        item.sourceType === "purchase_order_advance")
+    ) continue;
+    const cents = decimalToMinorUnits(item.bankPaidAmount ?? 0);
+    originalCents += cents;
+    if (item.status === "revertida") reversedCents += cents;
+  }
+  return {
+    originalBankPaidTotal: originalCents / 100,
+    reversedBankPaidTotal: reversedCents / 100,
+    effectiveBankPaidTotal: (originalCents - reversedCents) / 100,
+  };
+}
+
 export function resolveTreasuryPaymentReportAmount(item: {
+  status?: string;
   requestedAmount?: string | number | null;
   approvedAmount?: string | number | null;
   bankPaidAmount?: string | number | null;
 }) {
+  if (item.status === "revertida") return 0;
   const value =
     item.bankPaidAmount ?? item.approvedAmount ?? item.requestedAmount ?? 0;
   const amount = Number(value);
@@ -1427,9 +1460,25 @@ export async function listTreasuryBatches(filters?: {
         accessibleBatchRows.map(row => row.batch.id)
       )
     );
+  const advanceBatchIds = accessibleBatchRows
+    .filter(row => row.batch.paymentKind === "purchase_order_advance")
+    .map(row => row.batch.id);
+  const pendingReversals = advanceBatchIds.length
+    ? await db
+        .select({ batchId: treasuryPaymentReversals.batchId })
+        .from(treasuryPaymentReversals)
+        .where(
+          and(
+            inArray(treasuryPaymentReversals.batchId, advanceBatchIds),
+            eq(treasuryPaymentReversals.status, "pending")
+          )
+        )
+    : [];
+  const pendingReversalBatchIds = new Set(pendingReversals.map(row => row.batchId));
   return accessibleBatchRows.map(row => {
     const batchItems = items.filter(item => item.batchId === row.batch.id);
     const included = batchItems.filter(item => item.status !== "excluida");
+    const paymentTotals = getTreasuryPaymentTotals(included);
     const invoiceItems = included.filter(item => item.sourceType === "invoice");
     return {
       ...row,
@@ -1469,13 +1518,9 @@ export async function listTreasuryBatches(filters?: {
           0
         )
       ),
-      paidTotal: roundTreasuryMoney(
-        included.reduce(
-          (sum, item) =>
-            sum + roundTreasuryMoney(Number(item.bankPaidAmount ?? 0)),
-          0
-        )
-      ),
+      paymentTotals,
+      hasPendingPaymentReversal: pendingReversalBatchIds.has(row.batch.id),
+      paidTotal: paymentTotals.effectiveBankPaidTotal,
       sourceBatchNumbers: sourceBatches
         .filter(source => source.consolidatedIntoBatchId === row.batch.id)
         .map(source => source.batchNumber),
@@ -1734,6 +1779,14 @@ export async function getTreasuryBatchById(batchId: number) {
     .where(eq(treasuryPaymentBatches.id, batchId))
     .limit(1);
   if (!row) return undefined;
+  const reversalSnapshot = row.batch.paymentKind === "purchase_order_advance"
+    ? await db.transaction(async tx => {
+        const batch = await readBatch(tx, batchId);
+        const items: TreasuryPaymentItem[] = await readBatchItems(tx, batchId);
+        const requests = await listTreasuryPaymentReversals(tx, batchId);
+        return { batch, items, requests };
+      }, { isolationLevel: "repeatable read", accessMode: "read only" })
+    : null;
   const [
     items,
     events,
@@ -1743,7 +1796,7 @@ export async function getTreasuryBatchById(batchId: number) {
     invoiceDocumentAdjustmentRows,
     advanceFinancialRows,
   ] = await Promise.all([
-    readBatchItems(db, batchId),
+    reversalSnapshot?.items ?? readBatchItems(db, batchId),
     db
       .select()
       .from(treasuryPaymentEvents)
@@ -1814,6 +1867,8 @@ export async function getTreasuryBatchById(batchId: number) {
       .select({
         purchaseOrderAdvanceId: purchaseOrderAdvances.id,
         purchaseOrderId: purchaseOrders.id,
+        reversalHoldId: purchaseOrderAdvances.reversalHoldId,
+        advanceCancelledAt: purchaseOrderAdvances.cancelledAt,
         orderNumber: purchaseOrders.orderNumber,
         invoiceProjectId: projects.id,
         invoiceProjectCode: projects.code,
@@ -1925,7 +1980,10 @@ export async function getTreasuryBatchById(batchId: number) {
   );
   return {
     ...row,
+    batch: (reversalSnapshot?.batch ?? row.batch) as typeof row.batch,
     items: detailedItems,
+    paymentTotals: getTreasuryPaymentTotals(detailedItems),
+    reversalRequests: reversalSnapshot?.requests ?? [],
     events,
     attachments: signedAttachments,
     sourceBatches,
@@ -1945,7 +2003,7 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
       !["excluida", "rechazada_banco"].includes(item.status) &&
       resolveTreasuryPaymentReportAmount(item) > 0
   );
-  if (!reportItems.length) {
+  if (!reportItems.length && detail.paymentTotals.reversedBankPaidTotal === 0) {
     throw new TreasuryRuleError(
       "El lote no tiene facturas con monto disponible para reportar."
     );
@@ -2017,6 +2075,8 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
   );
   return {
     generatedAt: new Date(),
+    paymentTotals: detail.paymentTotals,
+    reversalRequests: detail.reversalRequests,
     batch: {
       id: detail.batch.id,
       batchNumber: detail.batch.batchNumber,
@@ -2025,8 +2085,10 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
       paymentKind: detail.batch.paymentKind,
       requestedPaymentDate: detail.batch.requestedPaymentDate,
       notes: detail.batch.notes,
-      paymentStatusLabel: hasRegisteredPayment
-        ? "REGISTRADO"
+      paymentStatusLabel: detail.paymentTotals.reversedBankPaidTotal > 0 && detail.batch.status === "anulado"
+        ? "ANULADO POR REVERSIÓN"
+        : hasRegisteredPayment
+          ? "REGISTRADO"
         : getTreasuryBatchStatusLabel(
             detail.batch.status,
             detail.batch.approvalBypassed === true
@@ -3671,7 +3733,7 @@ async function applyTreasuryBankRows(input: {
   eventMetadata?: Record<string, unknown>;
 }) {
   const result = await input.db.transaction(async tx => {
-    const batch = await readBatch(tx, input.batchId);
+    const batch = await lockTreasuryAdvanceBatch(tx, input.batchId);
     const items = await readBatchItems(tx, input.batchId);
     const lockedInvoiceIds=await lockTreasuryInvoiceBalances(tx,items);
     const { matchedRows, hasDifferences, hasPaidLines } = matchTreasuryBankRows(
@@ -3847,7 +3909,7 @@ export async function resolveTreasuryDifference(input: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const result = await db.transaction(async tx => {
-    const batch = await readBatch(tx, input.batchId);
+    const batch = await lockTreasuryAdvanceBatch(tx, input.batchId);
     if (batch.status !== "conciliacion") {
       throw new TreasuryRuleError("El lote no tiene diferencias pendientes.");
     }
@@ -3944,7 +4006,8 @@ export async function accountTreasuryItems(input: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   return db.transaction(async tx => {
-    const batch = await readBatch(tx, input.batchId);
+    const batch = await lockTreasuryAdvanceBatch(tx, input.batchId);
+    await assertNoPendingTreasuryReversal(tx, batch);
     if (batch.status !== "pendiente_contabilizacion") {
       throw new TreasuryRuleError(
         "El lote no está pendiente de contabilización."
@@ -3970,11 +4033,6 @@ export async function accountTreasuryItems(input: {
       throw new TreasuryRuleError(
         "Solo se pueden contabilizar líneas pagadas por el banco."
       );
-    }
-    const advanceIds = items.filter((i: any) => i.sourceType === "purchase_order_advance").map((i: any) => i.purchaseOrderAdvanceId).filter(Boolean);
-    if (advanceIds.length) {
-      const orders = await tx.select({ purchaseOrderId: purchaseOrderAdvances.purchaseOrderId }).from(purchaseOrderAdvances).where(inArray(purchaseOrderAdvances.id, advanceIds));
-      for (const orderId of Array.from(new Set(orders.map(r => r.purchaseOrderId))).sort((a,b) => a-b)) await lockAdvanceOrder(tx, orderId);
     }
     const lockedInvoiceIds=await lockTreasuryInvoiceBalances(tx,items);
     const now = new Date();
@@ -4184,7 +4242,8 @@ export async function rejectTreasuryPaymentForCorrection(input: {
   if (!db) throw new Error("DB not available");
   const comment = input.comment.trim();
   const result = await db.transaction(async tx => {
-    const batch = await readBatch(tx, input.batchId);
+    const batch = await lockTreasuryAdvanceBatch(tx, input.batchId);
+    await assertNoPendingTreasuryReversal(tx, batch);
     const items = await readBatchItems(tx, input.batchId);
     assertTreasuryPaymentCanBeRejectedForCorrection(
       batch.status,
@@ -4254,7 +4313,7 @@ export async function correctTreasuryPayment(input: {
   const currentBankReferences = preliminaryItems
     .filter((item: any) => item.status === "pagada")
     .map((item: any) => String(item.bankReference ?? ""));
-  const correction = validateTreasuryAccountingCorrection({
+  validateTreasuryAccountingCorrection({
     reason: rejectionReason,
     currentBankReferences,
     bankReference: input.bankReference,
@@ -4291,7 +4350,8 @@ export async function correctTreasuryPayment(input: {
 
   try {
     const result = await db.transaction(async tx => {
-      const batch = await readBatch(tx, input.batchId);
+      const batch = await lockTreasuryAdvanceBatch(tx, input.batchId);
+      await assertNoPendingTreasuryReversal(tx, batch);
       if (batch.status !== "rechazado_contabilidad") {
         throw new TreasuryRuleError(
           "El lote cambió de estado. Actualice e intente nuevamente."
@@ -4314,6 +4374,15 @@ export async function correctTreasuryPayment(input: {
           "El motivo del rechazo cambió. Actualice e intente nuevamente."
         );
       }
+      const latestBankReferences = items
+        .filter((item: TreasuryPaymentItem) => item.status === "pagada")
+        .map((item: TreasuryPaymentItem) => item.bankReference ?? "");
+      const correction = validateTreasuryAccountingCorrection({
+        reason: currentReason,
+        currentBankReferences: latestBankReferences,
+        bankReference: input.bankReference,
+        hasAttachment: Boolean(stored),
+      });
       if (correction.bankReference) {
         await tx
           .update(treasuryPaymentItems)
@@ -4363,7 +4432,7 @@ export async function correctTreasuryPayment(input: {
           reasonCode: rejectionReason,
           correctedFields,
           previousBankReferences: Array.from(
-            new Set(currentBankReferences.filter(Boolean))
+            new Set(latestBankReferences.filter(Boolean))
           ),
           bankReference: correction.bankReference,
           previousAttachmentId: previousPaymentAttachments[0]?.id ?? null,
@@ -4379,7 +4448,7 @@ export async function correctTreasuryPayment(input: {
       title: "Pago corregido",
       message: `El pago ${result.batchNumber} fue corregido y volvió a quedar pendiente de contabilización.`,
       batchId: input.batchId,
-    });
+    }).catch(error => console.error("No se pudo notificar la corrección de pago", { batchId: input.batchId, error: error instanceof Error ? error.name : "Error" }));
     return result;
   } catch (error) {
     if (stored) {
@@ -4393,6 +4462,601 @@ export async function correctTreasuryPayment(input: {
   }
 }
 
+
+type TreasuryDb = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+type TreasuryTransaction = Parameters<
+  Parameters<TreasuryDb["transaction"]>[0]
+>[0];
+type TreasuryReversal = typeof treasuryPaymentReversals.$inferSelect;
+type TreasuryPaymentItem = typeof treasuryPaymentItems.$inferSelect;
+
+export function treasuryPaymentReversalsEnabled() {
+  return process.env.TREASURY_PAYMENT_REVERSALS_ENABLED === "true";
+}
+
+async function lockTreasuryAdvanceBatch(
+  tx: TreasuryTransaction,
+  batchId: number
+) {
+  const preliminary = await readBatch(tx, batchId);
+  if (preliminary.paymentKind !== "purchase_order_advance") return preliminary;
+
+  const readOrderIds = async () => {
+    const linkedOrders = await tx
+      .selectDistinct({ id: purchaseOrderAdvances.purchaseOrderId })
+      .from(treasuryPaymentItems)
+      .innerJoin(
+        purchaseOrderAdvances,
+        eq(
+          treasuryPaymentItems.purchaseOrderAdvanceId,
+          purchaseOrderAdvances.id
+        )
+      )
+      .where(eq(treasuryPaymentItems.batchId, batchId))
+      .orderBy(asc(purchaseOrderAdvances.purchaseOrderId));
+    return linkedOrders.map(row => row.id);
+  };
+  const orderIds = await readOrderIds();
+  for (const orderId of orderIds) await lockAdvanceOrder(tx, orderId);
+  await tx
+    .select({ id: treasuryPaymentBatches.id })
+    .from(treasuryPaymentBatches)
+    .where(eq(treasuryPaymentBatches.id, batchId))
+    .for("update");
+  await tx
+    .select({ id: treasuryPaymentItems.id })
+    .from(treasuryPaymentItems)
+    .where(eq(treasuryPaymentItems.batchId, batchId))
+    .orderBy(asc(treasuryPaymentItems.id))
+    .for("update");
+
+  if ((await readOrderIds()).join(",") !== orderIds.join(",")) {
+    throw new TreasuryRuleError(
+      "Las órdenes del lote cambiaron. Actualice e intente nuevamente."
+    );
+  }
+  return readBatch(tx, batchId);
+}
+
+async function assertNoPendingTreasuryReversal(
+  tx: TreasuryTransaction,
+  batch: { id: number; paymentKind: TreasuryPaymentKind }
+) {
+  if (batch.paymentKind !== "purchase_order_advance") return;
+  const [pending] = await tx
+    .select({ id: treasuryPaymentReversals.id })
+    .from(treasuryPaymentReversals)
+    .where(
+      and(
+        eq(treasuryPaymentReversals.batchId, batch.id),
+        eq(treasuryPaymentReversals.status, "pending")
+      )
+    )
+    .limit(1);
+  if (pending) {
+    throw new TreasuryRuleError(
+      "Resuelva la solicitud de reversión pendiente antes de continuar."
+    );
+  }
+}
+
+function treasuryReversalSummary(row: TreasuryReversal) {
+  return {
+    id: row.id,
+    batchId: row.batchId,
+    status: row.status,
+    cause: row.cause,
+    amountCents: row.amountCents,
+    requestedById: row.requestedById,
+    decidedById: row.decidedById,
+    decisionComment: row.decisionComment,
+    createdAt: row.createdAt,
+    decidedAt: row.decidedAt,
+    evidenceAttachmentId: row.evidenceAttachmentId,
+  };
+}
+
+async function listTreasuryPaymentReversals(
+  db: TreasuryDb | TreasuryTransaction,
+  batchId: number
+) {
+  const requests = await db
+    .select()
+    .from(treasuryPaymentReversals)
+    .where(eq(treasuryPaymentReversals.batchId, batchId))
+    .orderBy(desc(treasuryPaymentReversals.id));
+  if (!requests.length) return [];
+  const lines = await db
+    .select({
+      reversalId: treasuryPaymentReversalItems.reversalId,
+      paymentItemId: treasuryPaymentReversalItems.paymentItemId,
+      reason: treasuryPaymentReversalItems.reason,
+      amountCents: treasuryPaymentReversalItems.amountCents,
+    })
+    .from(treasuryPaymentReversalItems)
+    .where(
+      inArray(
+        treasuryPaymentReversalItems.reversalId,
+        requests.map(row => row.id)
+      )
+    )
+    .orderBy(asc(treasuryPaymentReversalItems.id));
+  const linesByRequest = new Map<number, typeof lines>();
+  for (const line of lines) {
+    const current = linesByRequest.get(line.reversalId) ?? [];
+    current.push(line);
+    linesByRequest.set(line.reversalId, current);
+  }
+  return requests.map(row => ({
+    ...treasuryReversalSummary(row),
+    items: linesByRequest.get(row.id) ?? [],
+  }));
+}
+
+function prepareTreasuryReversalEvidence(
+  attachment: TreasuryBankResponseAttachmentInput
+) {
+  const file = prepareTreasuryBankAttachment(attachment);
+  const header = file.buffer.subarray(0, 12);
+  const ext = file.fileName.toLowerCase().split(".").pop();
+  const hex = header.toString("hex");
+  const ascii = header.toString("ascii");
+  const valid =
+    (ext === "pdf" && ascii.startsWith("%PDF-")) ||
+    ((ext === "jpg" || ext === "jpeg") && hex.startsWith("ffd8ff")) ||
+    (ext === "png" && hex.startsWith("89504e470d0a1a0a")) ||
+    (ext === "webp" && ascii.startsWith("RIFF") && ascii.slice(8) === "WEBP") ||
+    (ext === "xls" && hex.startsWith("d0cf11e0a1b11ae1")) ||
+    (ext === "xlsx" && hex.startsWith("504b0304"));
+  if (!valid)
+    throw new TreasuryRuleError(
+      "El contenido del soporte no coincide con su tipo de archivo."
+    );
+  return file;
+}
+
+async function validateTreasuryReversalLines(
+  tx: TreasuryTransaction,
+  batch: {
+    id: number;
+    status: TreasuryBatchStatus;
+    paymentKind: TreasuryPaymentKind;
+    accountedAt: Date | null;
+  },
+  requested: Array<{ itemId: number; reason: string }>
+) {
+  const items: TreasuryPaymentItem[] = await readBatchItems(tx, batch.id);
+  if (
+    batch.paymentKind !== "purchase_order_advance" ||
+    !["pendiente_contabilizacion", "rechazado_contabilidad"].includes(
+      batch.status
+    ) ||
+    batch.accountedAt ||
+    items.some(
+      item =>
+        item.status === "contabilizada" ||
+        item.accountedAt ||
+        item.status === "con_diferencia"
+    )
+  ) {
+    throw new TreasuryRuleError(
+      "La reversión requiere un lote de anticipos conciliado y sin pagos contabilizados."
+    );
+  }
+  const indexed = new Map(items.map(item => [item.id, item]));
+  const payments = requested.map(({ itemId, reason }) => {
+    const item = indexed.get(itemId);
+    const amountCents = decimalToMinorUnits(item?.bankPaidAmount ?? 0);
+    if (
+      !item ||
+      item.sourceType !== "purchase_order_advance" ||
+      !item.purchaseOrderAdvanceId ||
+      item.status !== "pagada" ||
+      !item.activeReservation ||
+      amountCents <= 0 ||
+      !item.bankPaidDate
+    )
+      throw new TreasuryRuleError(
+        "Seleccione pagos vigentes de anticipos con registro bancario."
+      );
+    return {
+      item,
+      advanceId: item.purchaseOrderAdvanceId,
+      amountCents,
+      reason,
+    };
+  });
+  const advanceIds = payments.map(payment => payment.advanceId);
+  const advances = await tx
+    .select({
+      id: purchaseOrderAdvances.id,
+      cancelledAt: purchaseOrderAdvances.cancelledAt,
+      reversalHoldId: purchaseOrderAdvances.reversalHoldId,
+    })
+    .from(purchaseOrderAdvances)
+    .where(inArray(purchaseOrderAdvances.id, advanceIds));
+  const applications = await tx
+    .select({ id: purchaseOrderAdvanceApplications.id })
+    .from(purchaseOrderAdvanceApplications)
+    .where(
+      inArray(
+        purchaseOrderAdvanceApplications.purchaseOrderAdvanceId,
+        advanceIds
+      )
+    )
+    .limit(1);
+  if (
+    advances.length !== advanceIds.length ||
+    applications.length ||
+    advances.some(advance => advance.cancelledAt || advance.reversalHoldId)
+  ) {
+    throw new TreasuryRuleError(
+      "Hay anticipos anulados, retenidos o con aplicaciones registradas en la selección."
+    );
+  }
+  return { payments, items };
+}
+
+export async function submitTreasuryPaymentReversal(input: {
+  batchId: number;
+  clientRequestId: string;
+  cause: "no_disbursement" | "bank_return";
+  items: Array<{ itemId: number; reason: string }>;
+  attachment: TreasuryBankResponseAttachmentInput;
+  actor: TreasuryActor;
+}) {
+  if (
+    !(
+      input.actor.role === "admin" ||
+      input.actor.buildreqRole === "administracion_central"
+    )
+  ) {
+    throw new TreasuryRuleError(
+      "Solo Administración Central puede solicitar la reversión."
+    );
+  }
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const requested = input.items
+    .map(item => ({ ...item, reason: item.reason.trim() }))
+    .sort((left, right) => left.itemId - right.itemId);
+  if (
+    !requested.length ||
+    requested.length > 500 ||
+    new Set(requested.map(item => item.itemId)).size !== requested.length ||
+    requested.some(item => item.reason.length < 5 || item.reason.length > 2000)
+  ) {
+    throw new TreasuryRuleError(
+      "Seleccione pagos distintos e indique un motivo por cada uno."
+    );
+  }
+  const prepared = prepareTreasuryReversalEvidence(input.attachment);
+  const fingerprint = createHash("sha256")
+    .update(
+      JSON.stringify([
+        input.batchId,
+        input.actor.id,
+        input.cause,
+        requested,
+        prepared.fileName,
+        prepared.mimeType,
+      ])
+    )
+    .update(prepared.buffer)
+    .digest("hex");
+  const readExisting = async (executor: TreasuryDb | TreasuryTransaction) => {
+    const [existing] = await executor
+      .select()
+      .from(treasuryPaymentReversals)
+      .where(
+        eq(treasuryPaymentReversals.clientRequestId, input.clientRequestId)
+      )
+      .limit(1);
+    if (existing && existing.requestFingerprint !== fingerprint) {
+      throw new TreasuryRuleError(
+        "La solicitud ya existe con otros datos. Genere una solicitud nueva."
+      );
+    }
+    return existing;
+  };
+  const existing = await readExisting(db);
+  if (existing) return treasuryReversalSummary(existing);
+  if (!treasuryPaymentReversalsEnabled()) {
+    throw new TreasuryRuleError(
+      "Las solicitudes de reversión están deshabilitadas."
+    );
+  }
+
+  const stored = await storagePut(
+    "treasury/" + input.batchId + "/reversals/" + randomUUID(),
+    prepared.buffer,
+    prepared.mimeType
+  );
+  let discardEvidence = false;
+  try {
+    const result = await db.transaction(async tx => {
+      const batch = await lockTreasuryAdvanceBatch(tx, input.batchId);
+      const concurrent = await readExisting(tx);
+      if (concurrent) return { request: concurrent, created: false };
+      await assertNoPendingTreasuryReversal(tx, batch);
+      const { payments } = await validateTreasuryReversalLines(
+        tx,
+        batch,
+        requested
+      );
+      const amountCents = payments.reduce(
+        (total, payment) => total + payment.amountCents,
+        0
+      );
+      if (!Number.isSafeInteger(amountCents)) {
+        throw new TreasuryRuleError(
+          "El total de la reversión supera el rango admitido."
+        );
+      }
+      const [evidence] = await tx
+        .insert(attachments)
+        .values({
+          entityType: "treasury_payment_batch",
+          entityId: batch.id,
+          fileName: prepared.fileName,
+          fileKey: stored.key,
+          fileUrl: stored.url,
+          mimeType: prepared.mimeType,
+          fileSize: prepared.buffer.byteLength,
+          category: "comprobante_reversion_pago",
+          uploadedById: input.actor.id,
+        })
+        .returning({ id: attachments.id });
+      const [request] = await tx
+        .insert(treasuryPaymentReversals)
+        .values({
+          batchId: batch.id,
+          clientRequestId: input.clientRequestId,
+          requestFingerprint: fingerprint,
+          requestedById: input.actor.id,
+          evidenceAttachmentId: evidence.id,
+          cause: input.cause,
+          amountCents,
+        })
+        .returning();
+      await tx.insert(treasuryPaymentReversalItems).values(
+        payments.map(payment => ({
+          reversalId: request.id,
+          paymentItemId: payment.item.id,
+          reason: payment.reason,
+          amountCents: payment.amountCents,
+        }))
+      );
+      await insertEvent(tx, {
+        batchId: batch.id,
+        action: "solicitar_reversion_pago",
+        previousStatus: batch.status,
+        newStatus: batch.status,
+        actor: input.actor,
+        metadata: { reversalId: request.id, amountCents, cause: input.cause },
+      });
+      return { request, created: true };
+    });
+    discardEvidence = !result.created;
+    return treasuryReversalSummary(result.request);
+  } catch (error) {
+    // Keep the object if the result of COMMIT is unknown after a lost connection.
+    discardEvidence = error instanceof TreasuryRuleError;
+    throw error;
+  } finally {
+    if (discardEvidence) {
+      await storageDelete(stored.key).catch(error =>
+        console.error("No se pudo limpiar el soporte de reversión", {
+          batchId: input.batchId,
+          error: error instanceof Error ? error.name : "Error",
+        })
+      );
+    }
+  }
+}
+
+export async function decideTreasuryPaymentReversal(input: {
+  batchId: number;
+  reversalId: number;
+  decision: "approve" | "reject";
+  comment?: string;
+  actor: TreasuryActor;
+}) {
+  if (
+    !(input.actor.role === "admin" || input.actor.buildreqRole === "contable")
+  ) {
+    throw new TreasuryRuleError(
+      "Solo Contabilidad puede decidir la reversión."
+    );
+  }
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const status = input.decision === "approve" ? "approved" : "rejected";
+  const comment = input.comment?.trim() || null;
+  if (
+    (status === "rejected" && (!comment || comment.length < 5)) ||
+    (comment && comment.length > 2000)
+  ) {
+    throw new TreasuryRuleError("Indique el motivo del rechazo.");
+  }
+  return db.transaction(async tx => {
+    const batch = await lockTreasuryAdvanceBatch(tx, input.batchId);
+    const [request] = await tx
+      .select()
+      .from(treasuryPaymentReversals)
+      .where(
+        and(
+          eq(treasuryPaymentReversals.id, input.reversalId),
+          eq(treasuryPaymentReversals.batchId, input.batchId)
+        )
+      )
+      .for("update");
+    if (!request)
+      throw new TreasuryRuleError(
+        "La solicitud de reversión no pertenece al lote."
+      );
+    if (request.requestedById === input.actor.id) {
+      throw new TreasuryRuleError(
+        "La solicitud debe ser revisada por un usuario distinto al solicitante."
+      );
+    }
+    if (request.status !== "pending") {
+      if (
+        request.status === status &&
+        request.decidedById === input.actor.id &&
+        request.decisionComment === comment
+      ) {
+        return treasuryReversalSummary(request);
+      }
+      throw new TreasuryRuleError("La solicitud de reversión ya fue resuelta.");
+    }
+    const now = new Date();
+    let nextBatchStatus: TreasuryBatchStatus = batch.status;
+    if (status === "approved") {
+      if (!treasuryPaymentReversalsEnabled()) {
+        throw new TreasuryRuleError(
+          "La aprobación de reversiones está deshabilitada."
+        );
+      }
+      const savedLines = await tx
+        .select()
+        .from(treasuryPaymentReversalItems)
+        .where(eq(treasuryPaymentReversalItems.reversalId, request.id));
+      if (!savedLines.length)
+        throw new TreasuryRuleError("La solicitud no contiene pagos.");
+      const { payments, items } = await validateTreasuryReversalLines(
+        tx,
+        batch,
+        savedLines.map(line => ({
+          itemId: line.paymentItemId,
+          reason: line.reason,
+        }))
+      );
+      const [evidence] = await tx
+        .select({ id: attachments.id })
+        .from(attachments)
+        .where(
+          and(
+            eq(attachments.id, request.evidenceAttachmentId),
+            eq(attachments.entityId, batch.id),
+            eq(attachments.entityType, "treasury_payment_batch"),
+            eq(attachments.category, "comprobante_reversion_pago")
+          )
+        )
+        .limit(1);
+      const snapshots = new Map(
+        savedLines.map(line => [line.paymentItemId, line])
+      );
+      const selectedIds = payments.map(payment => payment.item.id);
+      if (
+        !evidence ||
+        payments.some(payment => {
+          const snapshot = snapshots.get(payment.item.id);
+          return (
+            !snapshot ||
+            snapshot.appliedAt ||
+            snapshot.amountCents !== payment.amountCents
+          );
+        }) ||
+        payments.reduce((total, payment) => total + payment.amountCents, 0) !==
+          request.amountCents
+      ) {
+        throw new TreasuryRuleError(
+          "El soporte o los importes de la solicitud ya no coinciden con el lote."
+        );
+      }
+
+      const reversed = await tx
+        .update(treasuryPaymentItems)
+        .set({ status: "revertida", activeReservation: false, updatedAt: now })
+        .where(
+          and(
+            inArray(treasuryPaymentItems.id, selectedIds),
+            eq(treasuryPaymentItems.status, "pagada")
+          )
+        )
+        .returning({ id: treasuryPaymentItems.id });
+      if (reversed.length !== selectedIds.length)
+        throw new TreasuryRuleError("Cambió el estado de uno de los pagos.");
+      await tx
+        .update(purchaseOrderAdvances)
+        .set({ reversalHoldId: request.id, updatedAt: now })
+        .where(
+          inArray(
+            purchaseOrderAdvances.id,
+            payments.map(payment => payment.advanceId)
+          )
+        );
+      await tx
+        .update(treasuryPaymentReversalItems)
+        .set({ appliedAt: now })
+        .where(eq(treasuryPaymentReversalItems.reversalId, request.id));
+      const ids = new Set(selectedIds);
+      if (!items.some(item => item.status === "pagada" && !ids.has(item.id))) {
+        nextBatchStatus = "anulado";
+      }
+      await tx
+        .update(treasuryPaymentBatches)
+        .set({
+          updatedAt: now,
+          ...(nextBatchStatus === "anulado"
+            ? {
+                status: "anulado" as const,
+                cancelledById: input.actor.id,
+                cancelledAt: now,
+                cancellationReason: "Anulado por reversión de pagos",
+              }
+            : {}),
+        })
+        .where(eq(treasuryPaymentBatches.id, batch.id));
+      for (const payment of payments) {
+        await insertEvent(tx, {
+          batchId: batch.id,
+          itemId: payment.item.id,
+          action: "revertir_pago_banco",
+          previousStatus: "pagada",
+          newStatus: "revertida",
+          actor: input.actor,
+          comment: payment.reason,
+          metadata: {
+            reversalId: request.id,
+            amountCents: payment.amountCents,
+          },
+        });
+      }
+    }
+    const [updated] = await tx
+      .update(treasuryPaymentReversals)
+      .set({
+        status,
+        decidedAt: now,
+        decidedById: input.actor.id,
+        decisionComment: comment,
+      })
+      .where(
+        and(
+          eq(treasuryPaymentReversals.id, request.id),
+          eq(treasuryPaymentReversals.status, "pending")
+        )
+      )
+      .returning();
+    if (!updated) throw new TreasuryRuleError("La solicitud cambió de estado.");
+    await insertEvent(tx, {
+      batchId: batch.id,
+      action:
+        status === "approved"
+          ? "aprobar_reversion_pago"
+          : "rechazar_reversion_pago",
+      previousStatus: batch.status,
+      newStatus: nextBatchStatus,
+      actor: input.actor,
+      comment,
+      metadata: { reversalId: request.id, amountCents: request.amountCents },
+    });
+    return treasuryReversalSummary(updated);
+  });
+}
+
 export async function reopenClosedTreasuryBatch(input: {
   batchId: number;
   actor: TreasuryActor;
@@ -4401,7 +5065,7 @@ export async function reopenClosedTreasuryBatch(input: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   return db.transaction(async tx => {
-    const batch = await readBatch(tx, input.batchId);
+    const batch = await lockTreasuryAdvanceBatch(tx, input.batchId);
     const items = await readBatchItems(tx, input.batchId);
     const lockedInvoiceIds=await lockTreasuryInvoiceBalances(tx,items);
     const targetStatus = getTreasuryReopenTargetStatus(
@@ -4471,7 +5135,7 @@ export async function cancelTreasuryBatch(input: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   return db.transaction(async tx => {
-    const batch = await readBatch(tx, input.batchId);
+    const batch = await lockTreasuryAdvanceBatch(tx, input.batchId);
     const items = await readBatchItems(tx, input.batchId);
     assertTreasuryBatchCanBeCancelled(batch.status, items);
     const now = new Date();

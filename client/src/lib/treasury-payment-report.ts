@@ -40,11 +40,27 @@ type TreasuryPaymentReportItem = {
 
 export type TreasuryPaymentReportPayload = {
   generatedAt: string | Date;
+  paymentTotals?: {
+    originalBankPaidTotal: number;
+    reversedBankPaidTotal: number;
+    effectiveBankPaidTotal: number;
+  };
+  reversalLines?: Array<{
+    documentNumber: string;
+    orderNumber?: string | null;
+    amount: number;
+    cause: string;
+    reason: string;
+    decidedAt: string | Date | null;
+  }>;
   batch: {
     batchNumber: string;
     currency: TreasuryPaymentReportCurrency;
     requestedPaymentDate: string | Date;
-    paymentKind?: "invoice" | "purchase_order_advance";
+    paymentKind?:
+      | "invoice"
+      | "purchase_order_advance"
+      | "quality_retention_release";
     paymentStatusLabel?: string | null;
     notes?: string | null;
   };
@@ -273,10 +289,7 @@ function integerToSpanishWords(value: number): string {
   return parts.join(" ");
 }
 
-function amountInWords(
-  value: number,
-  currency: TreasuryPaymentReportCurrency
-) {
+function amountInWords(value: number, currency: TreasuryPaymentReportCurrency) {
   const centsTotal = Math.max(0, Math.round(value * 100));
   const units = Math.floor(centsTotal / 100);
   const cents = centsTotal % 100;
@@ -375,9 +388,7 @@ export function buildTreasuryPaymentReportHtml(
     const retention = retentionBreakdown(line.invoice.retentions);
     const amounts: ReportAmounts = {
       totalInvoice: roundMoney(toNumber(line.invoice.total)),
-      advances: roundMoney(
-        toNumber(line.paymentItem.appliedAdvanceAmount)
-      ),
+      advances: roundMoney(toNumber(line.paymentItem.appliedAdvanceAmount)),
       previousPayments: roundMoney(
         toNumber(line.paymentItem.previousPaidAmount)
       ),
@@ -386,8 +397,7 @@ export function buildTreasuryPaymentReportHtml(
       otherRetentions: retention.otherRetentions,
       netPaid: roundMoney(
         toNumber(
-          line.paymentItem.reportAmount ??
-            line.paymentItem.bankPaidAmount
+          line.paymentItem.reportAmount ?? line.paymentItem.bankPaidAmount
         )
       ),
     };
@@ -441,12 +451,61 @@ export function buildTreasuryPaymentReportHtml(
       .bankPaidDate ?? payload.generatedAt;
   const currencyLabel = currency === "USD" ? "Dolares" : "Lempiras";
   const batchNotes = payload.batch.notes?.trim();
+  const paymentTotals = payload.paymentTotals;
+  const hasReversal = Boolean(
+    paymentTotals && paymentTotals.reversedBankPaidTotal > 0
+  );
+  const fullyReversed =
+    hasReversal && paymentTotals?.effectiveBankPaidTotal === 0;
+  const reportTitle = fullyReversed
+    ? "Constancia de reversión de pago"
+    : "Detalle de pago";
+  const reportHeading = fullyReversed
+    ? "CONSTANCIA DE REVERSIÓN DE PAGO"
+    : "DETALLE PAGO A PROVEEDORES";
+  const reversalRows = (payload.reversalLines ?? [])
+    .map(
+      line => `
+    <tr>
+      <td>${escapeHtml(line.documentNumber)}</td>
+      <td>${escapeHtml(line.orderNumber ?? "-")}</td>
+      <td>${escapeHtml(formatDate(line.decidedAt))}</td>
+      <td>${escapeHtml(line.cause)}</td>
+      <td>${escapeHtml(line.reason)}</td>
+      <td class="money">${escapeHtml(formatMoney(line.amount, currency))}</td>
+    </tr>
+  `
+    )
+    .join("");
+  const reversalSummary =
+    hasReversal && paymentTotals
+      ? `
+    <section class="reversal-summary" aria-label="Reversión de pago">
+      <div class="reversal-totals">
+        <span><strong>Pago original registrado</strong> ${escapeHtml(formatMoney(paymentTotals.originalBankPaidTotal, currency))}</span>
+        <span><strong>Pago revertido</strong> ${escapeHtml(formatMoney(paymentTotals.reversedBankPaidTotal, currency))}</span>
+        <span><strong>Pago vigente</strong> ${escapeHtml(formatMoney(paymentTotals.effectiveBankPaidTotal, currency))}</span>
+      </div>
+      ${
+        reversalRows
+          ? `
+        <table>
+          <thead>
+            <tr><th>Anticipo</th><th>Orden de compra</th><th>Aprobación</th><th>Causa</th><th>Motivo</th><th>Importe revertido</th></tr>
+          </thead>
+          <tbody>${reversalRows}</tbody>
+        </table>
+      `
+          : ""
+      }
+    </section>`
+      : "";
 
   return `<!doctype html>
 <html lang="es">
   <head>
     <meta charset="utf-8" />
-    <title>${escapeHtml(payload.batch.batchNumber)} - Detalle de pago</title>
+    <title>${escapeHtml(payload.batch.batchNumber)} - ${escapeHtml(reportTitle)}</title>
     <style>
       @page { size: letter landscape; margin: 9mm 7mm 10mm; }
       * { box-sizing: border-box; }
@@ -475,6 +534,9 @@ export function buildTreasuryPaymentReportHtml(
       .supplier-total td { border-top: 0.35pt solid #111; font-weight: 700; }
       .general-total td { border-top: 0.6pt solid #111; border-bottom: 0.6pt solid #111; font-weight: 700; }
       .amount-words { margin-top: 6px; font-size: 7px; }
+      .reversal-summary { margin: 10px 0; overflow-wrap: anywhere; }
+      .reversal-totals { display: flex; gap: 20px; margin-bottom: 8px; font-size: 8px; }
+      .reversal-totals strong { display: block; margin-bottom: 2px; }
       .signatures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 70px; margin: 48px auto 0; width: 76%; break-inside: avoid; page-break-inside: avoid; }
       .signature { border-top: 0.45pt solid #111; padding-top: 12px; text-align: center; font-size: 8px; }
       .batch-notes { margin-top: 22px; font-size: 7px; line-height: 1.4; white-space: pre-wrap; break-inside: avoid; page-break-inside: avoid; }
@@ -494,7 +556,7 @@ export function buildTreasuryPaymentReportHtml(
         <img class="logo" src="/logo_heh.png" alt="Hidalgo e Hidalgo Constructores" />
         <div class="heading">
           <div class="company">HIDALGO e HIDALGO HONDURAS SA DE CV</div>
-          <div class="title">DETALLE PAGO A PROVEEDORES</div>
+          <div class="title">${escapeHtml(reportHeading)}</div>
         </div>
       </header>
 
@@ -503,7 +565,12 @@ export function buildTreasuryPaymentReportHtml(
       </section>
       <div class="location">Oficina Central, Tegucigalpa, ${escapeHtml(formatLongDate(firstPaymentDate))}</div>
       <div class="values-label">Valores en ${escapeHtml(currencyLabel)}</div>
+      ${reversalSummary}
 
+      ${
+        fullyReversed
+          ? ""
+          : `
       <table>
         <colgroup>
           <col class="reason" />
@@ -549,7 +616,8 @@ export function buildTreasuryPaymentReportHtml(
         <div class="signature">Elaborado por.</div>
         <div class="signature">Revisado por.</div>
         <div class="signature">Aprobado por.</div>
-      </section>
+      </section>`
+      }
       ${batchNotes ? `<div class="batch-notes"><span class="batch-notes-label">Notas:</span> ${escapeHtml(batchNotes)}</div>` : ""}
     </main>
     <div class="footer">${escapeHtml(payload.batch.batchNumber)}</div>

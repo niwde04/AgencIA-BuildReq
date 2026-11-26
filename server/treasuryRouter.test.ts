@@ -989,3 +989,70 @@ describe("treasury bank workbook export", () => {
     expect(exportSpy).not.toHaveBeenCalled();
   });
 });
+
+
+describe("treasury reversal permissions", () => {
+  const submission = {
+    batchId: 80,
+    clientRequestId: "e749b594-babc-418b-91fc-669fe58caded",
+    cause: "no_disbursement" as const,
+    items: [
+      { itemId: 15, reason: "El banco confirma que no hubo desembolso." },
+    ],
+    attachment: {
+      fileName: "evidencia.pdf",
+      mimeType: "application/pdf",
+      base64: "JVBERi0xLjQK",
+    },
+  };
+
+  it("limits submission to Administración Central or administrators", async () => {
+    mockDisabledApprovalSettings();
+    const submit = vi.spyOn(treasury, "submitTreasuryPaymentReversal");
+    const accountant = appRouter.createCaller(
+      createTreasuryContext("contable")
+    );
+    await expect(
+      accountant.treasury.submitPaymentReversal(submission)
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("limits decisions to Contabilidad or administrators", async () => {
+    mockDisabledApprovalSettings();
+    const decide = vi.spyOn(treasury, "decideTreasuryPaymentReversal");
+    const central = appRouter.createCaller(
+      createTreasuryContext("administracion_central")
+    );
+    await expect(
+      central.treasury.decidePaymentReversal({
+        batchId: 80,
+        reversalId: 2,
+        decision: "approve",
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it("uses the authenticated request actor after validating access to the batch", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "getTreasuryBatchById").mockResolvedValue({
+      batch: { id: 80, projectId: 1 },
+      projectIds: [1],
+    } as any);
+    const submit = vi
+      .spyOn(treasury, "submitTreasuryPaymentReversal")
+      .mockResolvedValue({ id: 2, status: "pending" } as any);
+    const central = appRouter.createCaller(
+      createTreasuryContext("administracion_central")
+    );
+    await central.treasury.submitPaymentReversal(submission);
+    expect(submit).toHaveBeenCalledWith({
+      ...submission,
+      actor: expect.objectContaining({
+        id: 21,
+        buildreqRole: "administracion_central",
+      }),
+    });
+  });
+});

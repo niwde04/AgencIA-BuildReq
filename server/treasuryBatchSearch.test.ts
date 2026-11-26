@@ -60,6 +60,7 @@ function mockBatchDatabase() {
       item(757, "invoice", "OTHER-PROJECT-REF"),
     ],
     [],
+    [{ batchId: 755 }],
   ];
   const queries: any[] = [];
   const select = vi.fn(() => {
@@ -90,6 +91,11 @@ describe("treasury batch bank reference metadata", () => {
       ["FT263033PW74"],
       ["ANT-REF"],
       ["CAL-REF"],
+    ]);
+    expect(rows.map(row => row.hasPendingPaymentReversal)).toEqual([
+      false,
+      true,
+      false,
     ]);
     expect(rows[0]).toMatchObject({
       itemCount: 4,
@@ -130,5 +136,9 @@ describe("treasury batch bank reference metadata", () => {
       queries[3].where.mock.calls[0][0]
     );
     expect(itemFilter.params).toEqual([754, 755, 756]);
+    const reversalFilter = new PgDialect().sqlToQuery(
+      queries[5].where.mock.calls[0][0]
+    );
+    expect(reversalFilter.params).toEqual([755, "pending"]);
   });
 });

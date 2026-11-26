@@ -33,6 +33,8 @@
     "test:contractual-advances:db": "tsx scripts/test-contractual-advances-db.ts",
     "db:migrate-retention-documents": "tsx scripts/migrate-retention-documents.ts",
     "db:migrate-invoice-reversals": "tsx scripts/migrate-invoice-reversals.ts",
+    "db:migrate-treasury-payment-reversals": "tsx scripts/migrate-treasury-payment-reversals.ts",
+    "test:treasury-payment-reversals:db": "tsx scripts/test-treasury-payment-reversals-db.ts",
     "db:migrate-retention-print": "tsx scripts/migrate-retention-print.ts",
     "db:migrate-purchase-order-billing": "tsx scripts/migrate-purchase-order-billing.ts",
     "test:purchase-order-billing:db": "tsx scripts/test-purchase-order-billing-db.ts",

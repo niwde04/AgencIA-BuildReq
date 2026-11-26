@@ -10,10 +10,13 @@ import {
   decimal,
   boolean,
   integer,
+  bigint,
+  uuid,
   jsonb,
   index,
   uniqueIndex,
   foreignKey,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type {
@@ -262,6 +265,7 @@ export const treasuryItemStatusEnum = pgEnum("treasury_item_status", [
   "rechazada_banco",
   "con_diferencia",
   "contabilizada",
+  "revertida",
 ]);
 export const treasuryPaymentKindEnum = pgEnum("treasury_payment_kind", [
   "invoice",
@@ -314,6 +318,7 @@ export const attachmentCategoryEnum = pgEnum("attachment_category", [
   "documento_proveedor",
   "archivo_bancario",
   "comprobante_pago",
+  "comprobante_reversion_pago",
   "otro",
 ]);
 export const notificationTypeEnum = pgEnum("notification_type", [
@@ -1146,6 +1151,10 @@ export const purchaseOrderAdvances = pgTable(
     }),
     cancelledAt: timestamp("cancelledAt"),
     cancellationReason: text("cancellationReason"),
+    reversalHoldId: integer("reversalHoldId").references(
+      (): AnyPgColumn => treasuryPaymentReversals.id,
+      { onDelete: "restrict" }
+    ),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
@@ -1159,6 +1168,9 @@ export const purchaseOrderAdvances = pgTable(
     ),
     projectIdx: index("po_advance_project_idx").on(table.projectId),
     supplierIdx: index("po_advance_supplier_idx").on(table.supplierId),
+    reversalHoldIdx: index("po_advance_reversal_hold_idx")
+      .on(table.reversalHoldId)
+      .where(sql`${table.reversalHoldId} is not null`),
     createdIdx: index("po_advance_created_idx").on(
       table.createdAt.desc(),
       table.id.desc()
@@ -1953,6 +1965,17 @@ export const treasuryPaymentItems = pgTable(
       "treasury_item_amount_check",
       sql`${table.requestedAmount} > 0 and ${table.invoiceNetPayable} > 0 and ${table.previousPaidAmount} >= 0 and ${table.appliedAdvanceAmount} >= 0`
     ),
+    reversalCheck: check(
+      "treasury_item_reversal_check",
+      sql`${table.status} <> 'revertida' or (
+        ${table.sourceType} = 'purchase_order_advance'
+        and not ${table.activeReservation}
+        and ${table.bankPaidAmount} is not null
+        and ${table.bankPaidAmount} > 0
+        and ${table.accountedAt} is null
+        and ${table.accountedById} is null
+      )`
+    ),
     sourceCheck: check(
       "treasury_item_source_check",
       sql`(
@@ -2005,6 +2028,111 @@ export const treasuryPaymentEvents = pgTable(
 export type TreasuryPaymentEvent = typeof treasuryPaymentEvents.$inferSelect;
 export type InsertTreasuryPaymentEvent =
   typeof treasuryPaymentEvents.$inferInsert;
+
+export type TreasuryPaymentReversalStatus = "pending" | "approved" | "rejected";
+export type TreasuryPaymentReversalCause = "no_disbursement" | "bank_return";
+
+export const treasuryPaymentReversals = pgTable(
+  "treasuryPaymentReversals",
+  {
+    id: serial("id").primaryKey(),
+    clientRequestId: uuid("clientRequestId").notNull(),
+    batchId: integer("batchId")
+      .notNull()
+      .references(() => treasuryPaymentBatches.id, { onDelete: "restrict" }),
+    status: text("status")
+      .$type<TreasuryPaymentReversalStatus>()
+      .notNull()
+      .default("pending"),
+    requestFingerprint: text("requestFingerprint").notNull(),
+    requestedById: integer("requestedById")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    decidedById: integer("decidedById").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    decisionComment: text("decisionComment"),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    decidedAt: timestamp("decidedAt", { withTimezone: true }),
+    evidenceAttachmentId: integer("evidenceAttachmentId")
+      .notNull()
+      .references(() => attachments.id, { onDelete: "restrict" }),
+    cause: text("cause").$type<TreasuryPaymentReversalCause>().notNull(),
+    amountCents: bigint("amountCents", { mode: "number" }).notNull(),
+  },
+  table => ({
+    clientRequestUnique: uniqueIndex("tpr_client_request_unique").on(
+      table.clientRequestId
+    ),
+    pendingBatchUnique: uniqueIndex("tpr_pending_batch_unique")
+      .on(table.batchId)
+      .where(sql`${table.status} = 'pending'`),
+    batchHistoryIdx: index("tpr_batch_history_idx").on(
+      table.batchId,
+      table.id.desc()
+    ),
+    causeCheck: check(
+      "tpr_cause_check",
+      sql`${table.cause} in ('no_disbursement', 'bank_return')`
+    ),
+    amountCheck: check(
+      "tpr_amount_check",
+      sql`${table.amountCents} between 1 and 9007199254740991`
+    ),
+    decisionCheck: check(
+      "tpr_decision_check",
+      sql`(
+        (${table.status} = 'pending' and ${table.decidedAt} is null and ${table.decidedById} is null and ${table.decisionComment} is null)
+        or
+        (${table.status} in ('approved', 'rejected') and ${table.decidedAt} is not null and ${table.decidedById} is not null and ${table.decidedById} <> ${table.requestedById})
+      )`
+    ),
+  })
+);
+
+export type TreasuryPaymentReversal = typeof treasuryPaymentReversals.$inferSelect;
+export type InsertTreasuryPaymentReversal =
+  typeof treasuryPaymentReversals.$inferInsert;
+
+export const treasuryPaymentReversalItems = pgTable(
+  "treasuryPaymentReversalItems",
+  {
+    id: serial("id").primaryKey(),
+    reversalId: integer("reversalId")
+      .notNull()
+      .references(() => treasuryPaymentReversals.id, { onDelete: "restrict" }),
+    paymentItemId: integer("paymentItemId")
+      .notNull()
+      .references(() => treasuryPaymentItems.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    amountCents: bigint("amountCents", { mode: "number" }).notNull(),
+    appliedAt: timestamp("appliedAt", { withTimezone: true }),
+  },
+  table => ({
+    reversalItemUnique: uniqueIndex("tpri_reversal_item_unique").on(
+      table.reversalId,
+      table.paymentItemId
+    ),
+    appliedItemUnique: uniqueIndex("tpri_applied_item_unique")
+      .on(table.paymentItemId)
+      .where(sql`${table.appliedAt} is not null`),
+    reasonCheck: check(
+      "tpri_reason_check",
+      sql`length(btrim(${table.reason})) between 5 and 2000`
+    ),
+    amountCheck: check(
+      "tpri_amount_check",
+      sql`${table.amountCents} between 1 and 9007199254740991`
+    ),
+  })
+);
+
+export type TreasuryPaymentReversalItem =
+  typeof treasuryPaymentReversalItems.$inferSelect;
+export type InsertTreasuryPaymentReversalItem =
+  typeof treasuryPaymentReversalItems.$inferInsert;
 
 export const invoiceItems = pgTable(
   "invoiceItems",
