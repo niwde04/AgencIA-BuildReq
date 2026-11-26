@@ -20,6 +20,7 @@ Estas variables deben existir en Dokploy antes del primer deploy:
 ## Variables opcionales
 
 - `RUN_DB_PUSH`
+- `TREASURY_PAYMENT_REVERSALS_ENABLED` habilita Solicitar reversión en Tesorería después de aplicar las migraciones. El valor predeterminado es `false`.
 - `SUPABASE_DOCKER_NETWORK`
 - `VITE_APP_ID`
 - `OWNER_OPEN_ID`
